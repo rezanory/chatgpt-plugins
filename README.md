@@ -1,80 +1,49 @@
 # chatgpt-plugins
 
 V0.1 monorepo for operating external compute from a normal ChatGPT conversation without using the
-user's PC as a runtime and without requiring a paid hosting service.
+user's PC as a runtime and without requiring paid hosting.
 
-The first provider is **Kaggle**. The active V0.1 runtime is a direct Python `KaggleApi` gateway on
-a **Render Free** web service.
+The first provider is **Kaggle**. The active production boundary is a plain **Cloudflare Worker on
+Workers Free**, with no Container, VM, Render service, Kaggle CLI, or operational Kaggle GitHub
+Action.
 
 ## Goal: operate Kaggle from this ChatGPT conversation
-
-The user should be able to say, for example:
-
-```text
-Run this existing Kaggle shard again on kg-01.
-```
-
-and ChatGPT performs the operation from the conversation.
-
-Because ChatGPT Pro custom MCP is read/fetch-only, V0.1 separates read and write control without
-weakening the Kaggle authentication path:
 
 ```text
 READ / RECOVERY
 ChatGPT
-  -> custom MCP (read-only)
-  -> Render Free Kaggle Gateway
-  -> direct KaggleApi()
+  -> custom MCP
+  -> Cloudflare Worker Free
+  -> direct Kaggle HTTPS API
   -> Kaggle
 
 WRITE / EXECUTION
 ChatGPT
-  -> built-in GitHub connector creates a signed-control Issue
-  -> GitHub repository webhook
-  -> Render Free Kaggle Gateway
-  -> direct KaggleApi()
+  -> connected GitHub app creates a [KAGGLE-RUN] Issue
+  -> signed GitHub repository webhook
+  -> Cloudflare Worker Free
+  -> direct Kaggle HTTPS API
   -> Kaggle
-  -> receipt/failure comment on the same GitHub Issue
+  -> claim/receipt/failure comment on the same Issue
   -> ChatGPT reads the result through the GitHub connector
 ```
 
-**No Kaggle CLI and no GitHub Actions are used to authenticate to or execute Kaggle.** GitHub
-Actions in this repository are source-quality CI only.
+GitHub Actions only validate and deploy the Worker source. They never receive Kaggle credentials
+and never authenticate to or execute Kaggle.
 
-The user's PC is not part of either runtime path.
+## Direct Kaggle HTTP contract
 
-## Proven Kaggle authentication sequence
+The active Worker mirrors Kaggle's official SDK transport instead of running the Python package.
+Production requests are JSON `POST`s to:
 
-Every enabled account gets its own isolated `KaggleApi()` object and follows the operator-validated
-flow:
-
-```python
-api = KaggleApi()
-api.set_config_value(api.CONFIG_NAME_USER, username)
-api.set_config_value(api.CONFIG_NAME_KEY, token)
-api.authenticate()
-api.kernels_list(page_size=1)
+```text
+https://api.kaggle.com/v1/kernels.KernelsApiService/<Method>
 ```
 
-A successful `kernels_list(page_size=1)` is the harmless authenticated readiness probe.
+Each authorized logical account uses its own legacy Kaggle username/API-key pair through HTTP Basic
+Auth. Credential values live only as Cloudflare Worker Secrets.
 
-## Multi-account isolation
-
-`set_config_value()` writes account configuration to a file, so the gateway never shares the
-default `~/.kaggle/kaggle.json` between accounts. Each logical account receives:
-
-- one dedicated `KaggleApi` instance;
-- one private temporary config directory;
-- one private temporary `kaggle.json`;
-- one per-account creation lock;
-- one per-account API-call lock.
-
-Different accounts can authenticate and operate in parallel. Calls within one account are
-serialized where needed. Temporary config directories are deleted when the gateway shuts down.
-
-## Current accounts
-
-Enabled V0.1 logical accounts:
+Enabled accounts:
 
 ```text
 kg-01 -> azadka
@@ -85,9 +54,9 @@ kg-06 -> msdenis
 kg-07 -> nisabulutmark
 ```
 
-`kg-03` remains disabled until its exact Kaggle owner slug is resolved.
+`kg-03` remains disabled until its canonical owner slug is resolved.
 
-## Current MCP read/recovery surface
+## MCP read/recovery surface
 
 - `kaggle_accounts`
 - `kaggle_auth_check`
@@ -98,165 +67,113 @@ kg-07 -> nisabulutmark
 - `kaggle_kernel_logs`
 - `kaggle_kernel_output_manifest`
 
-These use direct `KaggleApi` calls and do not create new compute.
+The MCP endpoint is not exposed at a predictable `/mcp` URL. `CGP_MCP_PATH_SECRET` is hashed and
+used as a capability path. If that secret is absent the MCP route remains unavailable.
 
-## V0.1 write surface
+## Recovery before write
 
-The first deliberately narrow write action is:
-
-```text
-rerun_existing
-```
-
-It is initiated by a GitHub Issue whose title starts with:
+No new Kaggle compute should be submitted before the existing pneumonia runs are classified:
 
 ```text
-[KAGGLE-RUN]
+1. kaggle_auth_check_all(max_workers=6)
+2. kaggle_kernels_inventory_all(search="pneumonia-v6-2-2")
+3. resolve the existing six shard kernels
+4. status + logs
+5. selected output manifest
+6. verify KAGGLE_EXECUTION_V62_2
+7. verify fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838
 ```
 
-and whose body contains:
+For that reason `CGP_WRITE_ENABLED` is canonically frozen to `0` in `wrangler.jsonc`.
+
+## Narrow write bridge
+
+The code contains one V0.1 write action, `rerun_existing`, but it remains disabled until recovery is
+complete. A valid control Issue must begin with `[KAGGLE-RUN]`, contain the strict v1 control marker
+and JSON envelope, arrive through a valid GitHub webhook HMAC, come from the configured repository
+and actor, and match the selected account's owner slug.
+
+When later enabled, the Worker performs `GetKernel` followed by `SaveKernel` with
+`kernelExecutionType: SAVE_AND_RUN_ALL`, preserving source and execution metadata. A claim comment
+is persisted before submission so webhook redelivery cannot silently run the same `job_id` twice.
+
+## Active deployment package
 
 ```text
-<!-- chatgpt-plugins-kaggle-control:v1 -->
+deploy/cloudflare-worker-free/
+  package.json
+  wrangler.jsonc
+  tsconfig.json
+  src/index.ts
+  src/kaggle.ts
+  src/github.ts
 ```
 
-followed by a strict JSON payload such as:
+`wrangler.jsonc` has `workers_dev: true` and deliberately contains no Containers, Durable Objects,
+queues, or paid runtime bindings.
 
-```json
-{
-  "schema": "chatgpt.kaggle.control/v1",
-  "action": "rerun_existing",
-  "job_id": "rerun-s01-001",
-  "account_id": "kg-01",
-  "kernel_ref": "azadka/example-kernel"
-}
-```
-
-The gateway validates the GitHub webhook HMAC, repository, issue actor, schema, account ID, and
-kernel owner before execution. It then calls the Python API directly:
+Live deployment is performed by:
 
 ```text
-api.kernels_pull(..., metadata=True)
-api.kernels_push(...)
+.github/workflows/cloudflare-worker-free-deploy.yml
 ```
 
-A persistent claim marker is written to the Issue before submission so webhook redelivery cannot
-silently run the same `job_id` twice. The final submission receipt or safe failure is written back
-to the same Issue.
-
-## Existing-run recovery first
-
-Before creating or rerunning compute, recover the existing pneumonia work:
+using only the existing Cloudflare deployment credentials:
 
 ```text
-ChatGPT
-  -> kaggle_auth_check_all(max_workers=6)
-  -> kaggle_kernels_inventory_all(search="pneumonia-v6-2-2")
-  -> resolve exact owner/kernel refs per account
-  -> kaggle_kernel_status(...)
-  -> kaggle_kernel_logs(...)
-  -> kaggle_kernel_output_manifest(...)
+CLOUDFLARE_API_TOKEN
+CLOUDFLARE_ACCOUNT_ID
 ```
 
-Known evidence target:
+Those are deployment credentials, not Kaggle credentials.
+
+## Cloudflare runtime secrets
+
+Before live Kaggle authentication, configure these Worker Secrets directly in Cloudflare:
 
 ```text
-artifact: KAGGLE_EXECUTION_V62_2
-fingerprint: fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838
+CGP_KAGGLE_KG01_TOKEN
+CGP_KAGGLE_KG02_TOKEN
+CGP_KAGGLE_KG04_TOKEN
+CGP_KAGGLE_KG05_TOKEN
+CGP_KAGGLE_KG06_TOKEN
+CGP_KAGGLE_KG07_TOKEN
+CGP_MCP_PATH_SECRET
 ```
 
-Do not submit new Kaggle compute before those existing runs are classified.
-
-## Free remote deployment
-
-The repository contains a Render Blueprint:
+For the later write bridge also configure:
 
 ```text
-render.yaml
+CGP_GITHUB_WEBHOOK_SECRET
+CGP_GITHUB_TOKEN
 ```
 
-and Docker runtime:
-
-```text
-deploy/render-free/Dockerfile
-```
-
-The Blueprint explicitly sets:
-
-```text
-plan: free
-```
-
-No paid Render or Cloudflare Container plan is part of V0.1.
-
-### One-time Render configuration
-
-Create the Blueprint from this private GitHub repository and provide only secret values that are
-marked `sync: false` in `render.yaml`:
-
-- six Kaggle API tokens (`kg-01`, `02`, `04`, `05`, `06`, `07`);
-- `CGP_GITHUB_WEBHOOK_SECRET` — a random webhook secret;
-- `CGP_GITHUB_TOKEN` — a fine-grained GitHub token restricted to
-  `rezanory/chatgpt-plugins` with Issues read/write access.
-
-Kaggle usernames are public metadata and are already supplied by the Blueprint.
-
-`CGP_MCP_PATH_SECRET` is generated by Render. At startup, the service logs the derived private MCP
-path as:
-
-```text
-CGP_MCP_ENDPOINT_PATH=/mcp/<sha256>
-```
-
-The complete custom MCP endpoint is the service's HTTPS Render URL plus that path.
-
-### One-time GitHub webhook configuration
-
-In `rezanory/chatgpt-plugins` configure one repository webhook:
-
-```text
-Payload URL: https://<render-service>.onrender.com/github/webhook
-Content type: application/json
-Secret: same value as CGP_GITHUB_WEBHOOK_SECRET
-Events: Issues only
-```
-
-After this, ChatGPT can trigger `rerun_existing` by creating a control Issue through the connected
-GitHub app. There is no Actions job in that execution path.
+Never paste secret values into ChatGPT, Git commits, Issues, or Actions logs.
 
 ## Security boundaries
 
-- No Kaggle credential value is committed to Git.
-- GitHub Actions never receives Kaggle runtime credentials.
-- Active Python gateway source contains no subprocess/Kaggle-CLI runtime path.
-- Operational `.github/workflows/kaggle-*.yml` files are forbidden by the security gate.
-- Paid Cloudflare Container runtime is forbidden by the security gate.
-- Production Blueprint is pinned to `plan: free`.
-- Write webhook requires a valid GitHub HMAC signature.
-- Control events are limited to the configured repository and approved GitHub actors.
-- V0.1 only permits the explicit `rerun_existing` write action.
-- A kernel `owner/slug` must match the selected logical account's configured owner.
-- Duplicate `job_id` webhook deliveries do not trigger another run.
-- Credential values are redacted from returned errors/logs.
+- user PC is not a runtime;
+- no paid hosting dependency;
+- no Kaggle credential is committed to Git;
+- GitHub Actions never receive Kaggle runtime credentials;
+- Kaggle CLI/subprocess runtime paths are forbidden;
+- Render and Cloudflare Containers are forbidden by the security gate;
+- the active Worker uses direct HTTPS only;
+- kernel owner must match the selected logical account;
+- write remains disabled until existing-run recovery is complete;
+- webhook writes require HMAC, repository and actor validation plus durable GitHub claim markers;
+- small output hashing is bounded by file count and byte budgets.
 
 ## Repository layout
 
 ```text
-packages/
-  core/                   contracts and scheduler primitives
-  github-bridge/          source/control integrations for the wider monorepo
-  repair-engine/          classifier/fingerprint/repair policy
-plugins/
-  kaggle-gateway/         ACTIVE direct multi-account KaggleApi + MCP/webhook runtime
-  kaggle/                 legacy relay code retained temporarily for migration/reference
-deploy/
-  render-free/            ACTIVE free production Docker package
-.github/workflows/
-  ci.yml                  source and Docker validation only; never Kaggle runtime execution
-render.yaml                Render Free Blueprint
+packages/                       provider-neutral contracts and support code
+plugins/kaggle-gateway/         Python reference/test implementation retained for parity
+plugins/kaggle/                 legacy migration/reference code
+deploy/cloudflare-worker-free/  ACTIVE zero-cost production runtime
+.github/workflows/ci.yml        source/package validation only
+.github/workflows/cloudflare-worker-free-deploy.yml
 ```
 
-## Safety boundary
-
-Multiple accounts are supported only when the operator is authorized to use them. The gateway must
-not rotate accounts to evade Kaggle restrictions, quotas, or terms.
+Multiple accounts are supported only when the operator is authorized to use them. They must not be
+rotated to evade Kaggle restrictions, quotas, or terms.
