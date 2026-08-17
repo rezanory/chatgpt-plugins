@@ -1,49 +1,42 @@
-# Implementation Status — V0.1 Remote Kaggle Gateway
+# Implementation Status — V0.1
 
-## Active architecture
+## Current architecture
 
 ```text
-ChatGPT
-  -> Cloudflare Access/OAuth protected remote MCP
-  -> Cloudflare Worker
-  -> Cloudflare Container
-  -> Python Kaggle Direct Gateway
-  -> one isolated KaggleApi client per logical account
-  -> Kaggle API
+READ / RECOVERY
+ChatGPT Pro -> custom MCP (read-only) -> Render Free -> direct KaggleApi -> Kaggle
+
+WRITE / EXECUTION
+ChatGPT -> connected GitHub app -> signed control Issue -> GitHub repository webhook
+        -> Render Free -> direct KaggleApi -> Kaggle
+        -> receipt/failure comment -> ChatGPT reads it through GitHub
 ```
 
-GitHub is source control and source/deployment-package CI. The user's PC, Kaggle CLI, browser
-sessions, and operational Kaggle GitHub Actions are not part of the runtime.
+The user's PC is not part of the runtime. Kaggle CLI, browser sessions, and GitHub Actions are not
+used for Kaggle authentication or execution.
 
-## Implemented
+## Hosting policy
 
-- Modular `chatgpt-plugins` monorepo.
-- Direct Python `KaggleApi` gateway using MCP Streamable HTTP.
-- One dedicated isolated KaggleApi/config/lock set per logical account.
-- Operator-validated auth sequence with `kernels_list(page_size=1)` readiness probe.
-- Parallel account authentication with account-scoped failure containment.
-- Rejection of global Kaggle auth variables that could override isolated config.
-- Owner/account validation for kernel-specific operations.
-- Credential redaction from returned errors/logs.
-- Eight read-only MCP tools for account/auth/inventory/status/log/output-manifest recovery.
-- Bounded artifact recovery with path/symlink validation, SHA-256 manifest, fingerprint scan, and
-  temporary-file cleanup.
-- Cloudflare production package under `deploy/cloudflare-container/`:
-  - Python 3.12 Container image;
-  - current Cloudflare Containers SDK;
-  - Worker/Durable Object Container binding;
-  - Cloudflare Access JWT verification;
-  - issuer/audience validation;
-  - Access JWT/cookie stripping before Container proxy;
-  - single Container instance for V0.1;
-  - outbound Internet access for direct Kaggle API calls.
-- Security gate enforcing direct-Python/no-Kaggle-CLI runtime and Cloudflare `/mcp` security
-  invariants.
-- Obsolete user-PC/tunnel launchers removed from the production repository.
+V0.1 is explicitly free-only:
 
-## Current account registry
+- active host: Render Free Web Service;
+- `render.yaml` uses `plan: free`;
+- active Docker package: `deploy/render-free/Dockerfile`;
+- paid Cloudflare Containers path removed and forbidden by the security gate.
 
-Enabled:
+## Direct Kaggle authentication
+
+Every enabled account uses an isolated `KaggleApi()` and the operator-proven sequence:
+
+```python
+api = KaggleApi()
+api.set_config_value(api.CONFIG_NAME_USER, username)
+api.set_config_value(api.CONFIG_NAME_KEY, token)
+api.authenticate()
+api.kernels_list(page_size=1)
+```
+
+## Enabled accounts
 
 ```text
 kg-01 -> azadka
@@ -54,85 +47,92 @@ kg-06 -> msdenis
 kg-07 -> nisabulutmark
 ```
 
-`kg-03` remains disabled until its canonical Kaggle owner slug is resolved.
+`kg-03` remains disabled pending exact owner-slug resolution.
 
-Credential values are not stored in the registry or repository.
+## Read surface
 
-## Latest validated build baseline
+- `kaggle_accounts`
+- `kaggle_auth_check`
+- `kaggle_auth_check_all`
+- `kaggle_kernels_list`
+- `kaggle_kernels_inventory_all`
+- `kaggle_kernel_status`
+- `kaggle_kernel_logs`
+- `kaggle_kernel_output_manifest`
 
-Cloudflare deploy-package validation run:
+## Write/control surface
 
-```text
-CI run: 32045703112
-commit: 27335e2cd9af3e4504cbfdfd09fde988eab631b5
-```
-
-Verified results:
-
-```text
-Python package installation:       PASS
-Security Gate:                     PASS
-Ruff:                              PASS
-Python tests:                      36 PASS
-Python compile:                    PASS
-wrangler types:                    PASS
-TypeScript Cloudflare runtime:     PASS
-wrangler deploy --dry-run:         PASS
-Production Docker image build:     PASS
-Durable Object binding discovery:  PASS
-Container discovery:               PASS
-CI conclusion:                     SUCCESS
-```
-
-The deploy dry-run successfully built the real production Docker image and installed the actual
-runtime dependencies, including `kaggle==2.2.4` and `mcp==2.0.0`, without receiving any Kaggle
-credential or performing an operational Kaggle call.
-
-## External Kaggle evidence
-
-The operator has already reconnected the six active accounts using the same direct `KaggleApi`
-authentication sequence implemented by this gateway and reported `auth_ok` for all six. This is why
-V0.1 preserves direct Python API authentication rather than CLI/browser/session authentication.
-
-## Remaining external activation
-
-Source/runtime packaging is ready. The remaining account-side activation is in Cloudflare:
-
-1. connect `rezanory/chatgpt-plugins` to the Cloudflare Worker deployment;
-2. deploy `deploy/cloudflare-container`;
-3. store the 12 username/token values as Cloudflare Secrets;
-4. configure Cloudflare Access Managed OAuth plus `TEAM_DOMAIN` and `POLICY_AUD`;
-5. connect the resulting `https://<worker-host>/mcp` endpoint as the ChatGPT custom MCP app.
-
-The current ChatGPT tool environment does not expose Cloudflare account-mutation actions, so those
-Cloudflare account settings cannot be written from this conversation even though the deployment
-source itself is complete and validated.
-
-## First live calls after endpoint connection
+V0.1 exposes one narrow write action through the signed GitHub webhook control plane:
 
 ```text
-1. kaggle_auth_check_all(max_workers=6)
-2. kaggle_kernels_inventory_all(search="pneumonia-v6-2-2", page_size=20, max_workers=6)
-3. resolve exact existing owner/kernel refs
-4. kaggle_kernel_status(...)
-5. kaggle_kernel_logs(...)
-6. kaggle_kernel_output_manifest(...)
+rerun_existing
 ```
 
-Known recovery target:
+A control Issue:
+
+- must have title prefix `[KAGGLE-RUN]`;
+- must contain `<!-- chatgpt-plugins-kaggle-control:v1 -->`;
+- must use schema `chatgpt.kaggle.control/v1`;
+- must be opened in `rezanory/chatgpt-plugins` by an allowlisted actor;
+- must pass GitHub webhook HMAC verification;
+- must reference an `owner/kernel` matching the selected logical account.
+
+The gateway writes a persistent claim marker before execution to prevent duplicate `job_id`
+redelivery, then uses direct Python API calls:
+
+```python
+api.kernels_pull(..., metadata=True)
+api.kernels_push(...)
+```
+
+The final receipt or redacted failure is posted back to the same Issue.
+
+## Current source validation
+
+The functional validation after introducing the free runtime and direct control path has shown:
+
+- Security Gate: PASS;
+- Python tests: 41 PASS;
+- Python compile: PASS;
+- Render Free production Docker image build: PASS.
+
+The final consolidated CI is being used to close the remaining Ruff/style-only findings before live
+activation.
+
+## Activation remaining
+
+One-time account-side actions still required because Render is not exposed as a connector in this
+ChatGPT session:
+
+1. Connect Render to the private GitHub repo `rezanory/chatgpt-plugins`.
+2. Create the Blueprint from root `render.yaml`; it is explicitly `plan: free`.
+3. Fill only the `sync: false` secrets:
+   - six Kaggle API tokens for kg-01,02,04,05,06,07;
+   - `CGP_GITHUB_WEBHOOK_SECRET`;
+   - `CGP_GITHUB_TOKEN` restricted to this repository with Issues read/write.
+4. Configure one GitHub repository webhook:
+   - payload URL: `https://<render-service>.onrender.com/github/webhook`;
+   - content type: `application/json`;
+   - secret: same `CGP_GITHUB_WEBHOOK_SECRET`;
+   - event: Issues only.
+5. Connect the private MCP endpoint emitted by the Render service to ChatGPT Developer Mode.
+
+## First live sequence after activation
+
+Do not submit new compute first. Run:
 
 ```text
-artifact: KAGGLE_EXECUTION_V62_2
-fingerprint: fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838
+kaggle_auth_check_all(max_workers=6)
+kaggle_kernels_inventory_all(search="pneumonia-v6-2-2")
+status/logs for the six existing shards
+artifact/fingerprint recovery
 ```
 
-No new Kaggle compute should be submitted before the existing six runs are inventoried and
-classified.
+Evidence target:
 
-## Deferred after live read-only recovery
+```text
+KAGGLE_EXECUTION_V62_2
+fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838
+```
 
-- direct write/submission MCP tools;
-- controlled resubmission/retry;
-- repair-loop integration with GitHub source changes;
-- durable quota/health scheduler state;
-- additional providers.
+Only after those existing runs are classified should `rerun_existing` be used from ChatGPT.
