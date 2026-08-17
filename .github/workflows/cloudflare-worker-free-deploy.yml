@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: cloudflare-worker-free-production
@@ -68,6 +69,7 @@ jobs:
         run: npx wrangler deploy
 
       - name: Resolve workers.dev URL and verify health
+        id: live
         if: steps.credentials.outputs.configured == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -108,6 +110,8 @@ jobs:
           print("LIVE_MASTER_CONFIGURED=true")
           print("LIVE_WRITE_ENABLED=false")
           PY
+              printf '%s' "$payload" > /tmp/worker-health.json
+              echo "worker_url=$worker_url" >> "$GITHUB_OUTPUT"
               echo "Cloudflare Workers Free health check PASS: $worker_url/healthz"
               exit 0
             fi
@@ -115,6 +119,38 @@ jobs:
           done
           echo "Cloudflare Worker did not pass /healthz validation." >&2
           exit 1
+
+      - name: Publish safe deployment receipt
+        if: steps.credentials.outputs.configured == 'true' && steps.live.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKER_URL: ${{ steps.live.outputs.worker_url }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          health = json.loads(Path("/tmp/worker-health.json").read_text(encoding="utf-8"))
+          receipt = {
+              "commit": os.environ["GITHUB_SHA"],
+              "worker_url": os.environ["WORKER_URL"],
+              "status": health.get("status"),
+              "transport": health.get("transport"),
+              "mcp_configured": bool(health.get("mcp_configured")),
+              "kaggle_tokens_configured": int(health.get("kaggle_tokens_configured", 0)),
+              "master_configured": bool(health.get("master_configured")),
+              "write_enabled": bool(health.get("write_enabled")),
+          }
+          Path("/tmp/deploy-receipt.md").write_text(
+              "## Cloudflare production deployment receipt\n\n```json\n"
+              + json.dumps(receipt, indent=2)
+              + "\n```\n",
+              encoding="utf-8",
+          )
+          PY
+          gh issue comment 17 --repo "$GITHUB_REPOSITORY" --body-file /tmp/deploy-receipt.md
 
       - name: Report activation blocker
         if: steps.credentials.outputs.configured != 'true'
