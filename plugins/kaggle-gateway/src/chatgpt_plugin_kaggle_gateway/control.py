@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -32,7 +33,7 @@ class ControlCommand:
     kernel_ref: str
 
     @classmethod
-    def from_issue(cls, title: str, body: str) -> "ControlCommand":
+    def from_issue(cls, title: str, body: str) -> ControlCommand:
         if not title.startswith("[KAGGLE-RUN]"):
             raise ValueError("control issue title must start with [KAGGLE-RUN]")
         if len(body) > 50_000 or CONTROL_MARKER not in body:
@@ -222,14 +223,12 @@ class ControlDispatcher:
                 "error_type": exc.__class__.__name__,
                 "error": safe,
             }
-            try:
+            with contextlib.suppress(Exception):
                 self.journal.comment(
                     issue_number,
                     f"{FAILURE_MARKER} job_id={command.job_id} -->\n"
                     f"```json\n{json.dumps(failure, sort_keys=True)}\n```",
                 )
-            except Exception:
-                pass
         finally:
             with self._lock:
                 self._active.discard(command.job_id)
