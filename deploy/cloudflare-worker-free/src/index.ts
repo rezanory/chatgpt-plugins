@@ -8,6 +8,7 @@ import {
   authCheckAll,
   inventoryAll,
   kernelLogs,
+  kernelOutputFiles,
   kernelOutputManifest,
   kernelStatus,
   listKernels,
@@ -180,6 +181,39 @@ function buildServer(env: WorkerEnv): McpServer {
   );
 
   server.registerTool(
+    "kaggle_kernel_output_files",
+    {
+      description:
+        "Enumerate paginated output filenames for an existing execution-account kernel without downloading them.",
+      inputSchema: z.object({
+        account_id: workerAccountId,
+        kernel_ref: z.string().min(3).max(200),
+        contains: z.string().max(200).default(""),
+        max_files: z.number().int().min(1).max(2000).default(1000),
+      }),
+      annotations: READ_ONLY,
+    },
+    async ({ account_id, kernel_ref, contains, max_files }) =>
+      textResult(await kernelOutputFiles(env, account_id, kernel_ref, contains, max_files)),
+  );
+
+  server.registerTool(
+    "kaggle_master_kernel_output_files",
+    {
+      description:
+        "Enumerate paginated output filenames for an existing Master kernel without downloading them.",
+      inputSchema: z.object({
+        kernel_ref: z.string().min(3).max(200),
+        contains: z.string().max(200).default(""),
+        max_files: z.number().int().min(1).max(2000).default(1000),
+      }),
+      annotations: READ_ONLY,
+    },
+    async ({ kernel_ref, contains, max_files }) =>
+      textResult(await kernelOutputFiles(env, "master", kernel_ref, contains, max_files)),
+  );
+
+  server.registerTool(
     "kaggle_kernel_output_manifest",
     {
       description:
@@ -314,6 +348,13 @@ export default {
           const accountId = url.searchParams.get("account_id") ?? "";
           const kernelRef = url.searchParams.get("kernel_ref") ?? "";
           return json({ account_id: accountId, kernel_ref: kernelRef, log: await kernelLogs(env, accountId, kernelRef) });
+        }
+        if (url.pathname === `${adminRoot}/output-files`) {
+          const accountId = url.searchParams.get("account_id") ?? "";
+          const kernelRef = url.searchParams.get("kernel_ref") ?? "";
+          const contains = url.searchParams.get("contains") ?? "";
+          const maxFiles = Number(url.searchParams.get("max_files") ?? "1000");
+          return json(await kernelOutputFiles(env, accountId, kernelRef, contains, maxFiles));
         }
         if (url.pathname === `${adminRoot}/output-manifest`) {
           const accountId = url.searchParams.get("account_id") ?? "";
