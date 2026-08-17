@@ -1,33 +1,52 @@
 # chatgpt-plugins
 
 V0.1 monorepo for operating external compute from a normal ChatGPT conversation without using the
-user's PC as a runtime.
+user's PC as a runtime and without requiring a paid hosting service.
 
-The first provider is **Kaggle**. The active production runtime is a direct Python `KaggleApi`
-gateway hosted remotely in Cloudflare Containers and exposed through a Cloudflare Worker/MCP
-boundary.
+The first provider is **Kaggle**. The active V0.1 runtime is a direct Python `KaggleApi` gateway on
+a **Render Free** web service.
 
-## Active production path
+## Goal: operate Kaggle from this ChatGPT conversation
+
+The user should be able to say, for example:
 
 ```text
-GitHub: rezanory/chatgpt-plugins
-  -> Cloudflare build/deploy
-  -> Cloudflare Worker + Access/OAuth boundary
-  -> Cloudflare Container
-  -> Python Kaggle Direct Gateway
-  -> one isolated KaggleApi instance per logical account
-  -> Kaggle API
+Run this existing Kaggle shard again on kg-01.
 ```
 
-The user's PC is **not** part of the production runtime. GitHub is source control and source-quality
-CI; Kaggle authentication/execution is never performed by GitHub Actions.
+and ChatGPT performs the operation from the conversation.
 
-There is no Kaggle CLI, browser session, cookie login, or repeated interactive login in the active
-runtime.
+Because ChatGPT Pro custom MCP is read/fetch-only, V0.1 separates read and write control without
+weakening the Kaggle authentication path:
+
+```text
+READ / RECOVERY
+ChatGPT
+  -> custom MCP (read-only)
+  -> Render Free Kaggle Gateway
+  -> direct KaggleApi()
+  -> Kaggle
+
+WRITE / EXECUTION
+ChatGPT
+  -> built-in GitHub connector creates a signed-control Issue
+  -> GitHub repository webhook
+  -> Render Free Kaggle Gateway
+  -> direct KaggleApi()
+  -> Kaggle
+  -> receipt/failure comment on the same GitHub Issue
+  -> ChatGPT reads the result through the GitHub connector
+```
+
+**No Kaggle CLI and no GitHub Actions are used to authenticate to or execute Kaggle.** GitHub
+Actions in this repository are source-quality CI only.
+
+The user's PC is not part of either runtime path.
 
 ## Proven Kaggle authentication sequence
 
-Every enabled account gets its own `KaggleApi()` object and follows the operator-validated flow:
+Every enabled account gets its own isolated `KaggleApi()` object and follows the operator-validated
+flow:
 
 ```python
 api = KaggleApi()
@@ -53,25 +72,22 @@ default `~/.kaggle/kaggle.json` between accounts. Each logical account receives:
 Different accounts can authenticate and operate in parallel. Calls within one account are
 serialized where needed. Temporary config directories are deleted when the gateway shuts down.
 
-## Cloudflare credential model
+## Current accounts
 
-Real Kaggle credentials live only as **Cloudflare Worker Secrets** and are passed at runtime to the
-Python Container:
+Enabled V0.1 logical accounts:
 
 ```text
-CGP_KAGGLE_KG01_USERNAME
-CGP_KAGGLE_KG01_TOKEN
-CGP_KAGGLE_KG02_USERNAME
-CGP_KAGGLE_KG02_TOKEN
-...
+kg-01 -> azadka
+kg-02 -> radlinaradlina
+kg-04 -> reyhanehazad
+kg-05 -> trickermark
+kg-06 -> msdenis
+kg-07 -> nisabulutmark
 ```
 
-The repository stores only the names of those secret references and public account metadata.
+`kg-03` remains disabled until its exact Kaggle owner slug is resolved.
 
-Do not configure process-global `KAGGLE_API_TOKEN`, `KAGGLE_USERNAME`, or `KAGGLE_KEY`; the gateway
-rejects them to prevent cross-account credential override.
-
-## Current read/recovery MCP surface
+## Current MCP read/recovery surface
 
 - `kaggle_accounts`
 - `kaggle_auth_check`
@@ -82,12 +98,55 @@ rejects them to prevent cross-account credential override.
 - `kaggle_kernel_logs`
 - `kaggle_kernel_output_manifest`
 
-These tools use direct `KaggleApi` calls. They do not submit, restart, cancel, edit, or delete a
-Kaggle run.
+These use direct `KaggleApi` calls and do not create new compute.
+
+## V0.1 write surface
+
+The first deliberately narrow write action is:
+
+```text
+rerun_existing
+```
+
+It is initiated by a GitHub Issue whose title starts with:
+
+```text
+[KAGGLE-RUN]
+```
+
+and whose body contains:
+
+```text
+<!-- chatgpt-plugins-kaggle-control:v1 -->
+```
+
+followed by a strict JSON payload such as:
+
+```json
+{
+  "schema": "chatgpt.kaggle.control/v1",
+  "action": "rerun_existing",
+  "job_id": "rerun-s01-001",
+  "account_id": "kg-01",
+  "kernel_ref": "azadka/example-kernel"
+}
+```
+
+The gateway validates the GitHub webhook HMAC, repository, issue actor, schema, account ID, and
+kernel owner before execution. It then calls the Python API directly:
+
+```text
+api.kernels_pull(..., metadata=True)
+api.kernels_push(...)
+```
+
+A persistent claim marker is written to the Issue before submission so webhook redelivery cannot
+silently run the same `job_id` twice. The final submission receipt or safe failure is written back
+to the same Issue.
 
 ## Existing-run recovery first
 
-Before new compute, recover the existing pneumonia work:
+Before creating or rerunning compute, recover the existing pneumonia work:
 
 ```text
 ChatGPT
@@ -106,27 +165,64 @@ artifact: KAGGLE_EXECUTION_V62_2
 fingerprint: fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838
 ```
 
-No new Kaggle compute should be created before those existing runs are classified.
+Do not submit new Kaggle compute before those existing runs are classified.
 
-## Cloudflare deployment package
+## Free remote deployment
 
-Production deployment source is under:
+The repository contains a Render Blueprint:
 
 ```text
-deploy/cloudflare-container/
+render.yaml
 ```
 
-It contains:
+and Docker runtime:
 
-- `Dockerfile` — Python Kaggle Gateway image;
-- `src/index.ts` — authenticated Worker proxy;
-- `wrangler.jsonc` — Container/Durable Object configuration;
-- `package.json` — pinned Wrangler/Container SDK tooling;
-- `README.md` — one-time Cloudflare/GitHub/Access setup.
+```text
+deploy/render-free/Dockerfile
+```
 
-CI validates both the Python application and Cloudflare deployment package. The Cloudflare gate
-runs `wrangler types`, TypeScript validation, `wrangler deploy --dry-run`, and an actual local Docker
-image build without deploying or receiving Kaggle credentials.
+The Blueprint explicitly sets:
+
+```text
+plan: free
+```
+
+No paid Render or Cloudflare Container plan is part of V0.1.
+
+### One-time Render configuration
+
+Create the Blueprint from this private GitHub repository and provide only secret values that are
+marked `sync: false` in `render.yaml`:
+
+- six Kaggle API tokens (`kg-01`, `02`, `04`, `05`, `06`, `07`);
+- `CGP_GITHUB_WEBHOOK_SECRET` — a random webhook secret;
+- `CGP_GITHUB_TOKEN` — a fine-grained GitHub token restricted to
+  `rezanory/chatgpt-plugins` with Issues read/write access.
+
+Kaggle usernames are public metadata and are already supplied by the Blueprint.
+
+`CGP_MCP_PATH_SECRET` is generated by Render. At startup, the service logs the derived private MCP
+path as:
+
+```text
+CGP_MCP_ENDPOINT_PATH=/mcp/<sha256>
+```
+
+The complete custom MCP endpoint is the service's HTTPS Render URL plus that path.
+
+### One-time GitHub webhook configuration
+
+In `rezanory/chatgpt-plugins` configure one repository webhook:
+
+```text
+Payload URL: https://<render-service>.onrender.com/github/webhook
+Content type: application/json
+Secret: same value as CGP_GITHUB_WEBHOOK_SECRET
+Events: Issues only
+```
+
+After this, ChatGPT can trigger `rerun_existing` by creating a control Issue through the connected
+GitHub app. There is no Actions job in that execution path.
 
 ## Security boundaries
 
@@ -134,10 +230,13 @@ image build without deploying or receiving Kaggle credentials.
 - GitHub Actions never receives Kaggle runtime credentials.
 - Active Python gateway source contains no subprocess/Kaggle-CLI runtime path.
 - Operational `.github/workflows/kaggle-*.yml` files are forbidden by the security gate.
-- Cloudflare Worker protects `/mcp` and validates the Cloudflare Access JWT before proxying.
-- Access JWT/cookies are stripped before the request reaches the Python Container.
+- Paid Cloudflare Container runtime is forbidden by the security gate.
+- Production Blueprint is pinned to `plan: free`.
+- Write webhook requires a valid GitHub HMAC signature.
+- Control events are limited to the configured repository and approved GitHub actors.
+- V0.1 only permits the explicit `rerun_existing` write action.
 - A kernel `owner/slug` must match the selected logical account's configured owner.
-- Authentication failure from one account cannot terminate the other account clients.
+- Duplicate `job_id` webhook deliveries do not trigger another run.
 - Credential values are redacted from returned errors/logs.
 
 ## Repository layout
@@ -148,12 +247,13 @@ packages/
   github-bridge/          source/control integrations for the wider monorepo
   repair-engine/          classifier/fingerprint/repair policy
 plugins/
-  kaggle-gateway/         ACTIVE direct multi-account KaggleApi + MCP runtime
+  kaggle-gateway/         ACTIVE direct multi-account KaggleApi + MCP/webhook runtime
   kaggle/                 legacy relay code retained temporarily for migration/reference
 deploy/
-  cloudflare-container/   ACTIVE production deployment package
+  render-free/            ACTIVE free production Docker package
 .github/workflows/
-  ci.yml                  source/deploy-package validation only
+  ci.yml                  source and Docker validation only; never Kaggle runtime execution
+render.yaml                Render Free Blueprint
 ```
 
 ## Safety boundary
