@@ -166,6 +166,17 @@ function json(value: unknown, status = 200): Response {
   });
 }
 
+function errorResponse(error: unknown): Response {
+  return json(
+    {
+      ok: false,
+      error_type: error instanceof Error ? error.name : "Error",
+      error: error instanceof Error ? error.message.slice(0, 1000) : "unknown error",
+    },
+    502,
+  );
+}
+
 export default {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -192,6 +203,36 @@ export default {
     }
 
     const mcpPath = privateMcpPath(env);
+    const adminRoot = mcpPath ? `${mcpPath}/admin` : null;
+    if (adminRoot && request.method === "GET") {
+      try {
+        if (url.pathname === `${adminRoot}/auth`) {
+          return json({ workers: await authCheckAll(env) });
+        }
+        if (url.pathname === `${adminRoot}/list`) {
+          const accountId = url.searchParams.get("account_id") ?? "";
+          const search = url.searchParams.get("search") ?? "";
+          const pageSize = Number(url.searchParams.get("page_size") ?? "5");
+          return json({
+            account_id: accountId,
+            kernels: await listKernels(env, accountId, search, pageSize),
+          });
+        }
+        if (url.pathname === `${adminRoot}/inventory`) {
+          const search = url.searchParams.get("search") ?? "";
+          const pageSize = Number(url.searchParams.get("page_size") ?? "20");
+          return json({ search, accounts: await inventoryAll(env, search, pageSize) });
+        }
+        if (url.pathname === `${adminRoot}/kernel-status`) {
+          const accountId = url.searchParams.get("account_id") ?? "";
+          const kernelRef = url.searchParams.get("kernel_ref") ?? "";
+          return json(await kernelStatus(env, accountId, kernelRef));
+        }
+      } catch (error) {
+        return errorResponse(error);
+      }
+    }
+
     if (!mcpPath || url.pathname !== mcpPath) return new Response("Not found", { status: 404 });
 
     const handler = createMcpHandler(() => buildServer(env));
