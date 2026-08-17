@@ -1,167 +1,166 @@
-# V0.1 Setup
+# V0.1 Direct Kaggle Gateway Setup
 
-## 1. Control repository
+## 1. Repository
 
-Create a private repository named `chatgpt-plugins` and push this monorepo to its default branch.
-Enable GitHub Issues and GitHub Actions.
+Keep `rezanory/chatgpt-plugins` private. GitHub is used for source control and CI only.
+Do not configure an Actions workflow to authenticate to or operate Kaggle.
 
-## 2. Kaggle account registry
+## 2. Active component
 
-Edit `plugins/kaggle/config/accounts.json`.
+The active runtime is:
 
-Example for two authorized accounts:
-
-```json
-[
-  {
-    "account_id": "kg-01",
-    "owner_slug": "kaggle_username_1",
-    "secret_scope": "kaggle-01",
-    "enabled": true,
-    "max_parallel": 1,
-    "capabilities": ["cpu", "gpu"],
-    "default_accelerator": "NvidiaTeslaT4"
-  },
-  {
-    "account_id": "kg-02",
-    "owner_slug": "kaggle_username_2",
-    "secret_scope": "kaggle-02",
-    "enabled": true,
-    "max_parallel": 1,
-    "capabilities": ["cpu", "gpu"]
-  }
-]
+```text
+plugins/kaggle-gateway/
 ```
 
-No credential belongs in this file.
+The older `plugins/kaggle/` relay code is retained temporarily for migration/reference and is not
+an operational runtime.
 
-## 3. GitHub Environments and API tokens
+## 3. Account registry
 
-Create environments whose names exactly match `secret_scope`:
+Public, non-secret gateway metadata is stored in:
 
-- `kaggle-01`
-- `kaggle-02`
-- ...
+```text
+plugins/kaggle-gateway/src/chatgpt_plugin_kaggle_gateway/accounts.json
+```
 
-For each Kaggle account:
+Each entry maps a logical account to secret-reference environment variable names:
 
-1. Open Kaggle **Settings -> API**.
-2. Use **Generate New Token**.
-3. Store that token only in the matching GitHub Environment as:
+```json
+{
+  "account_id": "kg-01",
+  "owner_slug": "example-owner",
+  "username_env": "CGP_KAGGLE_KG01_USERNAME",
+  "token_env": "CGP_KAGGLE_KG01_TOKEN",
+  "enabled": true
+}
+```
+
+Never put a username/token value in this JSON file.
+
+## 4. Runtime credential injection
+
+Provide the working credentials to the **gateway process** through a secure deployment secret
+mechanism. For example, the gateway process for `kg-01` must receive:
+
+```text
+CGP_KAGGLE_KG01_USERNAME=<username>
+CGP_KAGGLE_KG01_TOKEN=<token>
+```
+
+Repeat for enabled accounts.
+
+Do not set these process-global Kaggle variables in the gateway:
 
 ```text
 KAGGLE_API_TOKEN
+KAGGLE_USERNAME
+KAGGLE_KEY
 ```
 
-V0.1 is token-only. Do not configure browser cookies, cached sessions, interactive OAuth login,
-`KAGGLE_USERNAME`, `KAGGLE_KEY`, or a persisted `kaggle.json` as runtime dependencies.
+They are deliberately rejected because they can override per-account configuration during Kaggle
+authentication.
 
-Never expose token values to ChatGPT, Issues, source files, artifacts, or logs.
+Do not commit secrets, put them in GitHub Issues, or paste them into ChatGPT.
 
-## 4. Validate every token before compute
+## 5. Direct authentication behavior
 
-Open a GitHub Issue with a title starting exactly:
+The gateway creates one isolated `KaggleApi()` instance per account and performs exactly:
+
+```python
+api = KaggleApi()
+api.set_config_value(api.CONFIG_NAME_USER, username)
+api.set_config_value(api.CONFIG_NAME_KEY, token)
+api.authenticate()
+api.kernels_list(page_size=1)
+```
+
+Before calling `set_config_value`, the gateway gives the instance its own temporary config path so
+parallel accounts do not overwrite a shared `~/.kaggle/kaggle.json`.
+
+## 6. Install development/runtime dependencies
+
+From the repository root:
+
+```bash
+uv sync --all-packages --dev
+```
+
+Validation:
+
+```bash
+uv run python scripts/security_gate.py
+uv run ruff check .
+uv run pytest
+uv run python -m compileall -q packages plugins
+```
+
+## 7. Start the gateway privately
+
+The gateway defaults to loopback:
+
+```bash
+uv run --package chatgpt-plugin-kaggle-gateway kaggle-gateway
+```
+
+Default endpoint host/port:
 
 ```text
-[KAGGLE-AUTH]
+127.0.0.1:8000
 ```
 
-The auth workflow performs a harmless authenticated API read for every enabled account and posts
-only sanitized `AUTH_OK` / `AUTH_FAILED` results.
+The process refuses unauthenticated non-loopback binding unless an explicit development override is
+set. Do not use that override for production. An online ChatGPT connection must expose the gateway
+through authenticated MCP transport/tunneling or an authenticated reverse proxy.
 
-Do not submit new compute until the intended accounts report `AUTH_OK`.
+## 8. Validate all accounts from MCP
 
-## 5. Recover existing Kaggle work before creating new runs
-
-If workloads already existed before this control plane was installed, discover them first with:
+First call:
 
 ```text
-[KAGGLE-INVENTORY] <optional-search-term>
+kaggle_auth_check_all(max_workers=6)
 ```
 
-Example:
+Expected shape:
 
-```text
-[KAGGLE-INVENTORY] pneumonia-v6-2-2
-```
-
-The inventory workflow uses each enabled account's `KAGGLE_API_TOKEN` and calls the official
-`kaggle kernels list -m` API path. It does **not** create datasets, kernels, or GPU runs.
-
-Use the returned `owner/kernel-slug` references to assess existing run status/output before deciding
-whether a new submission is necessary.
-
-## 6. Private source repositories
-
-The control repository's normal `GITHUB_TOKEN` is repository-scoped. If new jobs need to checkout
-a different **private** repository, add `SOURCE_GITHUB_TOKEN` as a control-repository secret. Use a
-fine-grained token with read-only Contents access limited to the intended source repositories.
-
-Public target repositories do not need a broad token.
-
-## 7. Execution profiles
-
-Profiles live in `plugins/kaggle/config/profiles.json` and are trusted configuration.
-
-A profile uses argv, not shell strings. `python-smoke` is dependency-free and is the preferred
-first end-to-end submission after tokens are validated.
-
-Do not put secrets in a profile.
-
-## 8. Open a new job Issue from ChatGPT
-
-Example two-account parallel batch body (the Issue title is `[KAGGLE-JOB] Example parallel validation`):
-
-````markdown
-<!-- chatgpt-plugins-job:v1 -->
 ```json
-{
-  "schema": "chatgpt.compute.job/v1",
-  "job_id": "example-001",
-  "source": {
-    "repository": "owner/project",
-    "commit": "0123456789abcdef0123456789abcdef01234567"
-  },
-  "tasks": [
-    {
-      "task_id": "tests-a",
-      "profile": "python-tests",
-      "account_id": "kg-01"
-    },
-    {
-      "task_id": "tests-b",
-      "profile": "python-tests",
-      "account_id": "kg-02"
-    }
-  ],
-  "repair_policy": {
-    "enabled": true,
-    "max_attempts": 2
-  }
-}
+[
+  {"account_id": "kg-01", "auth_ok": true},
+  {"account_id": "kg-02", "auth_ok": true}
+]
 ```
-````
 
-The `issues: opened` workflow validates the envelope before the selected Kaggle environment secret
-is loaded.
+A failure is contained to its account and does not terminate the gateway or the other accounts.
 
-## 9. Check status from ChatGPT
+## 9. Recover existing work before new compute
 
-Post exactly:
+Use the parallel direct-API inventory tool first:
 
 ```text
-/kaggle status
+kaggle_kernels_inventory_all(
+  search="pneumonia-v6-2-2",
+  page_size=20,
+  max_workers=6
+)
 ```
 
-The status workflow resolves machine-readable run records already present on the Issue and loads
-only the corresponding account environment.
+For every discovered `owner/kernel`:
 
-For terminal tasks it uploads sanitized evidence as a GitHub Actions artifact and posts the
-failure category/fingerprint (when applicable) to the Issue.
+```text
+kaggle_kernel_status(account_id, kernel_ref)
+kaggle_kernel_logs(account_id, kernel_ref)
+```
 
-## 10. Repair
+This stage is read-only. Do not create or restart compute until the existing runs are classified.
 
-A failed source-level task is analyzed in ChatGPT. Any repair must target a new commit. Re-run by
-opening a new job Issue that references the new commit. Do not rewrite or delete the old run record.
+## 10. CI boundary
 
-Authentication, quota, network, and provider failures never trigger source-code repair.
+`.github/workflows/ci.yml` validates source only. It must never receive Kaggle credentials.
+The security gate fails if an operational `.github/workflows/kaggle-*.yml` workflow is added or if
+the direct gateway source introduces subprocess/CLI execution.
+
+## 11. Next stage after recovery
+
+After the existing runs are understood, direct write tools can be added to the same `KaggleApiPool`
+for controlled submission/retry. They must remain direct Python API calls and require explicit
+write semantics; they must not be mislabeled as read-only MCP tools.
