@@ -1,4 +1,24 @@
 {
+  "python-smoke": {
+    "description": "Dependency-free end-to-end smoke test for the Kaggle bridge.",
+    "capabilities": [
+      "cpu"
+    ],
+    "internet": false,
+    "steps": [
+      {
+        "argv": [
+          "python",
+          "-c",
+          "import json, pathlib, sys; pathlib.Path('smoke-result.json').write_text(json.dumps({'ok': True, 'python': sys.version}), encoding='utf-8'); print('CHATGPT_PLUGINS_SMOKE_OK')"
+        ],
+        "cwd": "."
+      }
+    ],
+    "artifact_globs": [
+      "source/smoke-result.json"
+    ]
+  },
   "python-tests": {
     "description": "Run the project's Python tests without invoking a shell.",
     "capabilities": [
