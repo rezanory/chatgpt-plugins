@@ -1,142 +1,93 @@
-# Security Model — V0.1 Remote Kaggle Gateway
+# Security Model — V0.1 Kaggle Gateway
 
 ## Trust boundaries
 
-1. **ChatGPT conversation** — requests work but never receives Kaggle credentials.
-2. **Cloudflare Access/OAuth** — authenticates the MCP client/user.
-3. **Cloudflare Worker** — validates the Access JWT and is the public `/mcp` boundary.
-4. **Cloudflare Container** — private Python runtime for the direct Kaggle gateway.
-5. **Per-account KaggleApi slot** — isolated client/config/lock.
-6. **Kaggle API** — external provider boundary.
-7. **Kaggle outputs/logs** — external/untrusted data sanitized before ChatGPT.
-8. **GitHub repository/CI** — source and validation only; no Kaggle runtime credentials.
+1. **ChatGPT conversation** — requests work but never contains Kaggle credentials.
+2. **Custom MCP capability path** — protects read/recovery access to the Worker.
+3. **Cloudflare Worker Free** — active public runtime and direct Kaggle HTTPS client.
+4. **Kaggle API** — external provider boundary.
+5. **Kaggle logs/outputs** — untrusted external data returned in bounded form.
+6. **GitHub connector/webhook** — later write control and persistent idempotency journal.
+7. **GitHub Actions** — source validation/deployment only; no Kaggle credentials or operations.
 
-The user's PC is not a production trust or runtime boundary.
+The user's PC is not a production trust/runtime boundary.
 
 ## Secret rules
 
-- Kaggle credential values are never committed to Git.
-- Production Kaggle credentials are Cloudflare Secrets.
-- GitHub Actions does not receive Kaggle runtime credentials.
-- The account registry stores only public metadata and secret-reference names.
-- Process-global `KAGGLE_API_TOKEN`, `KAGGLE_USERNAME`, and `KAGGLE_KEY` are rejected.
-- Every account gets a separate temporary config directory/file before `set_config_value()`.
-- POSIX temporary directory/file permissions are `0700`/`0600`.
-- Temporary credential files are removed at shutdown and on failed client construction.
+Cloudflare Worker Secrets hold Kaggle API keys. The source stores only public account IDs/usernames.
+GitHub Actions must never receive any `CGP_KAGGLE_*_TOKEN`, `KAGGLE_API_TOKEN`, `KAGGLE_USERNAME`,
+or `KAGGLE_KEY` value.
 
-## Kaggle authentication isolation
+Read/recovery requires six account tokens plus `CGP_MCP_PATH_SECRET`. Later write control additionally
+requires `CGP_GITHUB_WEBHOOK_SECRET` and a repository-scoped `CGP_GITHUB_TOKEN`.
 
-```python
-api = KaggleApi()
-api.set_config_value(api.CONFIG_NAME_USER, username)
-api.set_config_value(api.CONFIG_NAME_KEY, token)
-api.authenticate()
-api.kernels_list(page_size=1)
-```
+## Kaggle authentication
 
-No shared operational `KaggleApi` instance or shared `~/.kaggle/kaggle.json` is used.
-Authentication failure from one account is converted to an account-scoped failure rather than
-terminating the whole gateway.
-
-## Cloudflare Access boundary
-
-The Worker accepts `/mcp` only after validating `Cf-Access-Jwt-Assertion` using:
-
-- the configured Cloudflare Access team-domain JWKS;
-- the expected issuer;
-- the configured `POLICY_AUD` audience.
-
-Before proxying to the Container, the Worker removes:
+The active Worker mirrors Kaggle's official legacy key transport:
 
 ```text
-Cf-Access-Jwt-Assertion
-Cookie
+POST https://api.kaggle.com/v1/kernels.KernelsApiService/<Method>
+Authorization: Basic base64(username:api-key)
+Content-Type: application/json
 ```
 
-The Python Container therefore never needs to interpret Cloudflare user/session credentials.
+Each logical account resolves to exactly one public owner slug plus one Cloudflare Secret API key.
+Every kernel-specific operation rejects an owner that does not match the selected account.
 
-The security gate fails if required `/mcp` JWT-validation/stripping fragments disappear from the
-production Worker source.
+## MCP read boundary
 
-## Container boundary
+The root `/mcp` route is not served. `CGP_MCP_PATH_SECRET` is SHA-256 hashed and only the derived
+capability path is accepted. If the secret is absent, MCP is disabled. The eight exposed tools are
+read-only and contain no submission/cancel/delete tool.
 
-The Python MCP service may bind non-loopback in production only when
-`CGP_GATEWAY_TRUSTED_PROXY=cloudflare-container` is supplied by the production image.
+## Output/log handling
 
-The Container is single-instance in V0.1 (`max_instances=1`) so account-local client/config state is
-not silently split across replicas before durable scheduler state exists.
+The Worker:
 
-Outbound Internet access is enabled because direct Kaggle API access requires it.
+- bounds log text;
+- restricts artifact names;
+- caps artifact file count and bytes;
+- permits only HTTPS output URLs on an explicit Kaggle/Google host allowlist;
+- hashes selected files with WebCrypto SHA-256;
+- scans only bounded selected file content for an expected fingerprint;
+- never interprets logs/files as executable commands.
 
-## Direct-runtime invariant
+## Write boundary
 
-The active Python gateway must not execute the Kaggle CLI or spawn subprocesses. CI enforces:
+The write implementation exists but canonical production keeps `CGP_WRITE_ENABLED=0` until recovery
+is complete. When later enabled, a write requires all of:
 
-- no subprocess use inside `plugins/kaggle-gateway/src`;
-- no operational `.github/workflows/kaggle-*.yml` runtime;
-- no hard-coded Kaggle credential values in the Cloudflare deployment package.
+- GitHub `Issues` webhook event;
+- valid `X-Hub-Signature-256` HMAC;
+- exact configured repository;
+- allowlisted Issue actor;
+- strict `[KAGGLE-RUN]` v1 control envelope;
+- account/kernel owner match;
+- repository-scoped GitHub journal token;
+- no existing claim/receipt/failure marker for the same `job_id`.
 
-GitHub Actions may build/test the deployment package but must not authenticate to Kaggle.
+The only V0.1 provider write is `GetKernel` followed by `SaveKernel` with `SAVE_AND_RUN_ALL`.
 
-## Account/owner boundary
+## Hosting/free-only boundary
 
-Every kernel-specific operation checks:
+Active runtime is plain Cloudflare Workers Free. The security gate rejects reintroduction of:
 
 ```text
-kernel_ref.owner == registry[account_id].owner_slug
+render.yaml
+deploy/render-free/
+deploy/cloudflare-container/
 ```
 
-This prevents accidental credential crossover between configured accounts.
+The active `wrangler.jsonc` has no Container, Durable Object binding, queue, or other paid runtime
+binding. Its historical `deleted_classes` migration only cleans the previously created DO class.
 
-## External output/log handling
+## CI/deployment boundary
 
-Before Kaggle data reaches ChatGPT, the gateway:
+CI validates Python reference code, Security Gate, Ruff, tests, compile, Worker TypeScript, Wrangler
+types, and `wrangler deploy --dry-run`. The deployment workflow publishes only the Worker and checks
+`/healthz`. Neither workflow is an operational Kaggle runtime.
 
-- bounds response/log size;
-- redacts configured usernames/tokens;
-- converts SDK objects to JSON-safe data;
-- validates selected artifact names and paths;
-- rejects symlink/path escape during output recovery;
-- hashes recovered artifacts with SHA-256;
-- scans only bounded text for the expected fingerprint;
-- deletes temporary downloaded outputs after producing the manifest.
+## Multi-account policy
 
-No Kaggle log, filename, or output is interpreted as code or a command.
-
-## Read-only MCP surface
-
-The initial operational surface contains account/auth/inventory/status/log/output-manifest reads
-only. MCP annotations mark them read-only/idempotent, but security relies on the implementation:
-there is no submit/restart/cancel/delete path exposed through these tools.
-
-## GitHub / build boundary
-
-CI currently validates:
-
-```text
-Security Gate
-Ruff
-Python tests
-Python compile
-wrangler types
-TypeScript
-wrangler deploy --dry-run
-Docker image build
-```
-
-The deploy dry-run receives no Kaggle credentials and makes no operational Kaggle call.
-
-## Repair/write boundary
-
-No autonomous write/repair path is exposed in V0.1 recovery. Later write tools must:
-
-- call direct `KaggleApi` methods, never Kaggle CLI;
-- be explicitly classified as writes;
-- keep historical evidence immutable;
-- never repair source for auth/quota/policy failures;
-- use bounded retry, fingerprint, and no-progress stopping rules.
-
-## Provider policy
-
-Multi-account support is only for accounts the operator is authorized to use. The scheduler must
-not rotate accounts to evade Kaggle restrictions, quotas, or terms.
+Multiple accounts may be used only where the operator is authorized. They must not be rotated to
+evade Kaggle restrictions, quotas, rate limits, or terms.
