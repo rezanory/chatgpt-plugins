@@ -114,6 +114,9 @@ class KaggleApiPool:
             # Proven direct Python API authentication flow supplied by the operator.
             api.set_config_value(api.CONFIG_NAME_USER, username, quiet=True)
             api.set_config_value(api.CONFIG_NAME_KEY, token, quiet=True)
+            config_path = Path(api.config)
+            if os.name != "nt" and config_path.exists():
+                config_path.chmod(0o600)
             api.authenticate()
 
             # Same harmless probe already observed as auth_ok on all six active accounts.
@@ -209,8 +212,8 @@ class KaggleApiPool:
         mine: bool = True,
         sort_by: str = "dateRun",
     ) -> list[Any]:
-        if not 1 <= page_size <= 200:
-            raise ValueError("page_size must be between 1 and 200")
+        if not 1 <= page_size <= 100:
+            raise ValueError("page_size must be between 1 and 100")
         slot = self._slot(account_id)
         with slot.lock:
             values = slot.api.kernels_list(
@@ -225,13 +228,15 @@ class KaggleApiPool:
         self._validate_kernel_owner(account_id, kernel_ref)
         slot = self._slot(account_id)
         with slot.lock:
-            method = getattr(slot.api, "kernels_status", None) or getattr(
-                slot.api, "kernel_status", None
-            )
-            if method is None:
-                raise RuntimeError("installed KaggleApi does not expose a kernel status method")
-            result = method(kernel_ref)
+            result = slot.api.kernels_status(kernel_ref)
         return _jsonable(result)
+
+    def kernels_logs(self, account_id: str, kernel_ref: str) -> str:
+        self._validate_kernel_owner(account_id, kernel_ref)
+        slot = self._slot(account_id)
+        with slot.lock:
+            value = slot.api.kernels_logs(kernel_ref)
+        return str(value or "")[:200_000]
 
     def kernels_output(
         self,
@@ -239,6 +244,7 @@ class KaggleApiPool:
         kernel_ref: str,
         path: str,
         *,
+        file_pattern: str | None = None,
         force: bool = False,
         quiet: bool = True,
     ) -> Any:
@@ -250,6 +256,7 @@ class KaggleApiPool:
             result = slot.api.kernels_output(
                 kernel_ref,
                 path=str(output_path),
+                file_pattern=file_pattern,
                 force=force,
                 quiet=quiet,
             )
