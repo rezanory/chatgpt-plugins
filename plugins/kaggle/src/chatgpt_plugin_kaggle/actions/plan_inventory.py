@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
-from pathlib import Path
 
 from ..config import load_accounts
 from .common import load_github_event, write_github_output
