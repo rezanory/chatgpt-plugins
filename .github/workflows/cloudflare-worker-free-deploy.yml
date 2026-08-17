@@ -67,49 +67,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ steps.credentials.outputs.account_id }}
         run: npx wrangler deploy
 
-      - name: Report Worker secret readiness safely
-        if: steps.credentials.outputs.configured == 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ steps.credentials.outputs.account_id }}
-        shell: bash
-        run: |
-          curl --fail --silent --show-error \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/chatgpt-kaggle-gateway/secrets" \
-            -o /tmp/cloudflare-secret-list.json
-          python - /tmp/cloudflare-secret-list.json <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
-          if not payload.get("success"):
-              raise SystemExit("Cloudflare secret-name lookup returned success=false")
-          names = {
-              str(item.get("name") or "")
-              for item in (payload.get("result") or [])
-              if isinstance(item, dict) and item.get("name")
-          }
-          required = [
-              "CGP_KAGGLE_KG01_TOKEN",
-              "CGP_KAGGLE_KG02_TOKEN",
-              "CGP_KAGGLE_KG04_TOKEN",
-              "CGP_KAGGLE_KG05_TOKEN",
-              "CGP_KAGGLE_KG06_TOKEN",
-              "CGP_KAGGLE_KG07_TOKEN",
-              "CGP_MCP_PATH_TOKEN",
-          ]
-          present = [name for name in required if name in names]
-          missing = [name for name in required if name not in names]
-          print(f"READ_RECOVERY_SECRETS_PRESENT={len(present)}/{len(required)}")
-          if missing:
-              print("READ_RECOVERY_SECRETS_MISSING=" + ",".join(missing))
-          else:
-              print("READ_RECOVERY_SECRETS_READY=true")
-          # Intentionally never print the raw API payload or any secret binding text.
-          PY
-
       - name: Resolve workers.dev URL and verify health
         if: steps.credentials.outputs.configured == 'true'
         env:
