@@ -87,6 +87,11 @@ class KaggleApiPool:
                 f"{names}"
             )
         self._registry = registry
+        # Load the KaggleApi class once before any account-auth worker threads start. Importing the
+        # kaggle package performs a module-level best-effort authentication and our import wrapper
+        # temporarily redirects stdout/stderr; doing that concurrently would create process-global
+        # output-redirection races even though the account clients themselves are isolated.
+        self._api_class = _kaggle_api_class()
         self._slots: dict[str, _ClientSlot] = {}
         self._creation_locks = {
             account.account_id: threading.Lock() for account in registry.accounts
@@ -101,8 +106,7 @@ class KaggleApiPool:
             if os.name != "nt":
                 config_dir.chmod(0o700)
 
-            KaggleApi = _kaggle_api_class()
-            api = KaggleApi()
+            api = self._api_class()
 
             # Make every mutable auth/config field instance-local before set_config_value().
             api.config_dir = str(config_dir)
