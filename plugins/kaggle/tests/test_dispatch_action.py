@@ -11,11 +11,18 @@ def test_dispatch_task_builds_run_record_without_network(tmp_path: Path, monkeyp
     source.mkdir()
     (source / "app.py").write_text("print('ok')\n")
     subprocess.run(["git", "init", "-q", str(source)], check=True)
-    subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
-    subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "config", "user.name", "Test"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(source), "config", "user.email", "test@example.com"],
+        check=True,
+    )
     subprocess.run(["git", "-C", str(source), "add", "app.py"], check=True)
     subprocess.run(["git", "-C", str(source), "commit", "-qm", "init"], check=True)
-    sha = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
+    sha = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
+    ).strip()
 
     profiles = tmp_path / "profiles.json"
     profiles.write_text(
@@ -31,7 +38,11 @@ def test_dispatch_task_builds_run_record_without_network(tmp_path: Path, monkeyp
     )
     monkeypatch.setattr(dispatch_task, "create_private_dataset", lambda path: "created")
     monkeypatch.setattr(dispatch_task, "wait_dataset_ready", lambda ref: "ready")
-    monkeypatch.setattr(dispatch_task, "push_kernel", lambda path, accelerator=None: "submitted")
+    monkeypatch.setattr(
+        dispatch_task,
+        "push_kernel",
+        lambda path, accelerator=None: "submitted",
+    )
 
     comment = tmp_path / "comment.md"
     diagnostic = tmp_path / "diagnostic.md"
