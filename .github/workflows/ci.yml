@@ -13,7 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install workspace
+
+      - name: Install Python workspace
         id: sync
         continue-on-error: true
         shell: bash
@@ -26,6 +27,7 @@ jobs:
             -e plugins/kaggle \
             -e plugins/kaggle-gateway \
             'pytest>=8.4' 'ruff>=0.12' 2>&1 | tee /tmp/ci-sync.log
+
       - name: Security gate
         id: security
         if: steps.sync.outcome == 'success'
@@ -34,6 +36,7 @@ jobs:
         run: |
           set -o pipefail
           python scripts/security_gate.py 2>&1 | tee /tmp/ci-security.log
+
       - name: Ruff
         id: ruff
         if: steps.sync.outcome == 'success'
@@ -42,7 +45,8 @@ jobs:
         run: |
           set -o pipefail
           ruff check . --output-format concise 2>&1 | tee /tmp/ci-ruff.log
-      - name: Tests
+
+      - name: Python tests
         id: tests
         if: steps.sync.outcome == 'success'
         continue-on-error: true
@@ -50,7 +54,8 @@ jobs:
         run: |
           set -o pipefail
           pytest 2>&1 | tee /tmp/ci-tests.log
-      - name: Compile
+
+      - name: Python compile
         id: compile
         if: steps.sync.outcome == 'success'
         continue-on-error: true
@@ -59,12 +64,22 @@ jobs:
           set -o pipefail
           python -m compileall -q packages plugins 2>&1 | tee /tmp/ci-compile.log
 
+      - name: Cloudflare runtime typecheck
+        id: cloudflare
+        continue-on-error: true
+        working-directory: deploy/cloudflare-container
+        shell: bash
+        run: |
+          set -o pipefail
+          npm install --no-audit --no-fund 2>&1 | tee /tmp/ci-cloudflare-install.log
+          npm run check 2>&1 | tee /tmp/ci-cloudflare.log
+
       - name: Publish safe CI diagnostic
         if: >-
           always() &&
           (steps.sync.outcome == 'failure' || steps.security.outcome == 'failure' ||
            steps.ruff.outcome == 'failure' || steps.tests.outcome == 'failure' ||
-           steps.compile.outcome == 'failure')
+           steps.compile.outcome == 'failure' || steps.cloudflare.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
           SYNC_OUTCOME: ${{ steps.sync.outcome }}
@@ -72,6 +87,7 @@ jobs:
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
           COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+          CLOUDFLARE_OUTCOME: ${{ steps.cloudflare.outcome }}
         shell: bash
         run: |
           issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"[CI-DIAGNOSTIC] Latest main failure" in:title' --json number --jq '.[0].number // empty')"
@@ -87,7 +103,8 @@ jobs:
             printf -- '- ruff: `%s`\n' "$RUFF_OUTCOME"
             printf -- '- tests: `%s`\n' "$TESTS_OUTCOME"
             printf -- '- compile: `%s`\n' "$COMPILE_OUTCOME"
-            for item in sync security ruff tests compile; do
+            printf -- '- cloudflare: `%s`\n' "$CLOUDFLARE_OUTCOME"
+            for item in sync security ruff tests compile cloudflare-install cloudflare; do
               file="/tmp/ci-${item}.log"
               if [ -f "$file" ]; then
                 printf '\n### %s tail\n```text\n' "$item"
@@ -110,8 +127,9 @@ jobs:
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
           COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+          CLOUDFLARE_OUTCOME: ${{ steps.cloudflare.outcome }}
         shell: bash
         run: |
-          for value in "$SYNC_OUTCOME" "$SECURITY_OUTCOME" "$RUFF_OUTCOME" "$TESTS_OUTCOME" "$COMPILE_OUTCOME"; do
+          for value in "$SYNC_OUTCOME" "$SECURITY_OUTCOME" "$RUFF_OUTCOME" "$TESTS_OUTCOME" "$COMPILE_OUTCOME" "$CLOUDFLARE_OUTCOME"; do
             if [ "$value" = 'failure' ]; then exit 1; fi
           done
