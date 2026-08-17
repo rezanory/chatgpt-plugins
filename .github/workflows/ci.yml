@@ -64,23 +64,23 @@ jobs:
           set -o pipefail
           python -m compileall -q packages plugins 2>&1 | tee /tmp/ci-compile.log
 
-      - name: Cloudflare runtime validation
-        id: cloudflare
+      - name: Render Free Docker validation
+        id: render
         continue-on-error: true
-        working-directory: deploy/cloudflare-container
         shell: bash
         run: |
           set -o pipefail
-          npm install --no-audit --no-fund 2>&1 | tee /tmp/ci-cloudflare-install.log
-          npm run check 2>&1 | tee /tmp/ci-cloudflare.log
-          npm run deploy:dry 2>&1 | tee /tmp/ci-cloudflare-dry.log
+          docker build \
+            -f deploy/render-free/Dockerfile \
+            -t chatgpt-kaggle-gateway-render-ci \
+            . 2>&1 | tee /tmp/ci-render.log
 
       - name: Publish safe CI diagnostic
         if: >-
           always() &&
           (steps.sync.outcome == 'failure' || steps.security.outcome == 'failure' ||
            steps.ruff.outcome == 'failure' || steps.tests.outcome == 'failure' ||
-           steps.compile.outcome == 'failure' || steps.cloudflare.outcome == 'failure')
+           steps.compile.outcome == 'failure' || steps.render.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
           SYNC_OUTCOME: ${{ steps.sync.outcome }}
@@ -88,7 +88,7 @@ jobs:
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
           COMPILE_OUTCOME: ${{ steps.compile.outcome }}
-          CLOUDFLARE_OUTCOME: ${{ steps.cloudflare.outcome }}
+          RENDER_OUTCOME: ${{ steps.render.outcome }}
         shell: bash
         run: |
           issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"[CI-DIAGNOSTIC] Latest main failure" in:title' --json number --jq '.[0].number // empty')"
@@ -104,8 +104,8 @@ jobs:
             printf -- '- ruff: `%s`\n' "$RUFF_OUTCOME"
             printf -- '- tests: `%s`\n' "$TESTS_OUTCOME"
             printf -- '- compile: `%s`\n' "$COMPILE_OUTCOME"
-            printf -- '- cloudflare: `%s`\n' "$CLOUDFLARE_OUTCOME"
-            for item in sync security ruff tests compile cloudflare-install cloudflare cloudflare-dry; do
+            printf -- '- render: `%s`\n' "$RENDER_OUTCOME"
+            for item in sync security ruff tests compile render; do
               file="/tmp/ci-${item}.log"
               if [ -f "$file" ]; then
                 printf '\n### %s tail\n```text\n' "$item"
@@ -128,9 +128,9 @@ jobs:
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
           COMPILE_OUTCOME: ${{ steps.compile.outcome }}
-          CLOUDFLARE_OUTCOME: ${{ steps.cloudflare.outcome }}
+          RENDER_OUTCOME: ${{ steps.render.outcome }}
         shell: bash
         run: |
-          for value in "$SYNC_OUTCOME" "$SECURITY_OUTCOME" "$RUFF_OUTCOME" "$TESTS_OUTCOME" "$COMPILE_OUTCOME" "$CLOUDFLARE_OUTCOME"; do
+          for value in "$SYNC_OUTCOME" "$SECURITY_OUTCOME" "$RUFF_OUTCOME" "$TESTS_OUTCOME" "$COMPILE_OUTCOME" "$RENDER_OUTCOME"; do
             if [ "$value" = 'failure' ]; then exit 1; fi
           done
