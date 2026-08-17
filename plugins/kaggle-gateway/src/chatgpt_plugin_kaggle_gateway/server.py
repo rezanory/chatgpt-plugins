@@ -97,11 +97,12 @@ def kaggle_kernels_inventory_all(
     enabled = [account for account in registry.accounts if account.enabled]
     workers = max(1, min(max_workers, len(enabled), 16)) if enabled else 1
     results: dict[str, dict[str, Any]] = {}
+    pool = _pool()
 
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="kaggle-inventory") as executor:
         futures = {
             executor.submit(
-                _pool().kernels_list,
+                pool.kernels_list,
                 account.account_id,
                 search=search or None,
                 page_size=page_size,
@@ -118,12 +119,12 @@ def kaggle_kernels_inventory_all(
                     "ok": True,
                     "kernels": future.result(),
                 }
-            except Exception as exc:
+            except BaseException as exc:
                 results[account_id] = {
                     "account_id": account_id,
                     "ok": False,
                     "error_type": exc.__class__.__name__,
-                    "error": str(exc)[:1000],
+                    "error": pool.safe_error(account_id, exc),
                 }
 
     return [results[account.account_id] for account in enabled]
