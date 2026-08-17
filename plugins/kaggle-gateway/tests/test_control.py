@@ -8,7 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from chatgpt_plugin_kaggle_gateway.control import (
     CONTROL_MARKER,
     CONTROL_SCHEMA,
