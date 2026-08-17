@@ -1,0 +1,44 @@
+[
+  {
+    "account_id": "kg-01",
+    "owner_slug": "azadka",
+    "token_env": "KAGGLE_API_TOKEN_KG_01",
+    "enabled": true
+  },
+  {
+    "account_id": "kg-02",
+    "owner_slug": "radlinaradlina",
+    "token_env": "KAGGLE_API_TOKEN_KG_02",
+    "enabled": true
+  },
+  {
+    "account_id": "kg-03",
+    "owner_slug": "re-zanory-placeholder",
+    "token_env": "KAGGLE_API_TOKEN_KG_03",
+    "enabled": false
+  },
+  {
+    "account_id": "kg-04",
+    "owner_slug": "reyhanehazad",
+    "token_env": "KAGGLE_API_TOKEN_KG_04",
+    "enabled": true
+  },
+  {
+    "account_id": "kg-05",
+    "owner_slug": "trickermark",
+    "token_env": "KAGGLE_API_TOKEN_KG_05",
+    "enabled": true
+  },
+  {
+    "account_id": "kg-06",
+    "owner_slug": "msdenis",
+    "token_env": "KAGGLE_API_TOKEN_KG_06",
+    "enabled": true
+  },
+  {
+    "account_id": "kg-07",
+    "owner_slug": "nisabulutmark",
+    "token_env": "KAGGLE_API_TOKEN_KG_07",
+    "enabled": true
+  }
+]
