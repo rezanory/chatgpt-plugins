@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   test:
@@ -14,12 +15,94 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - name: Sync workspace
-        run: uv sync --all-packages --dev
+        id: sync
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          uv sync --all-packages --dev 2>&1 | tee /tmp/ci-sync.log
       - name: Security gate
-        run: uv run python scripts/security_gate.py
+        id: security
+        if: steps.sync.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run python scripts/security_gate.py 2>&1 | tee /tmp/ci-security.log
       - name: Ruff
-        run: uv run ruff check .
+        id: ruff
+        if: steps.sync.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run ruff check . 2>&1 | tee /tmp/ci-ruff.log
       - name: Tests
-        run: uv run pytest
+        id: tests
+        if: steps.sync.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest 2>&1 | tee /tmp/ci-tests.log
       - name: Compile
-        run: uv run python -m compileall -q packages plugins
+        id: compile
+        if: steps.sync.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run python -m compileall -q packages plugins 2>&1 | tee /tmp/ci-compile.log
+
+      - name: Publish safe CI diagnostic
+        if: >-
+          always() &&
+          (steps.sync.outcome == 'failure' || steps.security.outcome == 'failure' ||
+           steps.ruff.outcome == 'failure' || steps.tests.outcome == 'failure' ||
+           steps.compile.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYNC_OUTCOME: ${{ steps.sync.outcome }}
+          SECURITY_OUTCOME: ${{ steps.security.outcome }}
+          RUFF_OUTCOME: ${{ steps.ruff.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+        shell: bash
+        run: |
+          issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"[CI-DIAGNOSTIC]" in:title' --json number --jq '.[0].number // empty')"
+          if [ -z "$issue_number" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title '[CI-DIAGNOSTIC] Latest main failure' --body 'Machine-generated, secret-free CI diagnostics for ChatGPT inspection.' >/dev/null
+            issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"[CI-DIAGNOSTIC]" in:title' --json number --jq '.[0].number // empty')"
+          fi
+
+          {
+            printf 'CI diagnostic for commit `%s` / run `%s`.\n\n' "$GITHUB_SHA" "$GITHUB_RUN_ID"
+            printf -- '- sync: `%s`\n' "$SYNC_OUTCOME"
+            printf -- '- security: `%s`\n' "$SECURITY_OUTCOME"
+            printf -- '- ruff: `%s`\n' "$RUFF_OUTCOME"
+            printf -- '- tests: `%s`\n' "$TESTS_OUTCOME"
+            printf -- '- compile: `%s`\n' "$COMPILE_OUTCOME"
+            for item in sync security ruff tests compile; do
+              file="/tmp/ci-${item}.log"
+              if [ -f "$file" ]; then
+                printf '\n### %s tail\n```text\n' "$item"
+                tail -n 80 "$file" | sed -E 's/(token|secret|password|api[_-]?key)([=: ]+)[^ ]+/\1\2[REDACTED]/Ig' | tail -c 8000
+                printf '\n```\n'
+              fi
+            done
+          } > /tmp/ci-diagnostic.md
+          gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body-file /tmp/ci-diagnostic.md
+
+      - name: Enforce CI result
+        if: always()
+        env:
+          SYNC_OUTCOME: ${{ steps.sync.outcome }}
+          SECURITY_OUTCOME: ${{ steps.security.outcome }}
+          RUFF_OUTCOME: ${{ steps.ruff.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+        shell: bash
+        run: |
+          for value in "$SYNC_OUTCOME" "$SECURITY_OUTCOME" "$RUFF_OUTCOME" "$TESTS_OUTCOME" "$COMPILE_OUTCOME"; do
+            if [ "$value" = 'failure' ]; then exit 1; fi
+          done
