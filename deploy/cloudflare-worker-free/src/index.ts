@@ -57,7 +57,7 @@ function buildServer(env: WorkerEnv): McpServer {
   server.registerTool(
     "kaggle_auth_check_all",
     {
-      description: "Verify all six enabled Kaggle accounts in parallel using direct HTTPS API calls.",
+      description: "Verify all six enabled Kaggle worker accounts in parallel using direct HTTPS API calls.",
       inputSchema: z.object({ max_workers: z.number().int().min(1).max(6).default(6) }),
       annotations: READ_ONLY,
     },
@@ -82,7 +82,7 @@ function buildServer(env: WorkerEnv): McpServer {
   server.registerTool(
     "kaggle_kernels_inventory_all",
     {
-      description: "Search every enabled account's own kernels without submitting new compute.",
+      description: "Search every enabled worker account's own kernels without submitting new compute.",
       inputSchema: z.object({
         search: z.string().min(1).max(200),
         page_size: z.number().int().min(1).max(100).default(20),
@@ -187,8 +187,8 @@ export default {
         status: "ready",
         mcp_configured: Boolean(privateMcpPath(env)),
         kaggle_tokens_configured: [
-          env.CGP_KAGGLE_KG01_TOKEN,
           env.CGP_KAGGLE_KG02_TOKEN,
+          env.CGP_KAGGLE_KG03_TOKEN,
           env.CGP_KAGGLE_KG04_TOKEN,
           env.CGP_KAGGLE_KG05_TOKEN,
           env.CGP_KAGGLE_KG06_TOKEN,
