@@ -72,7 +72,7 @@ jobs:
               except Exception as exc:
                   return 0, {"error_type": type(exc).__name__, "error": str(exc)[:1000]}
 
-          # Gate recovery on the corrected six-worker identity map being live.
+          # Gate recovery on both corrected account mapping and the tail/file-diagnostics Worker version.
           auth_status = 0
           auth = {}
           ready = False
@@ -84,7 +84,21 @@ jobs:
                   for item in workers or []
                   if isinstance(item, dict) and item.get("auth_ok")
               }
-              if auth_status == 200 and observed == expected_workers:
+              manifest_status, manifest_probe = get(
+                  "/output-manifest",
+                  {
+                      "account_id": "kg-02",
+                      "kernel_ref": "radlinaradlina/pneumonia-v6-2-2-train-w02-m01-r320",
+                      "artifact_name": "__version_probe__",
+                  },
+                  timeout=45,
+              )
+              new_diagnostics_live = (
+                  manifest_status == 200
+                  and isinstance(manifest_probe, dict)
+                  and "available_file_count" in manifest_probe
+              )
+              if auth_status == 200 and observed == expected_workers and new_diagnostics_live:
                   ready = True
                   break
               time.sleep(3)
@@ -95,19 +109,21 @@ jobs:
                           "auth_http": auth_status,
                           "worker_auth": auth.get("workers") if isinstance(auth, dict) else auth,
                           "expected_workers": expected_workers,
+                          "diagnostics_version_live": False,
                           "accounts": [],
                       },
                       indent=2,
                   ),
                   encoding="utf-8",
               )
-              raise SystemExit("corrected six-worker mapping did not become live")
+              raise SystemExit("corrected tail/file diagnostics Worker version did not become live")
 
           inventory_status, inventory = get("/inventory", {"search": search, "page_size": 20})
 
           report = {
               "auth_http": auth_status,
               "inventory_http": inventory_status,
+              "diagnostics_version_live": True,
               "worker_auth": auth.get("workers") if isinstance(auth, dict) else auth,
               "accounts": [],
           }
@@ -165,13 +181,17 @@ jobs:
           print(json.dumps({
               "auth_http": auth_status,
               "inventory_http": inventory_status,
+              "diagnostics_version_live": True,
               "selected": [
                   {
                       "account_id": a.get("account_id"),
                       "ref": a.get("selected_ref"),
                       "status_http": a.get("status_http"),
                       "logs_http": a.get("logs_http"),
+                      "marker": a.get("log_has_execution_marker"),
+                      "fingerprint": a.get("log_has_expected_fingerprint"),
                       "manifest_http": a.get("manifest_http"),
+                      "available_file_count": (a.get("manifest") or {}).get("available_file_count"),
                   }
                   for a in report["accounts"]
               ],
@@ -198,10 +218,11 @@ jobs:
 
           report = json.loads(path.read_text(encoding="utf-8"))
           lines = [
-              "## Live recovery check — exact refs/status/evidence",
+              "## Live recovery check — tail/file diagnostics",
               "",
               f"- auth HTTP: `{report.get('auth_http')}`",
               f"- inventory HTTP: `{report.get('inventory_http')}`",
+              f"- diagnostics version live: `{report.get('diagnostics_version_live')}`",
               "",
               "### Worker identity map",
               "```json",
@@ -227,11 +248,12 @@ jobs:
                           "log_chars": item.get("log_chars"),
                           "log_has_execution_marker": item.get("log_has_execution_marker"),
                           "log_has_expected_fingerprint": item.get("log_has_expected_fingerprint"),
+                          "log_tail": item.get("log_tail"),
                           "manifest_http": item.get("manifest_http"),
                           "manifest": item.get("manifest"),
                       },
                       indent=2,
-                  )[:18000],
+                  )[:24000],
                   "```",
               ]
           Path("/tmp/recovery-check.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
