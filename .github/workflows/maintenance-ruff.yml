@@ -1,0 +1,54 @@
+name: maintenance-ruff
+run-name: "Ruff maintenance for issue #${{ github.event.issue.number }}"
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  format:
+    if: github.event.issue.title == '[MAINTENANCE] Ruff autofix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Sync workspace
+        run: uv sync --all-packages --dev
+      - name: Apply formatter and safe Ruff fixes
+        run: |
+          uv run ruff format .
+          uv run ruff check . --fix
+      - name: Validate security
+        run: uv run python scripts/security_gate.py
+      - name: Validate tests
+        run: uv run pytest
+      - name: Validate compile
+        run: uv run python -m compileall -q packages plugins
+      - name: Commit only mechanical maintenance changes
+        id: commit
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages plugins scripts
+          git commit -m 'Apply safe Ruff formatting fixes'
+          git push origin HEAD:main
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+      - name: Report completion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          CHANGED: ${{ steps.commit.outputs.changed }}
+        run: |
+          printf 'Ruff maintenance completed. changed=`%s`. Security/tests/compile passed before commit.\n' "$CHANGED" > /tmp/report.md
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
