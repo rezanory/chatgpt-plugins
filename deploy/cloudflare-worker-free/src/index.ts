@@ -17,6 +17,7 @@ import {
   publicMaster,
   type WorkerEnv,
 } from "./kaggle";
+import { launchV622Wave, projectControlAuthorized, v622WavePlan } from "./matrix-run";
 import { v622RecoveryStatus, v622ShardArtifacts } from "./recovery";
 
 const READ_ONLY = {
@@ -326,6 +327,28 @@ export default {
     if (url.pathname === "/recovery/v6-2-2/shard-artifacts" && request.method === "GET") {
       try {
         return json(await v622ShardArtifacts(env, url.searchParams.get("shard") ?? ""));
+      } catch (error) {
+        return errorResponse(error);
+      }
+    }
+
+    if (url.pathname === "/recovery/v6-2-2/wave-plan" && request.method === "GET") {
+      try {
+        return json({ wave: Number(url.searchParams.get("wave") ?? "2"), tasks: v622WavePlan(Number(url.searchParams.get("wave") ?? "2")) });
+      } catch (error) {
+        return errorResponse(error);
+      }
+    }
+
+    if (url.pathname === "/control/v6-2-2/wave" && request.method === "POST") {
+      if (!projectControlAuthorized(request, env)) return new Response("Forbidden", { status: 403 });
+      try {
+        const body: unknown = await request.json();
+        const value = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        const wave = Number(value.wave);
+        return json(await launchV622Wave(env, wave));
       } catch (error) {
         return errorResponse(error);
       }
