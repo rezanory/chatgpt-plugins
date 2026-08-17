@@ -1,10 +1,10 @@
 [project]
 name = "chatgpt-plugin-kaggle-gateway"
 version = "0.1.0"
-description = "Direct multi-account MCP gateway from ChatGPT to Kaggle official MCP"
+description = "Direct multi-account KaggleApi gateway for ChatGPT"
 requires-python = ">=3.11"
 dependencies = [
-  "httpx>=0.28,<1",
+  "kaggle==2.2.4",
   "mcp>=1.28.1,<2",
 ]
 
