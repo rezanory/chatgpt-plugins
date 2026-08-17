@@ -1,0 +1,56 @@
+name: v622-project-plan-report
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-project-plan-report.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read recovered project plan
+        shell: bash
+        run: |
+          url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/shard-artifacts?shard=PLAN'
+          ok=0
+          for attempt in $(seq 1 30); do
+            code="$(curl --silent --show-error --max-time 90 -o /tmp/v622-plan.json -w '%{http_code}' "$url" || true)"
+            if [ "$code" = '200' ] && python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/v622-plan.json').read_text(encoding='utf-8'))
+          assert value.get('source_kernel')
+          assert isinstance(value.get('planned_model_codes'), list)
+          PY
+            then
+              ok=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$ok" != '1' ]; then
+            echo 'Recovered V6.2.2 project-plan endpoint did not become ready.' >&2
+            cat /tmp/v622-plan.json 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Publish recovered project plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/v622-plan.json').read_text(encoding='utf-8'))
+          body = '## Recovered V6.2.2 project execution contract\n\n```json\n' + json.dumps(value, indent=2) + '\n```\n'
+          Path('/tmp/v622-plan.md').write_text(body, encoding='utf-8')
+          PY
+          gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/v622-plan.md
