@@ -24,31 +24,35 @@ jobs:
         working-directory: deploy/cloudflare-worker-free
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         shell: bash
         run: |
-          npx wrangler secret list --format json > /tmp/secret-list.json
+          account_id="$(printf '%s' "$RAW_CLOUDFLARE_ACCOUNT_ID" | tr -d '[:space:]')"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$account_id"
+          echo "::add-mask::$account_id"
+          export CLOUDFLARE_ACCOUNT_ID="$account_id"
+          npx wrangler secret list > /tmp/secret-list.json
           python - <<'PY'
           import json
           from pathlib import Path
           value = json.loads(Path('/tmp/secret-list.json').read_text(encoding='utf-8'))
-          names = set()
-          if isinstance(value, list):
-              for item in value:
-                  if isinstance(item, dict) and isinstance(item.get('name'), str):
-                      names.add(item['name'])
-          elif isinstance(value, dict):
-              for item in value.get('result', value.get('secrets', [])) or []:
-                  if isinstance(item, dict) and isinstance(item.get('name'), str):
-                      names.add(item['name'])
+          names = {
+              item.get('name') for item in value
+              if isinstance(item, dict) and isinstance(item.get('name'), str)
+          } if isinstance(value, list) else set()
           readiness = {
               'github_webhook_secret_configured': 'CGP_GITHUB_WEBHOOK_SECRET' in names,
               'github_journal_token_configured': 'CGP_GITHUB_TOKEN' in names,
               'mcp_path_configured': 'CGP_MCP_PATH_TOKEN' in names,
               'master_configured': 'CGP_KAGGLE_MASTER_TOKEN' in names,
-              'worker_token_count': sum(1 for i in range(2, 8) if f'CGP_KAGGLE_KG{i:02d}_TOKEN' in names),
+              'worker_token_count': sum(
+                  1 for i in range(2, 8) if f'CGP_KAGGLE_KG{i:02d}_TOKEN' in names
+              ),
           }
-          Path('/tmp/write-readiness.json').write_text(json.dumps(readiness, indent=2), encoding='utf-8')
+          Path('/tmp/write-readiness.json').write_text(
+              json.dumps(readiness, indent=2), encoding='utf-8'
+          )
           PY
       - name: Publish readiness
         env:
