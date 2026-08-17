@@ -148,15 +148,11 @@ function buildServer(env: WorkerEnv): McpServer {
   return server;
 }
 
-function hex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function expectedMcpPath(env: WorkerEnv): Promise<string | null> {
-  const secret = env.CGP_MCP_PATH_SECRET?.trim();
-  if (!secret) return null;
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
-  return `/mcp/${hex(digest)}`;
+function privateMcpPath(env: WorkerEnv): string | null {
+  const token = env.CGP_MCP_PATH_TOKEN?.trim();
+  if (!token) return null;
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) return null;
+  return `/mcp/${token}`;
 }
 
 function json(value: unknown, status = 200): Response {
@@ -177,7 +173,7 @@ export default {
         service: "chatgpt-kaggle-gateway",
         transport: "cloudflare-workers-free",
         status: "ready",
-        mcp_configured: Boolean(env.CGP_MCP_PATH_SECRET?.trim()),
+        mcp_configured: Boolean(privateMcpPath(env)),
         kaggle_tokens_configured: [
           env.CGP_KAGGLE_KG01_TOKEN,
           env.CGP_KAGGLE_KG02_TOKEN,
@@ -194,7 +190,7 @@ export default {
       return handleGitHubWebhook(request, env, ctx);
     }
 
-    const mcpPath = await expectedMcpPath(env);
+    const mcpPath = privateMcpPath(env);
     if (!mcpPath || url.pathname !== mcpPath) return new Response("Not found", { status: 404 });
 
     const handler = createMcpHandler(() => buildServer(env));
