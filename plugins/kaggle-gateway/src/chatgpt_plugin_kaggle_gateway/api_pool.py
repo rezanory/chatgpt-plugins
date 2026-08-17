@@ -88,6 +88,9 @@ class KaggleApiPool:
             )
         self._registry = registry
         self._slots: dict[str, _ClientSlot] = {}
+        self._creation_locks = {
+            account.account_id: threading.Lock() for account in registry.accounts
+        }
         self._closed = False
         self._pool_lock = threading.RLock()
 
@@ -126,15 +129,40 @@ class KaggleApiPool:
             raise
 
     def _slot(self, account_id: str) -> _ClientSlot:
-        if self._closed:
-            raise RuntimeError("KaggleApiPool is closed")
         account = self._registry.get(account_id)
         with self._pool_lock:
-            slot = self._slots.get(account_id)
-            if slot is None:
-                slot = self._build_slot(account)
+            if self._closed:
+                raise RuntimeError("KaggleApiPool is closed")
+            existing = self._slots.get(account_id)
+            if existing is not None:
+                return existing
+
+        # Serialize creation only for the same logical account. Different accounts authenticate
+        # concurrently and therefore preserve the desired six-way parallel connection behavior.
+        creation_lock = self._creation_locks[account_id]
+        with creation_lock:
+            with self._pool_lock:
+                if self._closed:
+                    raise RuntimeError("KaggleApiPool is closed")
+                existing = self._slots.get(account_id)
+                if existing is not None:
+                    return existing
+
+            slot = self._build_slot(account)
+            with self._pool_lock:
+                if self._closed:
+                    shutil.rmtree(slot.config_dir, ignore_errors=True)
+                    raise RuntimeError("KaggleApiPool was closed during account initialization")
                 self._slots[account_id] = slot
             return slot
+
+    def _safe_error(self, account_id: str, exc: Exception) -> str:
+        text = str(exc)
+        account = self._registry.get(account_id, require_enabled=False)
+        token = os.getenv(account.token_env, "")
+        if token:
+            text = text.replace(token, "[REDACTED]")
+        return text[:1000]
 
     def auth_check(self, account_id: str) -> dict[str, Any]:
         slot = self._slot(account_id)
@@ -168,7 +196,7 @@ class KaggleApiPool:
                         "account_id": account_id,
                         "auth_ok": False,
                         "error_type": exc.__class__.__name__,
-                        "error": str(exc)[:1000],
+                        "error": self._safe_error(account_id, exc),
                     }
         return [results[account.account_id] for account in enabled]
 
