@@ -77,7 +77,15 @@ def run():
                 raise RuntimeError('profile cwd escaped source root')
             log.write('$ ' + json.dumps(argv) + '\\n')
             log.flush()
-            proc = subprocess.run(argv, cwd=cwd, shell=False, text=True, stdout=log, stderr=subprocess.STDOUT, env=env)
+            proc = subprocess.run(
+                argv,
+                cwd=cwd,
+                shell=False,
+                text=True,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
             if proc.returncode != 0:
                 raise RuntimeError(f'step failed with exit code {{proc.returncode}}: {{argv[0]}}')
     artifacts = []
