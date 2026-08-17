@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import hashlib
+import json
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,6 +16,7 @@ from starlette.responses import JSONResponse
 from .api_pool import KaggleApiPool
 from .artifacts import build_output_manifest
 from .config import load_registry
+from .control import ControlCommand, ControlDispatcher, verify_github_signature
 
 _mcp = MCPServer(
     "Kaggle Direct Gateway",
@@ -26,6 +28,8 @@ _mcp = MCPServer(
 )
 _pool_instance: KaggleApiPool | None = None
 _pool_lock = threading.Lock()
+_dispatcher_instance: ControlDispatcher | None = None
+_dispatcher_lock = threading.Lock()
 _READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
     destructiveHint=False,
@@ -44,6 +48,16 @@ def _pool() -> KaggleApiPool:
     return _pool_instance
 
 
+def _dispatcher() -> ControlDispatcher:
+    global _dispatcher_instance
+    if _dispatcher_instance is not None:
+        return _dispatcher_instance
+    with _dispatcher_lock:
+        if _dispatcher_instance is None:
+            _dispatcher_instance = ControlDispatcher(_pool())
+    return _dispatcher_instance
+
+
 def _close_pool() -> None:
     global _pool_instance
     with _pool_lock:
@@ -60,6 +74,58 @@ atexit.register(_close_pool)
 async def healthz(_request: Request) -> JSONResponse:
     """Public liveness endpoint for the free hosting platform."""
     return JSONResponse({"service": "chatgpt-kaggle-gateway", "status": "ready"})
+
+
+@_mcp.custom_route("/github/webhook", methods=["POST"])
+async def github_webhook(request: Request) -> JSONResponse:
+    """Accept signed GitHub Issue events and dispatch direct KaggleApi writes."""
+    body = await request.body()
+    secret = os.getenv("CGP_GITHUB_WEBHOOK_SECRET", "")
+    signature = request.headers.get("x-hub-signature-256", "")
+    if not verify_github_signature(secret, body, signature):
+        return JSONResponse({"accepted": False, "reason": "invalid_signature"}, status_code=401)
+
+    event = request.headers.get("x-github-event", "")
+    if event != "issues":
+        return JSONResponse({"accepted": False, "reason": "ignored_event"}, status_code=202)
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return JSONResponse({"accepted": False, "reason": "invalid_json"}, status_code=400)
+
+    if payload.get("action") != "opened":
+        return JSONResponse({"accepted": False, "reason": "ignored_action"}, status_code=202)
+
+    expected_repo = os.getenv("CGP_CONTROL_REPOSITORY", "rezanory/chatgpt-plugins")
+    repository = str((payload.get("repository") or {}).get("full_name") or "")
+    if repository != expected_repo:
+        return JSONResponse({"accepted": False, "reason": "wrong_repository"}, status_code=403)
+
+    issue = payload.get("issue") or {}
+    actor = str((issue.get("user") or {}).get("login") or "")
+    allowed = {
+        item.strip().casefold()
+        for item in os.getenv("CGP_GITHUB_ALLOWED_ACTORS", "rezanory").split(",")
+        if item.strip()
+    }
+    if actor.casefold() not in allowed:
+        return JSONResponse({"accepted": False, "reason": "actor_not_allowed"}, status_code=403)
+
+    try:
+        issue_number = int(issue["number"])
+        command = ControlCommand.from_issue(str(issue.get("title") or ""), str(issue.get("body") or ""))
+        accepted = _dispatcher().accept(issue_number, command)
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        return JSONResponse(
+            {"accepted": False, "reason": exc.__class__.__name__, "detail": str(exc)[:500]},
+            status_code=400,
+        )
+
+    return JSONResponse(
+        {"accepted": accepted, "job_id": command.job_id, "duplicate": not accepted},
+        status_code=202,
+    )
 
 
 @_mcp.tool(annotations=_READ_ONLY)
@@ -170,12 +236,6 @@ def kaggle_kernel_output_manifest(
 
 
 def _mcp_path_secret() -> tuple[str, bool]:
-    """Return a URL-safe secret MCP path for hosted runtimes.
-
-    Render can generate a high-entropy environment value. We hash it before using it in the URL so
-    arbitrary base64 characters never become part of the path. The resulting path is a bearer-like
-    capability URL and must be treated as sensitive.
-    """
     secret = os.getenv("CGP_MCP_PATH_SECRET", "").strip()
     if not secret:
         return "/mcp", False
@@ -201,8 +261,6 @@ def main() -> None:
         )
 
     if render_runtime:
-        # Render logs are private to the service owner. This is the only place the capability path
-        # is surfaced so the operator can configure the ChatGPT custom MCP endpoint.
         print(f"CGP_MCP_ENDPOINT_PATH={mcp_path}", flush=True)
 
     _mcp.run(
