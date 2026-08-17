@@ -1,0 +1,17 @@
+{
+  "name": "chatgpt-kaggle-cloudflare-runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.0.31",
+    "jose": "^6.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "wrangler": "^4.31.0"
+  }
+}
