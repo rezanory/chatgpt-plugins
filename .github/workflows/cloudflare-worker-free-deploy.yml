@@ -218,7 +218,7 @@ jobs:
           print("WORKER_KAGGLE_INVENTORY=PASS")
           PY
 
-      - name: Verify Master Kaggle token
+      - name: Verify Master Kaggle token and TRAIN W01 recovery
         id: master_live
         continue-on-error: true
         if: always() && steps.credentials.outputs.configured == 'true'
@@ -226,36 +226,85 @@ jobs:
         run: |
           master_token="$(printf '%s' "$CGP_BOOTSTRAP_MASTER_B64" | base64 -d)"
           echo "::add-mask::$master_token"
-          http_status="$(curl --silent --show-error --max-time 30 \
-            -o /tmp/live-master-response.json -w '%{http_code}' \
-            -X POST \
-            -H "Authorization: Bearer $master_token" \
-            -H "Content-Type: application/json" \
-            -H "User-Agent: chatgpt-kaggle-gateway-bootstrap/0.1" \
+          api_root="https://api.kaggle.com/v1/kernels.KernelsApiService"
+          headers=(-H "Authorization: Bearer $master_token" -H "Content-Type: application/json" -H "User-Agent: chatgpt-kaggle-gateway-bootstrap/0.1")
+
+          list_status="$(curl --silent --show-error --max-time 30 -o /tmp/live-master-list.json -w '%{http_code}' \
+            -X POST "${headers[@]}" \
             --data '{"group":"PROFILE","sortBy":"DATE_RUN","pageSize":1}' \
-            "https://api.kaggle.com/v1/kernels.KernelsApiService/ListKernels" || true)"
-          python - "$http_status" <<'PY'
+            "$api_root/ListKernels" || true)"
+
+          status_status="$(curl --silent --show-error --max-time 30 -o /tmp/live-master-status.json -w '%{http_code}' \
+            -X POST "${headers[@]}" \
+            --data '{"userName":"azadka","kernelSlug":"pneumonia-v6-2-2-train-w01-m01-r224"}' \
+            "$api_root/GetKernelSessionStatus" || true)"
+
+          logs_status="$(curl --silent --show-error --max-time 60 -o /tmp/live-master-logs.json -w '%{http_code}' \
+            -X POST "${headers[@]}" \
+            --data '{"userName":"azadka","kernelSlug":"pneumonia-v6-2-2-train-w01-m01-r224","pageSize":100}' \
+            "$api_root/ListKernelSessionOutput" || true)"
+
+          python - "$list_status" "$status_status" "$logs_status" <<'PY'
           import json
           import sys
           from pathlib import Path
 
-          status = sys.argv[1]
-          p = Path("/tmp/live-master-response.json")
-          text = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
-          try:
-              value = json.loads(text) if text else {}
-          except json.JSONDecodeError:
-              value = {"raw": text[:2000]}
+          expected = "fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838"
+          marker = "KAGGLE_EXECUTION_V62_2"
+
+          def load(path):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+              try:
+                  return json.loads(text) if text else {}
+              except json.JSONDecodeError:
+                  return {"raw": text[:4000]}
+
+          list_http, status_http, logs_http = sys.argv[1:4]
+          listing = load("/tmp/live-master-list.json")
+          status_payload = load("/tmp/live-master-status.json")
+          logs_payload = load("/tmp/live-master-logs.json")
+          log = str(logs_payload.get("log") or "") if isinstance(logs_payload, dict) else ""
+          log_tail = log[-200000:]
+          files = logs_payload.get("files") if isinstance(logs_payload, dict) else []
+          files = files if isinstance(files, list) else []
+          file_names = [
+              item.get("fileName")
+              for item in files
+              if isinstance(item, dict) and isinstance(item.get("fileName"), str)
+          ]
+          status_value = status_payload.get("status") if isinstance(status_payload, dict) else None
+          auth_ok = list_http == "200" and not (
+              isinstance(listing.get("code"), int) and listing.get("code") >= 400
+          )
+          complete = status_http == "200" and status_value == "COMPLETE"
+          fingerprint_ok = logs_http == "200" and expected in log_tail
           summary = {
-              "http_status": status,
-              "master_auth_ok": status == "200" and not (isinstance(value.get("code"), int) and value["code"] >= 400),
-              "probe_count": len(value.get("kernels") or []) if isinstance(value, dict) else 0,
-              "response": value,
+              "account_role": "MASTER",
+              "owner_slug": "azadka",
+              "kernel_ref": "azadka/pneumonia-v6-2-2-train-w01-m01-r224",
+              "auth_http": list_http,
+              "master_auth_ok": auth_ok,
+              "status_http": status_http,
+              "status": status_payload,
+              "logs_http": logs_http,
+              "log_chars_returned": len(log_tail),
+              "log_has_execution_marker": marker in log_tail,
+              "log_has_expected_fingerprint": fingerprint_ok,
+              "available_file_count": len(file_names),
+              "available_file_names": file_names[:100],
+              "probe_count": len(listing.get("kernels") or []) if isinstance(listing, dict) else 0,
           }
           Path("/tmp/live-master-kaggle.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-          if not summary["master_auth_ok"]:
+          if not auth_ok:
               raise SystemExit("master Kaggle auth failed")
+          if not complete:
+              raise SystemExit("Master TRAIN W01 is not COMPLETE")
+          if not fingerprint_ok:
+              raise SystemExit("Master TRAIN W01 expected fingerprint was not found in log tail")
           print("MASTER_KAGGLE_AUTH=PASS")
+          print("MASTER_TRAIN_W01_STATUS=COMPLETE")
+          print("MASTER_TRAIN_W01_FINGERPRINT=PASS")
           PY
 
       - name: Publish live activation result
@@ -287,7 +336,7 @@ jobs:
               f"- Worker URL: `{os.environ.get('WORKER_URL') or 'unresolved'}`",
               f"- health/deploy: `{os.environ.get('HEALTH_OUTCOME')}`",
               f"- six Worker accounts: `{os.environ.get('KAGGLE_OUTCOME')}`",
-              f"- Master account: `{os.environ.get('MASTER_OUTCOME')}`",
+              f"- Master account/W01 recovery: `{os.environ.get('MASTER_OUTCOME')}`",
           ]
           if worker is not None:
               lines += ["", "### Worker HTTP", "```json", json.dumps(worker.get("http"), indent=2), "```"]
@@ -309,10 +358,8 @@ jobs:
                           "error": item.get("error"),
                       })
               lines += ["", "### pneumonia-v6-2-2 inventory", "```json", json.dumps(counts, indent=2), "```"]
-              if worker.get("http", {}).get("list") != "200":
-                  lines += ["", "### kg-02 list response", "```json", json.dumps(listing, indent=2)[:12000], "```"]
           if master is not None:
-              lines += ["", "### Master", "```json", json.dumps(master, indent=2)[:12000], "```"]
+              lines += ["", "### Master / TRAIN W01", "```json", json.dumps(master, indent=2)[:18000], "```"]
           Path("/tmp/live-activation.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY
           gh issue comment 17 --repo "$GITHUB_REPOSITORY" --body-file /tmp/live-activation.md
