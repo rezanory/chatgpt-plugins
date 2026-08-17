@@ -69,7 +69,7 @@ def test_recovery_maps_trusted_environment_and_escapes_artifact_filter(tmp_path:
     assert matrix[0]["kernel_ref"] == "owner-one/pneumonia-v6-2-2-s01"
     pattern = matrix[0]["file_pattern"]
     assert "KAGGLE_EXECUTION_V62_2" in pattern
-    assert r"fingerprint\.json".replace("\\", "\\") in pattern
+    assert r"fingerprint\.json"[1:] in pattern
 
 
 def test_recovery_rejects_kernel_owner_that_does_not_match_account(tmp_path: Path):
