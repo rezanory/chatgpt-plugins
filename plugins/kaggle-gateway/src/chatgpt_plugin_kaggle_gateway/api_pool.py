@@ -117,7 +117,12 @@ class KaggleApiPool:
             config_path = Path(api.config)
             if os.name != "nt" and config_path.exists():
                 config_path.chmod(0o600)
-            api.authenticate()
+            try:
+                api.authenticate()
+            except SystemExit as exc:
+                raise RuntimeError(
+                    f"Kaggle authentication failed for {account.account_id}"
+                ) from exc
 
             # Same harmless probe already observed as auth_ok on all six active accounts.
             api.kernels_list(page_size=1)
@@ -159,13 +164,20 @@ class KaggleApiPool:
                 self._slots[account_id] = slot
             return slot
 
-    def _safe_error(self, account_id: str, exc: Exception) -> str:
-        text = str(exc)
-        account = self._registry.get(account_id, require_enabled=False)
-        token = os.getenv(account.token_env, "")
-        if token:
-            text = text.replace(token, "[REDACTED]")
-        return text[:1000]
+    def redact_text(self, text: str, *, max_chars: int | None = None) -> str:
+        safe = str(text)
+        for account in self._registry.accounts:
+            for env_name in (account.token_env, account.username_env):
+                secret = os.getenv(env_name, "")
+                if secret:
+                    safe = safe.replace(secret, "[REDACTED]")
+        return safe[:max_chars] if max_chars is not None else safe
+
+    def safe_error(self, account_id: str, exc: BaseException) -> str:
+        # account_id is intentionally accepted to make call sites explicit and auditable even
+        # though all configured gateway credentials are redacted from the returned text.
+        self._registry.get(account_id, require_enabled=False)
+        return self.redact_text(str(exc), max_chars=1000)
 
     def auth_check(self, account_id: str) -> dict[str, Any]:
         slot = self._slot(account_id)
@@ -194,12 +206,12 @@ class KaggleApiPool:
                 account_id = futures[future]
                 try:
                     results[account_id] = future.result()
-                except Exception as exc:
+                except BaseException as exc:
                     results[account_id] = {
                         "account_id": account_id,
                         "auth_ok": False,
                         "error_type": exc.__class__.__name__,
-                        "error": self._safe_error(account_id, exc),
+                        "error": self.safe_error(account_id, exc),
                     }
         return [results[account.account_id] for account in enabled]
 
@@ -236,7 +248,7 @@ class KaggleApiPool:
         slot = self._slot(account_id)
         with slot.lock:
             value = slot.api.kernels_logs(kernel_ref)
-        return str(value or "")[:200_000]
+        return self.redact_text(str(value or ""), max_chars=200_000)
 
     def kernels_output(
         self,
