@@ -3,7 +3,7 @@
     "account_id": "kg-01",
     "owner_slug": "azadka",
     "secret_scope": "kaggle-01",
-    "enabled": true,
+    "enabled": false,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
     "default_accelerator": "NvidiaTeslaT4"
@@ -19,9 +19,9 @@
   },
   {
     "account_id": "kg-03",
-    "owner_slug": "re zanory",
+    "owner_slug": "rezanory",
     "secret_scope": "kaggle-03",
-    "enabled": false,
+    "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
     "default_accelerator": "NvidiaTeslaT4"
