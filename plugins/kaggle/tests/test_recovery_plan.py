@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from chatgpt_plugin_kaggle.actions import plan_recovery
 
 
