@@ -3,11 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from chatgpt_plugin_kaggle.actions.plan_recovery import (
-    RECOVERY_MARKER,
-    RECOVERY_SCHEMA_V1,
-    build_recovery_matrix,
-)
+from chatgpt_plugin_kaggle.actions import plan_recovery
 
 
 def _accounts(path: Path) -> Path:
@@ -38,13 +34,16 @@ def _accounts(path: Path) -> Path:
 
 
 def _body(payload: dict) -> str:
-    return f"{RECOVERY_MARKER}\n```json\n{json.dumps(payload)}\n```\n"
+    return (
+        f"{plan_recovery.RECOVERY_MARKER}\n"
+        f"```json\n{json.dumps(payload)}\n```\n"
+    )
 
 
 def test_recovery_maps_trusted_environment_and_escapes_artifact_filter(tmp_path: Path):
     accounts = _accounts(tmp_path / "accounts.json")
     payload = {
-        "schema": RECOVERY_SCHEMA_V1,
+        "schema": plan_recovery.RECOVERY_SCHEMA_V1,
         "recovery_id": "pneumonia-recovery-01",
         "artifact_names": ["KAGGLE_EXECUTION_V62_2", "fingerprint.json"],
         "runs": [
@@ -61,7 +60,7 @@ def test_recovery_maps_trusted_environment_and_escapes_artifact_filter(tmp_path:
         ],
     }
 
-    public, matrix = build_recovery_matrix(_body(payload), str(accounts))
+    public, matrix = plan_recovery.build_recovery_matrix(_body(payload), str(accounts))
 
     assert public["run_count"] == 2
     assert matrix[0]["account_environment"] == "kaggle-01"
@@ -75,7 +74,7 @@ def test_recovery_maps_trusted_environment_and_escapes_artifact_filter(tmp_path:
 def test_recovery_rejects_kernel_owner_that_does_not_match_account(tmp_path: Path):
     accounts = _accounts(tmp_path / "accounts.json")
     payload = {
-        "schema": RECOVERY_SCHEMA_V1,
+        "schema": plan_recovery.RECOVERY_SCHEMA_V1,
         "recovery_id": "pneumonia-recovery-02",
         "runs": [
             {
@@ -87,4 +86,4 @@ def test_recovery_rejects_kernel_owner_that_does_not_match_account(tmp_path: Pat
     }
 
     with pytest.raises(ValueError, match="does not match account"):
-        build_recovery_matrix(_body(payload), str(accounts))
+        plan_recovery.build_recovery_matrix(_body(payload), str(accounts))
