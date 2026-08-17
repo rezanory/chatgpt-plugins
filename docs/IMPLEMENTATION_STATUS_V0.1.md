@@ -28,7 +28,7 @@ Run ID:  32069572874
 Version: afec9485-3674-4611-8820-526dcd07a55c
 ```
 
-A later documentation-only deployment, run #4, also completed successfully.
+Later deployments, including documentation/config hardening, also completed successfully.
 
 ## Direct Kaggle transport
 
@@ -89,11 +89,13 @@ CGP_KAGGLE_KG04_TOKEN
 CGP_KAGGLE_KG05_TOKEN
 CGP_KAGGLE_KG06_TOKEN
 CGP_KAGGLE_KG07_TOKEN
-CGP_MCP_PATH_SECRET
+CGP_MCP_PATH_TOKEN
 ```
 
-These values must remain Cloudflare Worker Secrets. They must not be placed in GitHub Actions,
-commits, Issues, or ChatGPT.
+`CGP_MCP_PATH_TOKEN` must be a random URL-safe 32–128 character value using only letters, numbers,
+`_`, and `-`. It is used directly as `/mcp/<token>` and is entered only in Cloudflare and the
+ChatGPT custom-app endpoint. These values must never be placed in GitHub Actions, commits, Issues,
+or conversation text.
 
 ## Recovery sequence
 
