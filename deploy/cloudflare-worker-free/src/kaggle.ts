@@ -1,4 +1,4 @@
-export type AccountId = "kg-01" | "kg-02" | "kg-04" | "kg-05" | "kg-06" | "kg-07";
+export type AccountId = "kg-02" | "kg-03" | "kg-04" | "kg-05" | "kg-06" | "kg-07";
 
 export interface WorkerEnv {
   CGP_CONTROL_REPOSITORY: string;
@@ -7,8 +7,8 @@ export interface WorkerEnv {
   CGP_MCP_PATH_TOKEN?: string;
   CGP_GITHUB_WEBHOOK_SECRET?: string;
   CGP_GITHUB_TOKEN?: string;
-  CGP_KAGGLE_KG01_TOKEN?: string;
   CGP_KAGGLE_KG02_TOKEN?: string;
+  CGP_KAGGLE_KG03_TOKEN?: string;
   CGP_KAGGLE_KG04_TOKEN?: string;
   CGP_KAGGLE_KG05_TOKEN?: string;
   CGP_KAGGLE_KG06_TOKEN?: string;
@@ -26,8 +26,8 @@ interface AccountCredentials extends AccountDescriptor {
 }
 
 export const ACCOUNTS: readonly AccountDescriptor[] = [
-  { accountId: "kg-01", ownerSlug: "azadka", username: "azadka" },
   { accountId: "kg-02", ownerSlug: "radlinaradlina", username: "radlinaradlina" },
+  { accountId: "kg-03", ownerSlug: "rezanory", username: "rezanory" },
   { accountId: "kg-04", ownerSlug: "reyhanehazad", username: "reyhanehazad" },
   { accountId: "kg-05", ownerSlug: "trickermark", username: "trickermark" },
   { accountId: "kg-06", ownerSlug: "msdenis", username: "msdenis" },
@@ -55,10 +55,10 @@ export class KaggleGatewayError extends Error {
 
 function tokenFor(env: WorkerEnv, accountId: AccountId): string | undefined {
   switch (accountId) {
-    case "kg-01":
-      return env.CGP_KAGGLE_KG01_TOKEN;
     case "kg-02":
       return env.CGP_KAGGLE_KG02_TOKEN;
+    case "kg-03":
+      return env.CGP_KAGGLE_KG03_TOKEN;
     case "kg-04":
       return env.CGP_KAGGLE_KG04_TOKEN;
     case "kg-05":
