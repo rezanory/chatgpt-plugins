@@ -1,0 +1,75 @@
+name: kaggle-inventory
+run-name: "Kaggle inventory for issue #${{ github.event.issue.number }}"
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  plan:
+    if: startsWith(github.event.issue.title, '[KAGGLE-INVENTORY]')
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+      search: ${{ steps.plan.outputs.search }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --package chatgpt-plugin-kaggle
+      - name: Build enabled-account inventory matrix
+        id: plan
+        run: >-
+          uv run --package chatgpt-plugin-kaggle python -m
+          chatgpt_plugin_kaggle.actions.plan_inventory
+          --accounts-file plugins/kaggle/config/accounts.json
+      - name: Publish safe planning failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          printf '%s\n' 'Kaggle inventory request rejected before any credential was loaded.' > /tmp/inventory-plan-failure.md
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/inventory-plan-failure.md
+
+  inventory:
+    needs: plan
+    if: needs.plan.result == 'success' && needs.plan.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ matrix.account_environment }}
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      ACCOUNT_ID: ${{ matrix.account_id }}
+      KAGGLE_OWNER: ${{ matrix.kaggle_owner }}
+      SEARCH_TERM: ${{ matrix.search }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install inventory client and official Kaggle CLI
+        run: |
+          uv sync --package chatgpt-plugin-kaggle
+          uv pip install "kaggle==2.2.4"
+      - name: List account kernels through API token
+        run: >-
+          uv run --package chatgpt-plugin-kaggle python -m
+          chatgpt_plugin_kaggle.actions.inventory_account
+          --account-id "$ACCOUNT_ID"
+          --owner "$KAGGLE_OWNER"
+          --search "$SEARCH_TERM"
+          --comment-file /tmp/inventory-comment.md
+      - name: Publish sanitized inventory
+        run: >-
+          uv run --package chatgpt-plugin-kaggle python -m
+          chatgpt_plugin_kaggle.actions.post_comment
+          --issue "$ISSUE_NUMBER" --file /tmp/inventory-comment.md
