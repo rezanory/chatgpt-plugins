@@ -75,7 +75,7 @@ if accounts_path.exists():
         if forbidden.lower() in accounts_text.lower():
             fail(f"accounts.json contains forbidden credential-like field/text: {forbidden}")
 
-# V0.1 production hosting is zero-cost only. Both previously rejected hosting paths stay forbidden.
+# V0.1 production hosting is zero-cost only. Previously rejected hosting paths stay forbidden.
 for abandoned in (
     ROOT / "render.yaml",
     ROOT / "deploy/render-free",
@@ -85,7 +85,7 @@ for abandoned in (
         fail(f"abandoned or paid runtime must not exist: {abandoned.relative_to(ROOT)}")
 
 # Active production boundary: one plain Cloudflare Worker on the Workers Free plan, with no
-# Container, Durable Object, queue, or paid runtime dependency.
+# Container, Durable Object binding, queue, or paid runtime dependency.
 worker_root = ROOT / "deploy/cloudflare-worker-free"
 wrangler_path = worker_root / "wrangler.jsonc"
 worker_entry = worker_root / "src/index.ts"
@@ -100,6 +100,7 @@ if wrangler_path.is_file():
     required_wrangler = (
         '"name": "chatgpt-kaggle-gateway"',
         '"workers_dev": true',
+        '"preview_urls": false',
         '"CGP_WRITE_ENABLED": "0"',
     )
     for fragment in required_wrangler:
@@ -120,6 +121,7 @@ if kaggle_client.is_file():
         '"GetKernel"',
         '"SaveKernel"',
         'kernelExecutionType: "SAVE_AND_RUN_ALL"',
+        "CGP_MCP_PATH_TOKEN",
     )
     for fragment in required_kaggle:
         if fragment not in kaggle_text:
@@ -132,7 +134,8 @@ if worker_entry.is_file():
     required_entry = (
         'url.pathname === "/healthz"',
         'url.pathname === "/github/webhook"',
-        "CGP_MCP_PATH_SECRET",
+        "CGP_MCP_PATH_TOKEN",
+        "privateMcpPath(",
         "createMcpHandler(",
         'transport: "cloudflare-workers-free"',
         "kaggle_auth_check_all",
