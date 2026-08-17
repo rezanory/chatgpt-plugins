@@ -1,0 +1,106 @@
+name: cloudflare-worker-free-deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cloudflare-worker-free-deploy.yml'
+      - 'deploy/cloudflare-worker-free/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-worker-free-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect Cloudflare deployment credentials
+        id: credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare Workers Free deployment credentials are configured."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare deployment credentials are absent; live deployment is skipped."
+          fi
+
+      - name: Install Worker dependencies
+        if: steps.credentials.outputs.configured == 'true'
+        working-directory: deploy/cloudflare-worker-free
+        run: npm install --no-audit --no-fund
+
+      - name: Validate Worker package
+        if: steps.credentials.outputs.configured == 'true'
+        working-directory: deploy/cloudflare-worker-free
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm run check
+          npm run deploy:dry
+
+      - name: Deploy Worker Free
+        if: steps.credentials.outputs.configured == 'true'
+        working-directory: deploy/cloudflare-worker-free
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+
+      - name: Resolve workers.dev URL and verify health
+        if: steps.credentials.outputs.configured == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain")"
+          subdomain="$(python - "$response" <<'PY'
+          import json
+          import sys
+          payload = json.loads(sys.argv[1])
+          if not payload.get("success"):
+              raise SystemExit("Cloudflare workers subdomain lookup failed")
+          value = str((payload.get("result") or {}).get("subdomain") or "").strip()
+          if not value:
+              raise SystemExit("Cloudflare workers.dev subdomain is missing")
+          print(value)
+          PY
+          )"
+          worker_url="https://chatgpt-kaggle-gateway.${subdomain}.workers.dev"
+          for attempt in $(seq 1 20); do
+            if payload="$(curl --fail --silent --show-error --max-time 10 "$worker_url/healthz")"; then
+              python - "$payload" <<'PY'
+          import json
+          import sys
+          value = json.loads(sys.argv[1])
+          assert value.get("service") == "chatgpt-kaggle-gateway"
+          assert value.get("transport") == "cloudflare-workers-free"
+          assert value.get("status") == "ready"
+          PY
+              echo "Cloudflare Workers Free health check PASS: $worker_url/healthz"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Cloudflare Worker did not pass /healthz validation." >&2
+          exit 1
+
+      - name: Report activation blocker
+        if: steps.credentials.outputs.configured != 'true'
+        run: echo "SKIPPED_NOT_CONFIGURED"
