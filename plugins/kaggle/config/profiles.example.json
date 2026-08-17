@@ -1,0 +1,71 @@
+{
+  "python-tests": {
+    "description": "Run the project's Python tests without invoking a shell.",
+    "capabilities": [
+      "cpu"
+    ],
+    "internet": false,
+    "steps": [
+      {
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "-q"
+        ],
+        "cwd": "."
+      }
+    ],
+    "artifact_globs": []
+  },
+  "django-check": {
+    "description": "Run Django system and migration drift checks.",
+    "capabilities": [
+      "cpu"
+    ],
+    "internet": false,
+    "steps": [
+      {
+        "argv": [
+          "python",
+          "manage.py",
+          "check"
+        ],
+        "cwd": "."
+      },
+      {
+        "argv": [
+          "python",
+          "manage.py",
+          "makemigrations",
+          "--check",
+          "--dry-run"
+        ],
+        "cwd": "."
+      }
+    ],
+    "artifact_globs": []
+  },
+  "ml-train": {
+    "description": "Run a repository-owned train.py entrypoint on a GPU account.",
+    "capabilities": [
+      "gpu"
+    ],
+    "internet": false,
+    "steps": [
+      {
+        "argv": [
+          "python",
+          "train.py"
+        ],
+        "cwd": "."
+      }
+    ],
+    "artifact_globs": [
+      "source/**/*.json",
+      "source/**/*.csv",
+      "source/**/*.pt",
+      "source/**/*.pth"
+    ]
+  }
+}

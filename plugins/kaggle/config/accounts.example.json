@@ -1,0 +1,11 @@
+[
+  {
+    "account_id": "kg-01",
+    "owner_slug": "REPLACE_WITH_KAGGLE_USERNAME",
+    "secret_scope": "kaggle-01",
+    "enabled": false,
+    "max_parallel": 1,
+    "capabilities": ["cpu", "gpu"],
+    "default_accelerator": "NvidiaTeslaT4"
+  }
+]

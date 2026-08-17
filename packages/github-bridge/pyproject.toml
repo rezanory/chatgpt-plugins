@@ -1,0 +1,16 @@
+[project]
+name = "chatgpt-plugins-github-bridge"
+version = "0.1.0"
+description = "GitHub Issue control-plane protocol for ChatGPT external-compute bridges"
+requires-python = ">=3.11"
+dependencies = ["chatgpt-plugins-core"]
+
+[tool.uv.sources]
+chatgpt-plugins-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chatgpt_plugins_github_bridge"]

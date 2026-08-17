@@ -1,0 +1,6 @@
+{
+  "allow_any": false,
+  "allowed_repositories": [
+    "rezanory/*"
+  ]
+}

@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Sync workspace
+        run: uv sync --all-packages --dev
+      - name: Security gate
+        run: uv run python scripts/security_gate.py
+      - name: Ruff
+        run: uv run ruff check .
+      - name: Tests
+        run: uv run pytest
+      - name: Compile
+        run: uv run python -m compileall -q packages plugins

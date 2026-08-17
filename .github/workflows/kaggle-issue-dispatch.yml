@@ -1,0 +1,143 @@
+name: kaggle-issue-dispatch
+run-name: "Kaggle dispatch for issue #${{ github.event.issue.number }}"
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  plan:
+    if: startsWith(github.event.issue.title, '[KAGGLE-JOB]')
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      job: ${{ steps.plan.outputs.job }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install planner
+        run: uv sync --package chatgpt-plugin-kaggle
+      - name: Validate issue and build trusted matrix
+        id: plan
+        run: >-
+          uv run --package chatgpt-plugin-kaggle python -m
+          chatgpt_plugin_kaggle.actions.plan_issue
+          --accounts-file plugins/kaggle/config/accounts.json
+          --profiles-file plugins/kaggle/config/profiles.json
+          --repo-policy-file plugins/kaggle/config/source-repos.json
+      - name: Explain plan failure without echoing untrusted issue body
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          printf '%s\n' 'Kaggle dispatch rejected: the job contract, account mapping, or execution profile is invalid. Inspect the workflow run for validation details; no Kaggle credential was loaded.' > /tmp/comment.md
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment.md
+
+  dispatch:
+    needs: plan
+    if: needs.plan.result == 'success'
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ matrix.account_environment }}
+    # V0.1 batches require unique account IDs. This group is a second line of defense during the
+    # short submission window; it is not treated as a long-lived Kaggle lease.
+    concurrency:
+      group: kaggle-submit-${{ matrix.account_id }}
+      cancel-in-progress: false
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
+      JOB_ID: ${{ matrix.job_id }}
+      TASK_ID: ${{ matrix.task_id }}
+      ACCOUNT_ID: ${{ matrix.account_id }}
+      ACCOUNT_ENVIRONMENT: ${{ matrix.account_environment }}
+      KAGGLE_OWNER: ${{ matrix.kaggle_owner }}
+      ACCELERATOR: ${{ matrix.accelerator }}
+      SOURCE_REPOSITORY: ${{ matrix.source_repository }}
+      SOURCE_COMMIT: ${{ matrix.source_commit }}
+      PROFILE: ${{ matrix.profile }}
+      PARAMETERS_JSON: ${{ matrix.parameters_json }}
+      JOB_INTEGRITY_HASH: ${{ matrix.job_integrity_hash }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout control-plane repository
+        uses: actions/checkout@v4
+        with:
+          path: _plugins
+
+      - name: Checkout immutable target source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.source_repository }}
+          ref: ${{ matrix.source_commit }}
+          token: ${{ secrets.SOURCE_GITHUB_TOKEN || github.token }}
+          path: _source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install bridge and official Kaggle CLI
+        working-directory: _plugins
+        run: |
+          uv sync --package chatgpt-plugin-kaggle
+          uv pip install "kaggle==2.2.4"
+
+      - name: Validate credential presence without printing it
+        shell: bash
+        run: |
+          set +x
+          if [ -n "$KAGGLE_API_TOKEN" ]; then exit 0; fi
+          test -n "$KAGGLE_USERNAME"
+          test -n "$KAGGLE_KEY"
+
+      - name: Submit private source dataset and private Kaggle kernel
+        working-directory: _plugins
+        shell: bash
+        run: |
+          set +x
+          uv run --package chatgpt-plugin-kaggle python -m chatgpt_plugin_kaggle.actions.dispatch_task \
+            --job-id "$JOB_ID" \
+            --task-id "$TASK_ID" \
+            --account-id "$ACCOUNT_ID" \
+            --account-environment "$ACCOUNT_ENVIRONMENT" \
+            --owner "$KAGGLE_OWNER" \
+            --source ../_source \
+            --source-repository "$SOURCE_REPOSITORY" \
+            --source-commit "$SOURCE_COMMIT" \
+            --profile "$PROFILE" \
+            --profiles-file plugins/kaggle/config/profiles.json \
+            --parameters-json "$PARAMETERS_JSON" \
+            --accelerator "$ACCELERATOR" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --job-integrity-hash "$JOB_INTEGRITY_HASH" \
+            --comment-file /tmp/run-comment.md
+
+      - name: Publish machine-readable run record to the control issue
+        working-directory: _plugins
+        run: >-
+          uv run --package chatgpt-plugin-kaggle python -m
+          chatgpt_plugin_kaggle.actions.post_comment
+          --issue "$ISSUE_NUMBER" --file /tmp/run-comment.md
+
+      - name: Publish safe submission failure marker
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf 'Kaggle task `%s` failed during validation/packaging/submission. No automatic source repair was attempted. Workflow run: %s/%s/actions/runs/%s\n' \
+            "$TASK_ID" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > /tmp/failure.md
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/failure.md

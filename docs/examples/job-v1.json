@@ -1,0 +1,21 @@
+{
+  "schema": "chatgpt.compute.job/v1",
+  "job_id": "example-001",
+  "source": {
+    "repository": "owner/project",
+    "commit": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "tasks": [
+    {
+      "task_id": "test-a",
+      "profile": "python-tests",
+      "account_id": "kg-01",
+      "parameters": {}
+    }
+  ],
+  "repair_policy": {
+    "enabled": true,
+    "max_attempts": 2
+  },
+  "metadata": {}
+}
