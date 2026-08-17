@@ -17,6 +17,7 @@ import {
   publicMaster,
   type WorkerEnv,
 } from "./kaggle";
+import { v622RecoveryStatus } from "./recovery";
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -312,6 +313,14 @@ export default {
         master_configured: Boolean(env.CGP_KAGGLE_MASTER_TOKEN?.trim()),
         write_enabled: env.CGP_WRITE_ENABLED === "1",
       });
+    }
+
+    if (url.pathname === "/recovery/v6-2-2/status" && request.method === "GET") {
+      try {
+        return json(await v622RecoveryStatus(env));
+      } catch (error) {
+        return errorResponse(error);
+      }
     }
 
     if (url.pathname === "/github/webhook" && request.method === "POST") {
