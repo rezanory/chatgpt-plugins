@@ -75,8 +75,8 @@ jobs:
               return base64.b64decode(os.environ[name]).decode("utf-8")
 
           payload = {
-              "CGP_" + "KAGGLE_" + "KG01_" + "TOKEN": decode("BOOTSTRAP_W1_B64"),
-              "CGP_" + "KAGGLE_" + "KG02_" + "TOKEN": decode("BOOTSTRAP_W2_B64"),
+              "CGP_" + "KAGGLE_" + "KG02_" + "TOKEN": decode("BOOTSTRAP_W1_B64"),
+              "CGP_" + "KAGGLE_" + "KG03_" + "TOKEN": decode("BOOTSTRAP_W2_B64"),
               "CGP_" + "KAGGLE_" + "KG04_" + "TOKEN": decode("BOOTSTRAP_W3_B64"),
               "CGP_" + "KAGGLE_" + "KG05_" + "TOKEN": decode("BOOTSTRAP_W4_B64"),
               "CGP_" + "KAGGLE_" + "KG06_" + "TOKEN": decode("BOOTSTRAP_W5_B64"),
@@ -172,7 +172,7 @@ jobs:
         run: |
           admin_root="$WORKER_URL/mcp/$CGP_BOOTSTRAP_MCP_PATH_TOKEN/admin"
           auth_status="$(curl --silent --show-error --max-time 30 -o /tmp/live-auth.json -w '%{http_code}' "$admin_root/auth" || true)"
-          list_status="$(curl --silent --show-error --max-time 30 -o /tmp/live-list.json -w '%{http_code}' "$admin_root/list?account_id=kg-01&page_size=5" || true)"
+          list_status="$(curl --silent --show-error --max-time 30 -o /tmp/live-list.json -w '%{http_code}' "$admin_root/list?account_id=kg-02&page_size=5" || true)"
           inventory_status="$(curl --silent --show-error --max-time 45 -o /tmp/live-inventory.json -w '%{http_code}' "$admin_root/inventory?search=pneumonia-v6-2-2&page_size=20" || true)"
           python - "$auth_status" "$list_status" "$inventory_status" <<'PY'
           import json
@@ -295,7 +295,7 @@ jobs:
               if not worker.get("worker_auth"):
                   lines += ["", "### Worker auth response", "```json", json.dumps(worker.get("auth_response"), indent=2)[:12000], "```"]
               listing = worker.get("list_response") or {}
-              lines += ["", f"kg-01 live list count: `{len(listing.get('kernels') or []) if isinstance(listing, dict) else 0}`"]
+              lines += ["", f"kg-02 live list count: `{len(listing.get('kernels') or []) if isinstance(listing, dict) else 0}`"]
               inventory = worker.get("inventory") or {}
               counts = []
               if isinstance(inventory, dict):
@@ -310,7 +310,7 @@ jobs:
                       })
               lines += ["", "### pneumonia-v6-2-2 inventory", "```json", json.dumps(counts, indent=2), "```"]
               if worker.get("http", {}).get("list") != "200":
-                  lines += ["", "### kg-01 list response", "```json", json.dumps(listing, indent=2)[:12000], "```"]
+                  lines += ["", "### kg-02 list response", "```json", json.dumps(listing, indent=2)[:12000], "```"]
           if master is not None:
               lines += ["", "### Master", "```json", json.dumps(master, indent=2)[:12000], "```"]
           Path("/tmp/live-activation.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
