@@ -69,10 +69,10 @@ jobs:
           COMPILE_OUTCOME: ${{ steps.compile.outcome }}
         shell: bash
         run: |
-          issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"[CI-DIAGNOSTIC]" in:title' --json number --jq '.[0].number // empty')"
+          issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"[CI-DIAGNOSTIC] Latest main failure" in:title' --json number --jq '.[0].number // empty')"
           if [ -z "$issue_number" ]; then
-            gh issue create --repo "$GITHUB_REPOSITORY" --title '[CI-DIAGNOSTIC] Latest main failure' --body 'Machine-generated, secret-free CI diagnostics for ChatGPT inspection.' >/dev/null
-            issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"[CI-DIAGNOSTIC]" in:title' --json number --jq '.[0].number // empty')"
+            issue_url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title '[CI-DIAGNOSTIC] Latest main failure' --body 'Machine-generated, secret-free CI diagnostics for ChatGPT inspection.')"
+            issue_number="${issue_url##*/}"
           fi
 
           {
