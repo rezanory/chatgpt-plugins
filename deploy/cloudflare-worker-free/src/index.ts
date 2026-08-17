@@ -1,4 +1,5 @@
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { McpServer } from "@modelcontextprotocol/server";
+import { createMcpHandler } from "agents/mcp/server";
 import * as z from "zod/v4";
 
 import { handleGitHubWebhook } from "./github";
@@ -194,6 +195,6 @@ export default {
     if (!mcpPath || url.pathname !== mcpPath) return new Response("Not found", { status: 404 });
 
     const handler = createMcpHandler(() => buildServer(env));
-    return handler.fetch(request);
+    return handler(request, env, ctx);
   },
 } satisfies ExportedHandler<WorkerEnv>;
