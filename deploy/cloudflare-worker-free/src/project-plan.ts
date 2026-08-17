@@ -1,4 +1,5 @@
-import type { WorkerEnv } from "./kaggle";
+import { type WorkerEnv } from "./kaggle";
+import { v622KernelSourceContract } from "./source-contract";
 
 const KAGGLE_API_ROOT = "https://api.kaggle.com/v1";
 const KAGGLE_SERVICE = "kernels.KernelsApiService";
@@ -236,5 +237,6 @@ export async function v622ProjectPlan(env: WorkerEnv): Promise<Record<string, un
     final_report_signals: relevantJson(parseJson(reportText)),
     matrix_report_signals: relevantJson(parseJson(matrixText)),
     source_signal_lines: signalLines(sources),
+    kernel_source_contract: await v622KernelSourceContract(env),
   };
 }
