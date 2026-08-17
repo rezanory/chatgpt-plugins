@@ -35,7 +35,7 @@ Example for two authorized accounts:
 
 No credential belongs in this file.
 
-## 3. GitHub Environments
+## 3. GitHub Environments and API tokens
 
 Create environments whose names exactly match `secret_scope`:
 
@@ -43,42 +43,72 @@ Create environments whose names exactly match `secret_scope`:
 - `kaggle-02`
 - ...
 
-Inside each environment set either:
+For each Kaggle account:
 
-- `KAGGLE_API_TOKEN` (current token flow), or
-- legacy `KAGGLE_USERNAME` and `KAGGLE_KEY`.
+1. Open Kaggle **Settings -> API**.
+2. Use **Generate New Token**.
+3. Store that token only in the matching GitHub Environment as:
 
-Do not expose these values to ChatGPT or commit them.
+```text
+KAGGLE_API_TOKEN
+```
 
-## 4. Private source repositories
+V0.1 is token-only. Do not configure browser cookies, cached sessions, interactive OAuth login,
+`KAGGLE_USERNAME`, `KAGGLE_KEY`, or a persisted `kaggle.json` as runtime dependencies.
 
-The control repository's normal `GITHUB_TOKEN` is repository-scoped. If jobs need to checkout a
-different **private** repository, add `SOURCE_GITHUB_TOKEN` as a control-repository secret. Use a
+Never expose token values to ChatGPT, Issues, source files, artifacts, or logs.
+
+## 4. Validate every token before compute
+
+Open a GitHub Issue with a title starting exactly:
+
+```text
+[KAGGLE-AUTH]
+```
+
+The auth workflow performs a harmless authenticated API read for every enabled account and posts
+only sanitized `AUTH_OK` / `AUTH_FAILED` results.
+
+Do not submit new compute until the intended accounts report `AUTH_OK`.
+
+## 5. Recover existing Kaggle work before creating new runs
+
+If workloads already existed before this control plane was installed, discover them first with:
+
+```text
+[KAGGLE-INVENTORY] <optional-search-term>
+```
+
+Example:
+
+```text
+[KAGGLE-INVENTORY] pneumonia-v6-2-2
+```
+
+The inventory workflow uses each enabled account's `KAGGLE_API_TOKEN` and calls the official
+`kaggle kernels list -m` API path. It does **not** create datasets, kernels, or GPU runs.
+
+Use the returned `owner/kernel-slug` references to assess existing run status/output before deciding
+whether a new submission is necessary.
+
+## 6. Private source repositories
+
+The control repository's normal `GITHUB_TOKEN` is repository-scoped. If new jobs need to checkout
+a different **private** repository, add `SOURCE_GITHUB_TOKEN` as a control-repository secret. Use a
 fine-grained token with read-only Contents access limited to the intended source repositories.
 
 Public target repositories do not need a broad token.
 
-## 5. Execution profiles
+## 7. Execution profiles
 
 Profiles live in `plugins/kaggle/config/profiles.json` and are trusted configuration.
 
-A profile uses argv, not shell strings:
-
-```json
-{
-  "python-tests": {
-    "capabilities": ["cpu"],
-    "internet": false,
-    "steps": [
-      {"argv": ["python", "-m", "pytest", "-q"], "cwd": "."}
-    ]
-  }
-}
-```
+A profile uses argv, not shell strings. `python-smoke` is dependency-free and is the preferred
+first end-to-end submission after tokens are validated.
 
 Do not put secrets in a profile.
 
-## 6. Open a job Issue from ChatGPT
+## 8. Open a new job Issue from ChatGPT
 
 Example two-account parallel batch body (the Issue title is `[KAGGLE-JOB] Example parallel validation`):
 
@@ -112,10 +142,10 @@ Example two-account parallel batch body (the Issue title is `[KAGGLE-JOB] Exampl
 ```
 ````
 
-The `issues: opened` workflow validates the envelope before any Kaggle environment secret is
-loaded.
+The `issues: opened` workflow validates the envelope before the selected Kaggle environment secret
+is loaded.
 
-## 7. Check status from ChatGPT
+## 9. Check status from ChatGPT
 
 Post exactly:
 
@@ -129,7 +159,9 @@ only the corresponding account environment.
 For terminal tasks it uploads sanitized evidence as a GitHub Actions artifact and posts the
 failure category/fingerprint (when applicable) to the Issue.
 
-## 8. Repair
+## 10. Repair
 
 A failed source-level task is analyzed in ChatGPT. Any repair must target a new commit. Re-run by
 opening a new job Issue that references the new commit. Do not rewrite or delete the old run record.
+
+Authentication, quota, network, and provider failures never trigger source-code repair.
