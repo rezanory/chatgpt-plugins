@@ -13,16 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Sync workspace
+      - name: Install workspace
         id: sync
         continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
-          {
-            python -m pip install --disable-pip-version-check -q uv
-            uv sync --all-packages --dev
-          } 2>&1 | tee /tmp/ci-sync.log
+          python -m pip install --disable-pip-version-check \
+            -e packages/core \
+            -e packages/github-bridge \
+            -e packages/repair-engine \
+            -e plugins/kaggle \
+            -e plugins/kaggle-gateway \
+            'pytest>=8.4' 'ruff>=0.12' 2>&1 | tee /tmp/ci-sync.log
       - name: Security gate
         id: security
         if: steps.sync.outcome == 'success'
@@ -30,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          uv run python scripts/security_gate.py 2>&1 | tee /tmp/ci-security.log
+          python scripts/security_gate.py 2>&1 | tee /tmp/ci-security.log
       - name: Ruff
         id: ruff
         if: steps.sync.outcome == 'success'
@@ -38,7 +41,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          uv run ruff check . --output-format concise 2>&1 | tee /tmp/ci-ruff.log
+          ruff check . --output-format concise 2>&1 | tee /tmp/ci-ruff.log
       - name: Tests
         id: tests
         if: steps.sync.outcome == 'success'
@@ -46,7 +49,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          uv run pytest 2>&1 | tee /tmp/ci-tests.log
+          pytest 2>&1 | tee /tmp/ci-tests.log
       - name: Compile
         id: compile
         if: steps.sync.outcome == 'success'
@@ -54,7 +57,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          uv run python -m compileall -q packages plugins 2>&1 | tee /tmp/ci-compile.log
+          python -m compileall -q packages plugins 2>&1 | tee /tmp/ci-compile.log
 
       - name: Publish safe CI diagnostic
         if: >-
