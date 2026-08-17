@@ -16,6 +16,7 @@ members = [
   "packages/github-bridge",
   "packages/repair-engine",
   "plugins/kaggle",
+  "plugins/kaggle-gateway",
 ]
 
 [tool.uv.sources]
@@ -23,6 +24,7 @@ chatgpt-plugins-core = { workspace = true }
 chatgpt-plugins-github-bridge = { workspace = true }
 chatgpt-plugins-repair-engine = { workspace = true }
 chatgpt-plugin-kaggle = { workspace = true }
+chatgpt-plugin-kaggle-gateway = { workspace = true }
 
 [tool.pytest.ini_options]
 addopts = "-q"
@@ -31,6 +33,7 @@ testpaths = [
   "packages/github-bridge/tests",
   "packages/repair-engine/tests",
   "plugins/kaggle/tests",
+  "plugins/kaggle-gateway/tests",
 ]
 
 [tool.ruff]
