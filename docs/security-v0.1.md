@@ -1,85 +1,102 @@
-# Security Model — V0.1
+# Security Model — V0.1 Direct Kaggle Gateway
 
 ## Trust boundaries
 
-1. **ChatGPT / user conversation** — may request work but never receives Kaggle credentials.
-2. **GitHub control repository** — contains source contracts/configuration, Issues, workflows, and
-   sanitized evidence metadata.
-3. **GitHub Environment** — credential boundary for exactly one authorized Kaggle account.
-4. **GitHub runner** — short-lived relay that may see the account credential during submission or
-   status collection.
-5. **Kaggle kernel** — untrusted execution of target repository code; it does not receive the
-   Kaggle API token used by the relay.
-6. **Kaggle outputs/logs** — untrusted data that must be sanitized before presentation to ChatGPT.
+1. **ChatGPT / user conversation** — requests work but never receives Kaggle credentials.
+2. **MCP transport** — connects ChatGPT to the gateway; production exposure must be authenticated.
+3. **Kaggle Direct Gateway** — long-running trusted service that owns account selection and secret
+   injection.
+4. **Per-account KaggleApi slot** — isolated Python API object, temporary config, and call lock.
+5. **Kaggle API** — external provider boundary.
+6. **Kaggle outputs/logs** — external/untrusted data sanitized before presentation to ChatGPT.
+7. **GitHub repository/CI** — source and validation only; no Kaggle runtime credentials.
 
 ## Secret rules
 
-- Kaggle tokens are GitHub Environment secrets only.
-- Account registry stores only `account_id`, public Kaggle owner slug, capabilities, and the trusted
-  GitHub Environment name.
-- Job Issues may reference `account_id`; they cannot name a secret directly.
-- The planner resolves `account_id -> environment` from repository-owned configuration before a
-  credential-bearing job starts.
-- Source packages exclude `.env`, key/certificate formats, and common generated dependency trees.
-- No provider credential is embedded in the Kaggle bootstrap.
+- Kaggle credential values are never committed to Git.
+- The active account registry stores `account_id`, public owner slug, enabled state, and names of
+  secret environment variables only.
+- Gateway credentials use `CGP_KAGGLE_<ID>_USERNAME` and `CGP_KAGGLE_<ID>_TOKEN` style variables.
+- Process-global `KAGGLE_API_TOKEN`, `KAGGLE_USERNAME`, and `KAGGLE_KEY` are rejected by the
+  multi-account gateway because they can override account-isolated configuration.
+- Every account gets a separate temporary config directory/file before `set_config_value()` is
+  called.
+- On POSIX, the directory is `0700` and the config file is `0600`.
+- Temporary credential files are deleted on gateway shutdown and on failed client construction.
 
-## Untrusted input rules
+## Authentication isolation
 
-Job JSON is parsed with a strict allow-list of fields. Source repository names, commit IDs,
-account IDs, profile names, task IDs, accelerator IDs, and parameter keys are validated.
+The direct account boundary is:
 
-Issue-provided values never become shell fragments. Execution profiles use argv arrays and the
-Kaggle bootstrap uses `subprocess.run(..., shell=False)`.
+```python
+api = KaggleApi()
+api.set_config_value(api.CONFIG_NAME_USER, username)
+api.set_config_value(api.CONFIG_NAME_KEY, token)
+api.authenticate()
+api.kernels_list(page_size=1)
+```
 
-Parameters are serialized to `job-parameters.json`; profile code may choose to read that file.
-They are not concatenated into executable commands by the bridge.
+No shared module-level KaggleApi instance is used for operational calls. Different accounts have
+separate instance-local config paths so parallel authentication cannot overwrite one shared
+`~/.kaggle/kaggle.json`.
 
-## Log/artifact handling
+If Kaggle authentication terminates with `SystemExit`, the gateway converts it into an account-
+scoped failure. One bad account therefore cannot terminate the whole service or the other accounts.
 
-Everything returned by Kaggle is untrusted.
+## Direct-runtime invariant
 
-Before a text excerpt is returned to the control Issue it is:
+The active gateway source must not execute the Kaggle CLI or spawn subprocesses. CI enforces:
 
-- stripped of ANSI control sequences;
-- NUL-stripped;
-- scanned for known Kaggle/token/authorization patterns;
-- redacted where a secret-like value is detected;
-- line-length bounded;
-- total-size bounded.
+- no `subprocess` import/use inside `plugins/kaggle-gateway/src`;
+- no operational `.github/workflows/kaggle-*.yml` files.
 
-Terminal evidence is stored under a fresh temporary directory. The bridge requests only selected
-`result.json` / `job.log` output. Every stored evidence file receives SHA-256 metadata in
-`manifest.json` before upload to GitHub Actions artifacts.
+GitHub Actions are allowed only for repository validation.
 
-Never `eval`, source, execute, or interpolate a Kaggle output filename or log line.
+## Account/owner boundary
 
-## Source packaging
+Every kernel-specific operation checks that:
 
-- symlinks are skipped;
-- paths containing traversal components are skipped;
-- per-file, total-size, and file-count limits are enforced;
-- common secret and dependency-cache paths are excluded;
-- the source commit is verified again with `git rev-parse HEAD` before submission.
+```text
+kernel_ref.owner == registry[account_id].owner_slug
+```
 
-## Repair
+This prevents accidental credential crossover between configured accounts.
 
-The workflow itself has no source-write step.
+## External output/log handling
 
-Failure evidence may cause ChatGPT to propose a patch, but source repair uses the normal GitHub
-change path and must produce a **new commit**. Historical run evidence is never mutated.
+Kaggle responses and logs are untrusted. Before returned text reaches ChatGPT, the gateway:
 
-V0.1 repair safeguards:
+- bounds response size;
+- replaces every configured gateway token with `[REDACTED]`;
+- also redacts configured gateway usernames from returned errors/logs;
+- converts SDK objects to JSON-safe data rather than executing or evaluating their representation.
 
-- default hard budget: 2 attempts;
-- deterministic failure fingerprint;
-- same fingerprint after a repair => stop/escalate;
-- authentication/quota/policy errors => no source modification;
-- no secret/account registry edits by repair automation;
-- no push to default branch from Kaggle workflow.
+No Kaggle log or filename is interpreted as a command.
 
-## Known V0.1 limitation
+## MCP read surface
 
-GitHub Issues are not a transactional lease database. A single batch guarantees unique account IDs
-by contract, but two independently created Issues can theoretically race for the same account.
-The intended V0.1 operator flow is to use one batch Issue for parallel work and check active Issue
-records before submitting another batch. Transactional cross-Issue leases belong in V0.2.
+The initial operational surface is read-only: account listing/auth readiness, kernel inventory,
+status, and logs. MCP `ToolAnnotations` mark these tools read-only/idempotent hints, but security does
+not rely on annotations alone; the functions themselves contain no write/submit/cancel path.
+
+## Server exposure
+
+The server defaults to loopback. It refuses non-loopback binding unless an explicit development
+override is supplied. That override is not a production authentication mechanism. Production use
+must place the MCP endpoint behind authenticated transport/tunneling or equivalent access control.
+
+## Repair/write boundary
+
+No autonomous write or repair path is exposed in the initial direct read/recovery surface. When
+write tools are added later:
+
+- they must use direct `KaggleApi` methods, never CLI/Actions relay;
+- they must be explicitly classified as write operations;
+- historical execution evidence must remain immutable;
+- authentication/quota/policy failures must never trigger source modification;
+- retry/repair attempts must remain bounded.
+
+## Provider policy
+
+Multi-account support is for accounts the operator is authorized to use. The gateway must not
+rotate accounts to evade provider restrictions or quota limits.
