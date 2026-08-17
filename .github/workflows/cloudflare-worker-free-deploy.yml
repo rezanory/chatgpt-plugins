@@ -164,35 +164,54 @@ jobs:
 
       - name: Verify Worker to Kaggle live path
         id: kaggle_live
+        continue-on-error: true
         if: steps.credentials.outputs.configured == 'true'
         env:
           WORKER_URL: ${{ steps.live.outputs.worker_url }}
         shell: bash
         run: |
           admin_root="$WORKER_URL/mcp/$CGP_BOOTSTRAP_MCP_PATH_TOKEN/admin"
-          auth_payload="$(curl --fail --silent --show-error --max-time 30 "$admin_root/auth")"
-          list_payload="$(curl --fail --silent --show-error --max-time 30 "$admin_root/list?account_id=kg-01&page_size=5")"
-          inventory_payload="$(curl --fail --silent --show-error --max-time 45 "$admin_root/inventory?search=pneumonia-v6-2-2&page_size=20")"
-          python - "$auth_payload" "$list_payload" "$inventory_payload" <<'PY'
+          auth_status="$(curl --silent --show-error --max-time 30 -o /tmp/live-auth.json -w '%{http_code}' "$admin_root/auth" || true)"
+          list_status="$(curl --silent --show-error --max-time 30 -o /tmp/live-list.json -w '%{http_code}' "$admin_root/list?account_id=kg-01&page_size=5" || true)"
+          inventory_status="$(curl --silent --show-error --max-time 45 -o /tmp/live-inventory.json -w '%{http_code}' "$admin_root/inventory?search=pneumonia-v6-2-2&page_size=20" || true)"
+          python - "$auth_status" "$list_status" "$inventory_status" <<'PY'
           import json
           import sys
+          from pathlib import Path
 
-          auth = json.loads(sys.argv[1])
-          listing = json.loads(sys.argv[2])
-          inventory = json.loads(sys.argv[3])
-          workers = auth.get("workers") or []
-          if len(workers) != 6:
-              raise SystemExit(f"expected 6 worker auth results, got {len(workers)}")
+          def load(path):
+              p = Path(path)
+              if not p.exists():
+                  return None
+              text = p.read_text(encoding="utf-8", errors="replace")
+              try:
+                  return json.loads(text)
+              except json.JSONDecodeError:
+                  return {"raw": text[:2000]}
+
+          auth_status, list_status, inventory_status = sys.argv[1:4]
+          auth = load("/tmp/live-auth.json")
+          listing = load("/tmp/live-list.json")
+          inventory = load("/tmp/live-inventory.json")
+          workers = auth.get("workers") if isinstance(auth, dict) else None
+          workers = workers if isinstance(workers, list) else []
           failed = [item for item in workers if not item.get("auth_ok")]
           summary = {
+              "http": {
+                  "auth": auth_status,
+                  "list": list_status,
+                  "inventory": inventory_status,
+              },
               "worker_auth": workers,
-              "worker_auth_ok": len(failed) == 0,
-              "kg01_list_count": len(listing.get("kernels") or []),
+              "worker_auth_ok": len(workers) == 6 and len(failed) == 0,
+              "auth_response": auth,
+              "list_response": listing,
               "inventory": inventory,
           }
-          with open("/tmp/live-worker-kaggle.json", "w", encoding="utf-8") as handle:
-              json.dump(summary, handle, indent=2)
-          if failed:
+          Path("/tmp/live-worker-kaggle.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+          if auth_status != "200" or list_status != "200" or inventory_status != "200":
+              raise SystemExit("one or more Worker diagnostic HTTP requests failed")
+          if len(workers) != 6 or failed:
               raise SystemExit("one or more Worker -> Kaggle auth checks failed")
           print("WORKER_KAGGLE_AUTH=PASS")
           print("WORKER_KAGGLE_LIST=PASS")
@@ -201,26 +220,41 @@ jobs:
 
       - name: Verify Master Kaggle token
         id: master_live
-        if: steps.credentials.outputs.configured == 'true'
+        continue-on-error: true
+        if: always() && steps.credentials.outputs.configured == 'true'
         shell: bash
         run: |
           master_token="$(printf '%s' "$CGP_BOOTSTRAP_MASTER_B64" | base64 -d)"
           echo "::add-mask::$master_token"
-          payload="$(curl --fail --silent --show-error --max-time 30 \
+          http_status="$(curl --silent --show-error --max-time 30 \
+            -o /tmp/live-master-response.json -w '%{http_code}' \
             -X POST \
             -H "Authorization: Bearer $master_token" \
             -H "Content-Type: application/json" \
             -H "User-Agent: chatgpt-kaggle-gateway-bootstrap/0.1" \
             --data '{"group":"PROFILE","sortBy":"DATE_RUN","pageSize":1}' \
-            "https://api.kaggle.com/v1/kernels.KernelsApiService/ListKernels")"
-          python - "$payload" <<'PY'
+            "https://api.kaggle.com/v1/kernels.KernelsApiService/ListKernels" || true)"
+          python - "$http_status" <<'PY'
           import json
           import sys
-          value = json.loads(sys.argv[1])
-          if isinstance(value.get("code"), int) and value["code"] >= 400:
-              raise SystemExit(value.get("message") or "master Kaggle auth failed")
-          with open("/tmp/live-master-kaggle.json", "w", encoding="utf-8") as handle:
-              json.dump({"master_auth_ok": True, "probe_count": len(value.get("kernels") or [])}, handle, indent=2)
+          from pathlib import Path
+
+          status = sys.argv[1]
+          p = Path("/tmp/live-master-response.json")
+          text = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+          try:
+              value = json.loads(text) if text else {}
+          except json.JSONDecodeError:
+              value = {"raw": text[:2000]}
+          summary = {
+              "http_status": status,
+              "master_auth_ok": status == "200" and not (isinstance(value.get("code"), int) and value["code"] >= 400),
+              "probe_count": len(value.get("kernels") or []) if isinstance(value, dict) else 0,
+              "response": value,
+          }
+          Path("/tmp/live-master-kaggle.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+          if not summary["master_auth_ok"]:
+              raise SystemExit("master Kaggle auth failed")
           print("MASTER_KAGGLE_AUTH=PASS")
           PY
 
@@ -256,20 +290,29 @@ jobs:
               f"- Master account: `{os.environ.get('MASTER_OUTCOME')}`",
           ]
           if worker is not None:
+              lines += ["", "### Worker HTTP", "```json", json.dumps(worker.get("http"), indent=2), "```"]
               lines += ["", "### Worker auth", "```json", json.dumps(worker.get("worker_auth"), indent=2), "```"]
-              lines += ["", f"kg-01 live list count: `{worker.get('kg01_list_count')}`"]
+              if not worker.get("worker_auth"):
+                  lines += ["", "### Worker auth response", "```json", json.dumps(worker.get("auth_response"), indent=2)[:12000], "```"]
+              listing = worker.get("list_response") or {}
+              lines += ["", f"kg-01 live list count: `{len(listing.get('kernels') or []) if isinstance(listing, dict) else 0}`"]
               inventory = worker.get("inventory") or {}
               counts = []
-              for item in inventory.get("accounts") or []:
-                  counts.append({
-                      "account_id": item.get("account_id"),
-                      "owner_slug": item.get("owner_slug"),
-                      "ok": item.get("ok"),
-                      "matches": len(item.get("kernels") or []),
-                  })
+              if isinstance(inventory, dict):
+                  for item in inventory.get("accounts") or []:
+                      counts.append({
+                          "account_id": item.get("account_id"),
+                          "owner_slug": item.get("owner_slug"),
+                          "ok": item.get("ok"),
+                          "matches": len(item.get("kernels") or []),
+                          "error_type": item.get("error_type"),
+                          "error": item.get("error"),
+                      })
               lines += ["", "### pneumonia-v6-2-2 inventory", "```json", json.dumps(counts, indent=2), "```"]
+              if worker.get("http", {}).get("list") != "200":
+                  lines += ["", "### kg-01 list response", "```json", json.dumps(listing, indent=2)[:12000], "```"]
           if master is not None:
-              lines += ["", "### Master", "```json", json.dumps(master, indent=2), "```"]
+              lines += ["", "### Master", "```json", json.dumps(master, indent=2)[:12000], "```"]
           Path("/tmp/live-activation.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY
           gh issue comment 17 --repo "$GITHUB_REPOSITORY" --body-file /tmp/live-activation.md
