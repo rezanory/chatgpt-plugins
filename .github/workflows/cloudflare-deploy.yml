@@ -23,20 +23,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Detect Cloudflare deployment credentials
+      - name: Resolve Cloudflare deployment account
         id: credentials
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SUPPLIED_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         shell: bash
         run: |
-          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-            echo "Cloudflare deployment credentials are configured."
-          else
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "Cloudflare deployment credentials are not configured; deployment is skipped."
+            echo "Cloudflare API token is not configured; deployment is skipped."
+            exit 0
           fi
+
+          response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts?per_page=50')"
+
+          resolved_account_id="$(python - "$SUPPLIED_CLOUDFLARE_ACCOUNT_ID" "$response" <<'PY'
+          import json
+          import sys
+
+          supplied = sys.argv[1].strip()
+          payload = json.loads(sys.argv[2])
+          if not payload.get("success"):
+              raise SystemExit("Cloudflare Accounts API returned success=false")
+          accounts = payload.get("result") or []
+          ids = [str(item.get("id", "")).strip() for item in accounts if item.get("id")]
+          if supplied and supplied in ids:
+              print(supplied)
+          elif len(ids) == 1:
+              print(ids[0])
+          elif not ids:
+              raise SystemExit("API token cannot enumerate any Cloudflare account")
+          else:
+              raise SystemExit(
+                  "API token can access multiple Cloudflare accounts; set the exact Account ID"
+              )
+          PY
+          )"
+
+          if [ -z "$resolved_account_id" ]; then
+            echo "Unable to resolve Cloudflare Account ID." >&2
+            exit 1
+          fi
+
+          echo "::add-mask::$resolved_account_id"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+          echo "account_id=$resolved_account_id" >> "$GITHUB_OUTPUT"
+          echo "Cloudflare API token and deployment account resolved successfully."
 
       - name: Install deployment dependencies
         if: steps.credentials.outputs.configured == 'true'
@@ -56,7 +91,7 @@ jobs:
         working-directory: deploy/cloudflare-container
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.credentials.outputs.account_id }}
         shell: bash
         run: |
           set -o pipefail
@@ -96,4 +131,4 @@ jobs:
         if: steps.credentials.outputs.configured != 'true'
         run: |
           echo "SKIPPED_NOT_CONFIGURED"
-          echo "Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the cloudflare-production environment."
+          echo "Set CLOUDFLARE_API_TOKEN in the cloudflare-production environment."
