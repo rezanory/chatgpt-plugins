@@ -20,8 +20,7 @@ for path in list((ROOT / "packages").rglob("*.py")) + list((ROOT / "plugins").rg
         if re.search(pattern, text):
             fail(f"unsafe execution primitive {pattern!r} in {path.relative_to(ROOT)}")
 
-# Active Kaggle runtime invariant: the gateway uses KaggleApi directly and never shells out to the
-# Kaggle CLI. GitHub may be the control plane, but Actions/CI must never authenticate to Kaggle.
+# Retained Python reference gateway must remain direct KaggleApi only and never shell out to a CLI.
 gateway_src = ROOT / "plugins/kaggle-gateway/src"
 if gateway_src.exists():
     for path in gateway_src.rglob("*.py"):
@@ -33,12 +32,28 @@ if gateway_src.exists():
         ):
             if re.search(pattern, text):
                 fail(
-                    "direct Kaggle gateway must not use subprocess/CLI: "
+                    "Kaggle gateway reference code must not use subprocess/CLI: "
                     f"{path.relative_to(ROOT)}"
                 )
 
+# Kaggle execution/authentication must never move into GitHub Actions.
 for path in (ROOT / ".github/workflows").glob("kaggle-*.yml"):
     fail(f"operational Kaggle GitHub Actions workflow is forbidden: {path.relative_to(ROOT)}")
+for path in (ROOT / ".github/workflows").glob("*.yml"):
+    text = path.read_text(encoding="utf-8")
+    for forbidden in (
+        "CGP_KAGGLE_KG01_TOKEN",
+        "CGP_KAGGLE_KG02_TOKEN",
+        "CGP_KAGGLE_KG04_TOKEN",
+        "CGP_KAGGLE_KG05_TOKEN",
+        "CGP_KAGGLE_KG06_TOKEN",
+        "CGP_KAGGLE_KG07_TOKEN",
+        "KAGGLE_API_TOKEN",
+        "KAGGLE_USERNAME",
+        "KAGGLE_KEY",
+    ):
+        if forbidden in text:
+            fail(f"GitHub Actions must never receive Kaggle runtime credentials: {path.name}")
 
 # Legacy trusted profiles remain checked while old relay code is retained for migration/reference.
 profiles_path = ROOT / "plugins/kaggle/config/profiles.json"
@@ -60,72 +75,88 @@ if accounts_path.exists():
         if forbidden.lower() in accounts_text.lower():
             fail(f"accounts.json contains forbidden credential-like field/text: {forbidden}")
 
-# V0.1 production hosting is deliberately free-only. Cloudflare Containers require a paid Workers
-# plan, so that runtime must not reappear. Render is used only as a free web service.
-cloudflare_container = ROOT / "deploy/cloudflare-container"
-if cloudflare_container.exists() and any(cloudflare_container.rglob("*")):
-    fail("paid Cloudflare Container runtime must not exist in V0.1")
+# V0.1 production hosting is zero-cost only. Both previously rejected hosting paths stay forbidden.
+for abandoned in (
+    ROOT / "render.yaml",
+    ROOT / "deploy/render-free",
+    ROOT / "deploy/cloudflare-container",
+):
+    if abandoned.is_file() or (abandoned.is_dir() and any(abandoned.rglob("*"))):
+        fail(f"abandoned or paid runtime must not exist: {abandoned.relative_to(ROOT)}")
 
-render_blueprint = ROOT / "render.yaml"
-render_dockerfile = ROOT / "deploy/render-free/Dockerfile"
-if not render_blueprint.is_file():
-    fail("render.yaml is missing")
-else:
-    render_text = render_blueprint.read_text(encoding="utf-8")
-    required_render = (
-        "plan: free",
-        "runtime: docker",
-        "dockerfilePath: ./deploy/render-free/Dockerfile",
-        "healthCheckPath: /healthz",
-        "CGP_GITHUB_WEBHOOK_SECRET",
-        "CGP_GITHUB_TOKEN",
-        "CGP_MCP_PATH_SECRET",
+# Active production boundary: one plain Cloudflare Worker on the Workers Free plan, with no
+# Container, Durable Object, queue, or paid runtime dependency.
+worker_root = ROOT / "deploy/cloudflare-worker-free"
+wrangler_path = worker_root / "wrangler.jsonc"
+worker_entry = worker_root / "src/index.ts"
+kaggle_client = worker_root / "src/kaggle.ts"
+github_control = worker_root / "src/github.ts"
+for required in (wrangler_path, worker_entry, kaggle_client, github_control):
+    if not required.is_file():
+        fail(f"Cloudflare Workers Free runtime file is missing: {required.relative_to(ROOT)}")
+
+if wrangler_path.is_file():
+    wrangler_text = wrangler_path.read_text(encoding="utf-8")
+    required_wrangler = (
+        '"name": "chatgpt-kaggle-gateway"',
+        '"workers_dev": true',
+        '"CGP_WRITE_ENABLED": "0"',
     )
-    for fragment in required_render:
-        if fragment not in render_text:
-            fail(f"Render Free blueprint missing required fragment: {fragment}")
-    for paid_plan in ("plan: starter", "plan: standard", "plan: pro"):
-        if paid_plan in render_text:
-            fail(f"paid Render plan is forbidden in V0.1: {paid_plan}")
-if not render_dockerfile.is_file():
-    fail("Render Free Dockerfile is missing")
+    for fragment in required_wrangler:
+        if fragment not in wrangler_text:
+            fail(f"Workers Free wrangler config missing required fragment: {fragment}")
+    for forbidden in ('"containers"', '"durable_objects"', '"queues"'):
+        if forbidden in wrangler_text:
+            fail(f"Workers Free runtime contains forbidden paid/stateful binding: {forbidden}")
 
-# Signed GitHub webhook is the Pro-compatible write bridge. The webhook must be authenticated,
-# repository/actor constrained, and only the narrow rerun_existing action is accepted in V0.1.
-server_path = gateway_src / "chatgpt_plugin_kaggle_gateway/server.py"
-control_path = gateway_src / "chatgpt_plugin_kaggle_gateway/control.py"
-if server_path.is_file():
-    server_text = server_path.read_text(encoding="utf-8")
-    required_server = (
-        '@_mcp.custom_route("/github/webhook", methods=["POST"])',
-        "CGP_GITHUB_WEBHOOK_SECRET",
-        "verify_github_signature(",
-        "CGP_CONTROL_REPOSITORY",
-        "CGP_GITHUB_ALLOWED_ACTORS",
-        "CGP_MCP_PATH_SECRET",
+if kaggle_client.is_file():
+    kaggle_text = kaggle_client.read_text(encoding="utf-8")
+    required_kaggle = (
+        'const KAGGLE_API_ROOT = "https://api.kaggle.com/v1"',
+        'const authorization = `Basic ${btoa(`${account.username}:${account.token}`)}`',
+        '"ListKernels"',
+        '"GetKernelSessionStatus"',
+        '"ListKernelSessionOutput"',
+        '"GetKernel"',
+        '"SaveKernel"',
+        'kernelExecutionType: "SAVE_AND_RUN_ALL"',
     )
-    for fragment in required_server:
-        if fragment not in server_text:
-            fail(f"Render/GitHub control boundary missing required fragment: {fragment}")
-else:
-    fail("Kaggle gateway server.py is missing")
+    for fragment in required_kaggle:
+        if fragment not in kaggle_text:
+            fail(f"direct Kaggle HTTPS client missing required fragment: {fragment}")
+    if "KaggleApi(" in kaggle_text or "kaggle cli" in kaggle_text.lower():
+        fail("active Worker runtime must use direct HTTPS rather than Python/CLI")
 
-if control_path.is_file():
-    control_text = control_path.read_text(encoding="utf-8")
+if worker_entry.is_file():
+    entry_text = worker_entry.read_text(encoding="utf-8")
+    required_entry = (
+        'url.pathname === "/healthz"',
+        'url.pathname === "/github/webhook"',
+        "CGP_MCP_PATH_SECRET",
+        "createMcpHandler(",
+        'transport: "cloudflare-workers-free"',
+        "kaggle_auth_check_all",
+        "kaggle_kernels_inventory_all",
+    )
+    for fragment in required_entry:
+        if fragment not in entry_text:
+            fail(f"Workers Free MCP entry missing required fragment: {fragment}")
+
+if github_control.is_file():
+    control_text = github_control.read_text(encoding="utf-8")
     required_control = (
-        'self.action != "rerun_existing"',
-        "verify_github_signature",
-        "kernels_pull(",
-        "kernels_push(",
-        "CLAIM_MARKER",
-        "RECEIPT_MARKER",
+        "x-hub-signature-256",
+        "CGP_GITHUB_WEBHOOK_SECRET",
+        'env.CGP_WRITE_ENABLED !== "1"',
+        "write_disabled_until_recovery",
+        'action !== "rerun_existing"',
+        "hasJobMarker(",
+        "rerunExisting(",
         "CGP_GITHUB_TOKEN",
     )
     for fragment in required_control:
         if fragment not in control_text:
-            fail(f"direct write control missing required fragment: {fragment}")
-else:
-    fail("Kaggle gateway control.py is missing")
+            fail(f"signed GitHub write bridge missing required fragment: {fragment}")
 
 # Never interpolate raw Issue body/comment text into an Actions shell script.
 for path in (ROOT / ".github/workflows").glob("*.yml"):
