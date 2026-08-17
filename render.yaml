@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: chatgpt-kaggle-gateway
+    runtime: docker
+    plan: free
+    branch: main
+    dockerfilePath: ./deploy/render-free/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: RENDER
+        value: "true"
+      - key: CGP_GATEWAY_HOST
+        value: 0.0.0.0
+      - key: CGP_CONTROL_REPOSITORY
+        value: rezanory/chatgpt-plugins
+      - key: CGP_GITHUB_ALLOWED_ACTORS
+        value: rezanory
+      - key: CGP_MCP_PATH_SECRET
+        generateValue: true
+      - key: CGP_GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: CGP_GITHUB_TOKEN
+        sync: false
+
+      - key: CGP_KAGGLE_KG01_USERNAME
+        value: azadka
+      - key: CGP_KAGGLE_KG01_TOKEN
+        sync: false
+      - key: CGP_KAGGLE_KG02_USERNAME
+        value: radlinaradlina
+      - key: CGP_KAGGLE_KG02_TOKEN
+        sync: false
+      - key: CGP_KAGGLE_KG04_USERNAME
+        value: reyhanehazad
+      - key: CGP_KAGGLE_KG04_TOKEN
+        sync: false
+      - key: CGP_KAGGLE_KG05_USERNAME
+        value: trickermark
+      - key: CGP_KAGGLE_KG05_TOKEN
+        sync: false
+      - key: CGP_KAGGLE_KG06_USERNAME
+        value: msdenis
+      - key: CGP_KAGGLE_KG06_TOKEN
+        sync: false
+      - key: CGP_KAGGLE_KG07_USERNAME
+        value: nisabulutmark
+      - key: CGP_KAGGLE_KG07_TOKEN
+        sync: false
