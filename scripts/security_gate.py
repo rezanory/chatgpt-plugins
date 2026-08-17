@@ -36,9 +36,9 @@ if gateway_src.exists():
                     f"{path.relative_to(ROOT)}"
                 )
 
-# Kaggle runtime credentials must not be referenced directly by ordinary GitHub Actions workflows.
-# The temporary Cloudflare bootstrap workflow constructs binding names at runtime so the Worker can
-# be activated without exposing the provider tokens as first-class Actions secret names.
+# Runtime Kaggle/MCP credentials live only in Cloudflare Worker Secrets. GitHub Actions may receive
+# Cloudflare deployment credentials, but must never receive or embed Kaggle runtime credentials or
+# the private MCP capability token.
 for path in (ROOT / ".github/workflows").glob("kaggle-*.yml"):
     fail(f"operational Kaggle GitHub Actions workflow is forbidden: {path.relative_to(ROOT)}")
 for path in (ROOT / ".github/workflows").glob("*.yml"):
@@ -50,12 +50,15 @@ for path in (ROOT / ".github/workflows").glob("*.yml"):
         "CGP_KAGGLE_KG05_TOKEN",
         "CGP_KAGGLE_KG06_TOKEN",
         "CGP_KAGGLE_KG07_TOKEN",
+        "CGP_KAGGLE_MASTER_TOKEN",
+        "CGP_MCP_PATH_TOKEN",
         "KAGGLE_API_TOKEN",
         "KAGGLE_USERNAME",
         "KAGGLE_KEY",
+        "KGAT_",
     ):
         if forbidden in text:
-            fail(f"GitHub Actions must never receive Kaggle runtime credentials: {path.name}")
+            fail(f"GitHub Actions must never receive Kaggle/MCP runtime credentials: {path.name}")
 
 # Legacy trusted profiles remain checked while old relay code is retained for migration/reference.
 profiles_path = ROOT / "plugins/kaggle/config/profiles.json"
@@ -119,12 +122,17 @@ if kaggle_client.is_file():
         'account.token.startsWith("KGAT_")',
         '`Bearer ${account.token}`',
         '`Basic ${btoa(`${account.username}:${account.token}`)}`',
+        'accountId: "master"',
+        'ownerSlug: "azadka"',
+        "CGP_KAGGLE_MASTER_TOKEN",
+        'role: "master"',
         '"ListKernels"',
         '"GetKernelSessionStatus"',
         '"ListKernelSessionOutput"',
         '"GetKernel"',
         '"SaveKernel"',
         'kernelExecutionType: "SAVE_AND_RUN_ALL"',
+        'throw new Error("master account is read-only")',
         "CGP_MCP_PATH_TOKEN",
     )
     for fragment in required_kaggle:
@@ -144,6 +152,9 @@ if worker_entry.is_file():
         'transport: "cloudflare-workers-free"',
         "kaggle_auth_check_all",
         "kaggle_kernels_inventory_all",
+        "kaggle_master_auth_check",
+        "kaggle_master_kernel_status",
+        "master_configured",
     )
     for fragment in required_entry:
         if fragment not in entry_text:
