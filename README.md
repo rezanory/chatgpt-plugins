@@ -3,156 +3,146 @@
 V0.1 monorepo for operating external compute from a normal ChatGPT conversation without using
 ChatGPT Work or Codex Cloud as the execution runner.
 
-The first implemented provider is **Kaggle**.
+The first provider is **Kaggle**. The active Kaggle runtime is a direct Python API gateway.
 
-## V0.1 control path
-
-```text
-ChatGPT
-  |
-  | existing GitHub integration (write-capable)
-  v
-GitHub Issue in chatgpt-plugins
-  |
-  | issue opened
-  v
-GitHub Actions dispatcher (short lived)
-  |
-  | trusted account -> GitHub Environment -> KAGGLE_API_TOKEN
-  v
-Kaggle private source dataset + private kernel
-  |
-  v
-Kaggle compute
-```
-
-Status is explicitly requested from the same ChatGPT conversation:
-
-```text
-ChatGPT -> GitHub issue comment: /kaggle status
-        -> short status workflow
-        -> Kaggle kernels status/output
-        -> sanitize + hash evidence
-        -> GitHub issue comment + Actions artifact
-        -> ChatGPT reads the result through GitHub
-```
-
-This is a **relay**, not a bypass of ChatGPT's custom-MCP write restrictions. When direct
-write-capable custom MCP is available on the target ChatGPT plan, only the transport should be
-replaced; job, provider, provenance, failure, and repair contracts stay stable.
-
-## Authentication policy
-
-V0.1 uses **only** Kaggle's current non-interactive API-token flow:
-
-```text
-Kaggle Settings -> API -> Generate New Token
-                  |
-                  v
-GitHub Environment secret: KAGGLE_API_TOKEN
-```
-
-Browser sessions, cookies, repeated interactive logins, OAuth browser flows, and legacy
-`KAGGLE_USERNAME`/`KAGGLE_KEY` credentials are not part of the V0.1 runtime path.
-
-## What V0.1 supports
-
-- Immutable GitHub commit SHA as the source of every new run.
-- One or many authorized Kaggle accounts configured as GitHub Environments.
-- Parallel batch submission: one Issue may contain up to 16 tasks, each mapped to a distinct
-  Kaggle account.
-- Trusted execution profiles only; Issue content cannot provide arbitrary shell commands.
-- `subprocess.run(..., shell=False)` in the Kaggle bootstrap.
-- Private source dataset and private Kaggle kernel.
-- Dependency-free `python-smoke` profile for bridge validation.
-- On-demand status collection with `/kaggle status`.
-- `[KAGGLE-AUTH]` Issue workflow for harmless token validation across enabled accounts.
-- `[KAGGLE-INVENTORY] <search>` Issue workflow for discovering existing kernels through API
-  tokens without submitting new compute.
-- Sanitized logs, deterministic failure classification, failure fingerprinting.
-- Hashed evidence manifests stored as GitHub Actions artifacts for terminal runs.
-- Repair contracts with hard attempt limits; no autonomous workflow edits to source.
-
-## Existing-run recovery
-
-The inventory path exists specifically for workloads that were already running before this control
-plane was installed. It never creates a new kernel:
+## Active runtime path
 
 ```text
 ChatGPT
-  -> [KAGGLE-INVENTORY] pneumonia-v6-2-2
-  -> enabled account environments
-  -> kaggle kernels list -m -s pneumonia-v6-2-2
-  -> sanitized inventory comments
-  -> identify existing owner/kernel refs
-  -> query status/output through API
+  |
+  | MCP / ChatGPT App connection
+  v
+Kaggle Direct Gateway
+  |
+  | select account_id
+  v
+Dedicated KaggleApi instance for that account
+  |
+  | direct Python API calls
+  v
+Kaggle
 ```
 
-This allows previously interrupted multi-account workloads to be discovered and assessed before a
-new submission is considered.
+**GitHub is not in the Kaggle runtime path.** GitHub stores source and runs repository CI only.
+There is no Kaggle CLI, GitHub Actions relay, browser session, cookie login, or repeated interactive
+login in the active runtime architecture.
 
-## Deliberate V0.1 limits
+## Proven authentication sequence
 
-- Cross-Issue distributed account leasing is not claimed to be atomic. For reliable parallel
-  multi-account runs, place parallel tasks in **one batch Issue** with unique account IDs.
-- GitHub Actions dispatches and checks; it does not wait for an hours-long Kaggle run.
-- No high-churn runtime state is committed to Git.
-- No multi-provider router yet.
-- No arbitrary dynamic notebook generation.
-- No unattended repair daemon.
-- No provider quota values are hard-coded. Provider/account limits are operator configuration.
+Every enabled account gets its own `KaggleApi()` object. Authentication intentionally follows the
+same direct method already validated against the operator's accounts:
+
+```python
+api = KaggleApi()
+api.set_config_value(api.CONFIG_NAME_USER, username)
+api.set_config_value(api.CONFIG_NAME_KEY, token)
+api.authenticate()
+api.kernels_list(page_size=1)
+```
+
+A successful `kernels_list(page_size=1)` is the harmless authentication/readiness probe.
+
+## Multi-account isolation
+
+`set_config_value()` writes account configuration to a file. Sharing the default
+`~/.kaggle/kaggle.json` between several clients would create an overwrite race. The gateway keeps
+the proven sequence above but gives each logical account:
+
+- one dedicated `KaggleApi` instance;
+- one private temporary config directory;
+- one private temporary `kaggle.json`;
+- one per-account creation lock;
+- one per-account API-call lock.
+
+Different accounts authenticate and operate in parallel. Calls within the same account are
+serialized where needed. Temporary config directories are removed when the gateway shuts down.
+On POSIX systems the directory is restricted to `0700` and the config file to `0600`.
+
+## Credential model
+
+Credentials are injected into the **gateway process secret environment**, never committed to Git.
+The repository contains only secret-reference variable names such as:
+
+```text
+CGP_KAGGLE_KG01_USERNAME
+CGP_KAGGLE_KG01_TOKEN
+CGP_KAGGLE_KG02_USERNAME
+CGP_KAGGLE_KG02_TOKEN
+...
+```
+
+Do not set process-global `KAGGLE_API_TOKEN`, `KAGGLE_USERNAME`, or `KAGGLE_KEY` in the
+multi-account gateway. The gateway rejects those variables so they cannot override isolated
+per-account configuration during authentication.
+
+## Current read/recovery tools
+
+The MCP gateway currently exposes the safe first-stage tools:
+
+- `kaggle_accounts`
+- `kaggle_auth_check`
+- `kaggle_auth_check_all`
+- `kaggle_kernels_list`
+- `kaggle_kernels_inventory_all`
+- `kaggle_kernel_status`
+- `kaggle_kernel_logs`
+
+These tools use direct `KaggleApi` calls. They do not submit, restart, or cancel a kernel.
+
+## Existing-run recovery first
+
+Before creating any new compute, existing multi-account work is recovered read-only:
+
+```text
+ChatGPT
+  -> kaggle_auth_check_all()
+  -> kaggle_kernels_inventory_all(search="pneumonia-v6-2-2")
+  -> identify owner/kernel refs per account
+  -> kaggle_kernel_status(account_id, kernel_ref)
+  -> kaggle_kernel_logs(account_id, kernel_ref)
+  -> decide whether an existing run completed, failed, or needs later resubmission
+```
+
+No new Kaggle compute is created during this sequence.
+
+## Security boundaries
+
+- The active gateway runtime contains no subprocess/CLI path.
+- CI fails if `plugins/kaggle-gateway/src` imports or invokes `subprocess`.
+- CI fails if a `kaggle-*.yml` operational GitHub Actions workflow is reintroduced.
+- A kernel `owner/slug` must match the selected account's configured owner.
+- Authentication failure from one account is contained to that account; it cannot terminate the
+  whole multi-account gateway.
+- Tokens and configured usernames are redacted from returned errors and logs.
+- Account configuration files in Git contain secret references only, never secret values.
+- The MCP server defaults to loopback and refuses unauthenticated non-loopback binding unless an
+  explicit development override is supplied. Production exposure must use authenticated transport.
 
 ## Repository layout
 
 ```text
 packages/
-  core/             versioned job/provider contracts, scheduler primitives, provenance types
-  github-bridge/    GitHub Issue protocol + optional future workflow-dispatch adapter
-  repair-engine/    deterministic failure classifier, fingerprint, repair policy/contracts
+  core/             job/provider contracts and scheduler primitives
+  github-bridge/    source/control integrations for the wider monorepo
+  repair-engine/    failure classifier, fingerprint, repair policy/contracts
 plugins/
-  kaggle/           Kaggle provider implementation and GitHub Actions-side commands
+  kaggle-gateway/   ACTIVE direct multi-account KaggleApi + MCP runtime
+  kaggle/           legacy relay implementation retained temporarily for migration/reference
 .github/workflows/
-  kaggle-auth-check.yml
-  kaggle-inventory.yml
-  kaggle-issue-dispatch.yml
-  kaggle-issue-status.yml
-  ci.yml
-docs/
-  architecture-v0.1.md
-  security-v0.1.md
-  setup-v0.1.md
+  ci.yml            source validation only; never a Kaggle runtime
 ```
 
-## Fast setup
-
-See [`docs/setup-v0.1.md`](docs/setup-v0.1.md). The essential steps are:
-
-1. Create a private GitHub repository named `chatgpt-plugins` and push this source.
-2. Configure `plugins/kaggle/config/accounts.json` with public account metadata only.
-3. Create one GitHub Environment per account (`kaggle-01`, `kaggle-02`, ...).
-4. Generate a current Kaggle API token for each account and put it in that environment as
-   `KAGGLE_API_TOKEN`. Never commit or paste tokens into ChatGPT.
-5. Open a `[KAGGLE-AUTH]` Issue and require `AUTH_OK` before any new compute is submitted.
-6. If recovering existing work, open `[KAGGLE-INVENTORY] <search-term>` before creating new jobs.
-7. If target source repositories are private, add a narrowly scoped read-only
-   `SOURCE_GITHUB_TOKEN` repository secret.
-8. Open a `[KAGGLE-JOB]` Issue only after account authentication is healthy.
-9. Ask ChatGPT to check active jobs; ChatGPT can comment `/kaggle status` through GitHub.
-
 ## Development
-
-With dependencies available:
 
 ```bash
 uv sync --all-packages --dev
 uv run pytest
 uv run ruff check .
+uv run python scripts/security_gate.py
 ```
-
-The repository has no requirement for a long-running service in V0.1.
 
 ## Safety boundary
 
-Multiple accounts are supported only as accounts the operator is authorized to use and must not
-be used to evade Kaggle quotas, restrictions, or terms. The scheduler/configuration model is
-quota-aware by design, but V0.1 intentionally does not guess or hard-code Kaggle quota numbers.
+Multiple accounts are supported only when the operator is authorized to use them. The gateway must
+not be used to evade Kaggle quotas, restrictions, or terms. Provider quota behavior is not
+hard-coded or bypassed.
