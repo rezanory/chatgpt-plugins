@@ -114,7 +114,10 @@ async def github_webhook(request: Request) -> JSONResponse:
 
     try:
         issue_number = int(issue["number"])
-        command = ControlCommand.from_issue(str(issue.get("title") or ""), str(issue.get("body") or ""))
+        command = ControlCommand.from_issue(
+            str(issue.get("title") or ""),
+            str(issue.get("body") or ""),
+        )
         accepted = _dispatcher().accept(issue_number, command)
     except (KeyError, TypeError, ValueError, RuntimeError) as exc:
         return JSONResponse(
