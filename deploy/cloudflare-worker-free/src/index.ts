@@ -17,7 +17,7 @@ import {
   publicMaster,
   type WorkerEnv,
 } from "./kaggle";
-import { v622RecoveryStatus } from "./recovery";
+import { v622RecoveryStatus, v622ShardArtifacts } from "./recovery";
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -318,6 +318,14 @@ export default {
     if (url.pathname === "/recovery/v6-2-2/status" && request.method === "GET") {
       try {
         return json(await v622RecoveryStatus(env));
+      } catch (error) {
+        return errorResponse(error);
+      }
+    }
+
+    if (url.pathname === "/recovery/v6-2-2/shard-artifacts" && request.method === "GET") {
+      try {
+        return json(await v622ShardArtifacts(env, url.searchParams.get("shard") ?? ""));
       } catch (error) {
         return errorResponse(error);
       }
