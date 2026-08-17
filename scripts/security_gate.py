@@ -47,7 +47,10 @@ for path in (ROOT / ".github/workflows").glob("*.yml"):
         "${{ toJSON(github.event.issue) }}",
     ):
         if forbidden in text:
-            fail(f"workflow directly interpolates untrusted event content: {path.name}: {forbidden}")
+            fail(
+                "workflow directly interpolates untrusted event content: "
+                f"{path.name}: {forbidden}"
+            )
 
 if ERRORS:
     for error in ERRORS:
