@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          uv run ruff check . 2>&1 | tee /tmp/ci-ruff.log
+          uv run ruff check . --output-format concise 2>&1 | tee /tmp/ci-ruff.log
       - name: Tests
         id: tests
         if: steps.sync.outcome == 'success'
@@ -86,7 +86,11 @@ jobs:
               file="/tmp/ci-${item}.log"
               if [ -f "$file" ]; then
                 printf '\n### %s tail\n```text\n' "$item"
-                tail -n 80 "$file" | sed -E 's/(token|secret|password|api[_-]?key)([=: ]+)[^ ]+/\1\2[REDACTED]/Ig' | tail -c 8000
+                if [ "$item" = 'ruff' ]; then
+                  tail -n 250 "$file"
+                else
+                  tail -n 80 "$file"
+                fi | sed -E 's/(token|secret|password|api[_-]?key)([=: ]+)[^ ]+/\1\2[REDACTED]/Ig' | tail -c 30000
                 printf '\n```\n'
               fi
             done
