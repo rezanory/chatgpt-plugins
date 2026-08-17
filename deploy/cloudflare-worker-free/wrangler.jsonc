@@ -8,5 +8,15 @@
     "CGP_CONTROL_REPOSITORY": "rezanory/chatgpt-plugins",
     "CGP_GITHUB_ALLOWED_ACTORS": "rezanory",
     "CGP_WRITE_ENABLED": "0"
-  }
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["KaggleGatewayContainer"]
+    },
+    {
+      "tag": "v2",
+      "deleted_classes": ["KaggleGatewayContainer"]
+    }
+  ]
 }
