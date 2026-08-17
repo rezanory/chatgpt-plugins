@@ -10,6 +10,7 @@ from mcp.server import MCPServer
 from mcp_types import ToolAnnotations
 
 from .api_pool import KaggleApiPool
+from .artifacts import build_output_manifest
 from .config import load_registry
 
 _mcp = MCPServer(
@@ -140,6 +141,23 @@ def kaggle_kernel_status(account_id: str, kernel_ref: str) -> Any:
 def kaggle_kernel_logs(account_id: str, kernel_ref: str) -> str:
     """Read the execution log for an existing owner/kernel through the direct Python API."""
     return _pool().kernels_logs(account_id, kernel_ref)
+
+
+@_mcp.tool(annotations=_READ_ONLY)
+def kaggle_kernel_output_manifest(
+    account_id: str,
+    kernel_ref: str,
+    artifact_names: list[str],
+    expected_fingerprint: str = "",
+) -> dict[str, Any]:
+    """Hash selected existing outputs and report exact fingerprint hits without retaining files."""
+    return build_output_manifest(
+        _pool(),
+        account_id,
+        kernel_ref,
+        artifact_names,
+        expected_fingerprint=expected_fingerprint or None,
+    )
 
 
 def main() -> None:
