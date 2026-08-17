@@ -3,10 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from pathlib import Path
 
 from ..config import load_accounts
-from ..status import DEFAULT_FILE_PATTERN if False else None
 from .common import load_github_event, write_github_output
 
 RECOVERY_SCHEMA_V1 = "chatgpt.compute.recovery/v1"
@@ -67,8 +65,11 @@ def build_recovery_matrix(body: str, accounts_file: str) -> tuple[dict, list[dic
     seen_tasks: set[str] = set()
     seen_accounts: set[str] = set()
     for raw in raw_runs:
-        if not isinstance(raw, dict) or set(raw) != {"task_id", "account_id", "kernel_ref"}:
-            raise ValueError("each recovery run must contain task_id, account_id, and kernel_ref")
+        required = {"task_id", "account_id", "kernel_ref"}
+        if not isinstance(raw, dict) or set(raw) != required:
+            raise ValueError(
+                "each recovery run must contain task_id, account_id, and kernel_ref"
+            )
         task_id = str(raw["task_id"])
         account_id = str(raw["account_id"])
         kernel_ref = str(raw["kernel_ref"])
@@ -89,7 +90,8 @@ def build_recovery_matrix(body: str, accounts_file: str) -> tuple[dict, list[dic
             raise ValueError(f"invalid kernel_ref: {kernel_ref!r}")
         if parts[0].casefold() != account.owner_slug.casefold():
             raise ValueError(
-                f"kernel owner {parts[0]!r} does not match account {account_id!r} owner metadata"
+                f"kernel owner {parts[0]!r} does not match account "
+                f"{account_id!r} owner metadata"
             )
         matrix.append(
             {
@@ -120,9 +122,15 @@ def main(argv: list[str] | None = None) -> int:
     title = str(issue.get("title") or "")
     if not title.startswith("[KAGGLE-RECOVER]"):
         raise ValueError("recovery issue title must start with [KAGGLE-RECOVER]")
-    public, matrix = build_recovery_matrix(str(issue.get("body") or ""), args.accounts_file)
+    public, matrix = build_recovery_matrix(
+        str(issue.get("body") or ""),
+        args.accounts_file,
+    )
     write_github_output("recovery", json.dumps(public, sort_keys=True))
-    write_github_output("matrix", json.dumps({"include": matrix}, separators=(",", ":")))
+    write_github_output(
+        "matrix",
+        json.dumps({"include": matrix}, separators=(",", ":")),
+    )
     print(json.dumps(public, indent=2, sort_keys=True))
     return 0
 
