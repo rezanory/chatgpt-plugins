@@ -1,14 +1,11 @@
-"""Direct multi-account gateway for Kaggle's official remote MCP server."""
+"""Direct multi-account KaggleApi gateway for ChatGPT."""
 
+from .api_pool import KaggleApiPool
 from .config import GatewayAccount, GatewayRegistry, load_registry
-from .policy import classify_tool, validate_tool_name
-from .upstream import KaggleMcpClient
 
 __all__ = [
     "GatewayAccount",
     "GatewayRegistry",
-    "KaggleMcpClient",
-    "classify_tool",
+    "KaggleApiPool",
     "load_registry",
-    "validate_tool_name",
 ]
