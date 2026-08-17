@@ -125,7 +125,9 @@ async function kaggleCall(
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const account = accountCredentials(env, accountId);
-  const authorization = `Basic ${btoa(`${account.username}:${account.token}`)}`;
+  const authorization = account.token.startsWith("KGAT_")
+    ? `Bearer ${account.token}`
+    : `Basic ${btoa(`${account.username}:${account.token}`)}`;
   const response = await fetch(`${KAGGLE_API_ROOT}/${KAGGLE_SERVICE}/${requestName}`, {
     method: "POST",
     headers: {
