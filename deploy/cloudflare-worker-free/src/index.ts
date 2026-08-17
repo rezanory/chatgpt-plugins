@@ -228,6 +228,26 @@ export default {
           const kernelRef = url.searchParams.get("kernel_ref") ?? "";
           return json(await kernelStatus(env, accountId, kernelRef));
         }
+        if (url.pathname === `${adminRoot}/kernel-logs`) {
+          const accountId = url.searchParams.get("account_id") ?? "";
+          const kernelRef = url.searchParams.get("kernel_ref") ?? "";
+          return json({ account_id: accountId, kernel_ref: kernelRef, log: await kernelLogs(env, accountId, kernelRef) });
+        }
+        if (url.pathname === `${adminRoot}/output-manifest`) {
+          const accountId = url.searchParams.get("account_id") ?? "";
+          const kernelRef = url.searchParams.get("kernel_ref") ?? "";
+          const artifactNames = url.searchParams.getAll("artifact_name");
+          const expectedFingerprint = url.searchParams.get("expected_fingerprint") ?? "";
+          return json(
+            await kernelOutputManifest(
+              env,
+              accountId,
+              kernelRef,
+              artifactNames,
+              expectedFingerprint,
+            ),
+          );
+        }
       } catch (error) {
         return errorResponse(error);
       }
