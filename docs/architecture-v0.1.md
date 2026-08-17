@@ -60,8 +60,9 @@ kaggle_kernel_logs
 kaggle_kernel_output_manifest
 ```
 
-The MCP route is capability-gated by a secret-derived path. Without `CGP_MCP_PATH_SECRET`, no MCP
-route is exposed.
+A random URL-safe `CGP_MCP_PATH_TOKEN` is used directly as `/mcp/<token>`. Without a valid 32–128
+character token, no MCP route is exposed. The token is stored only as a Cloudflare Worker Secret and
+in the ChatGPT custom-app endpoint configuration, not in source or conversation text.
 
 Output recovery is bounded by allowlisted names, file-count and byte budgets, HTTPS host allowlists,
 SHA-256 hashing, and bounded fingerprint scanning.
@@ -94,7 +95,7 @@ CGP_KAGGLE_KG04_TOKEN
 CGP_KAGGLE_KG05_TOKEN
 CGP_KAGGLE_KG06_TOKEN
 CGP_KAGGLE_KG07_TOKEN
-CGP_MCP_PATH_SECRET
+CGP_MCP_PATH_TOKEN
 ```
 
 Later write control additionally requires `CGP_GITHUB_WEBHOOK_SECRET` and a repository-scoped
@@ -120,6 +121,7 @@ auth six accounts
 - user-PC runtime or tunnels;
 - Render;
 - paid Cloudflare Containers;
+- Cloudflare Zero Trust/Access dependency for V0.1 MCP activation;
 - Kaggle CLI/subprocess execution;
 - operational Kaggle GitHub Actions;
 - browser/cookie authentication;
