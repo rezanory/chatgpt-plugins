@@ -1,24 +1,38 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import shutil
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from kaggle.api.kaggle_api_extended import KaggleApi
-
 from .config import GatewayAccount, GatewayRegistry
 
-# These global Kaggle variables would override per-account config during api.authenticate().
-# The gateway deliberately uses CGP_KAGGLE_* variables instead.
+# KaggleApi.authenticate() reads KAGGLE_* environment variables after the config file. Global
+# credentials would therefore override an account's isolated username/key. The gateway stores
+# account secrets under CGP_KAGGLE_* instead and rejects conflicting globals at startup.
 _CONFLICTING_GLOBAL_AUTH = (
     "KAGGLE_API_TOKEN",
     "KAGGLE_USERNAME",
     "KAGGLE_KEY",
 )
+
+
+def _kaggle_api_class():
+    # Importing the kaggle package creates a module-level API instance and performs a best-effort
+    # authenticate(). Suppress only that import-time helper output; our per-account instances below
+    # authenticate explicitly and errors from those instances are never suppressed.
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        from kaggle.api.kaggle_api_extended import KaggleApi
+
+    return KaggleApi
 
 
 def _jsonable(value: Any) -> Any:
@@ -42,7 +56,7 @@ def _jsonable(value: Any) -> Any:
 @dataclass(slots=True)
 class _ClientSlot:
     account: GatewayAccount
-    api: KaggleApi
+    api: Any
     config_dir: Path
     lock: threading.RLock
 
@@ -50,17 +64,18 @@ class _ClientSlot:
 class KaggleApiPool:
     """One isolated KaggleApi instance per configured account.
 
-    The exact authentication flow is intentionally the one proven by the operator:
+    Authentication intentionally follows the operator-proven sequence exactly::
 
-      api = KaggleApi()
-      api.set_config_value(api.CONFIG_NAME_USER, username)
-      api.set_config_value(api.CONFIG_NAME_KEY, token)
-      api.authenticate()
-      api.kernels_list(page_size=1)
+        api = KaggleApi()
+        api.set_config_value(api.CONFIG_NAME_USER, username)
+        api.set_config_value(api.CONFIG_NAME_KEY, token)
+        api.authenticate()
+        api.kernels_list(page_size=1)
 
-    KaggleApi.set_config_value writes to api.config. We therefore override api.config_dir/api.config
-    per account before injecting credentials, preventing six concurrent clients from racing on the
-    process-wide default ~/.kaggle/kaggle.json file.
+    `set_config_value()` writes to `api.config`, while KaggleApi's defaults are class-level values.
+    Each account therefore receives an instance-local temporary config directory and config file
+    before credentials are injected. This preserves the proven authentication method while making
+    six-account parallel operation safe from shared `~/.kaggle/kaggle.json` overwrite races.
     """
 
     def __init__(self, registry: GatewayRegistry) -> None:
@@ -83,20 +98,22 @@ class KaggleApiPool:
             if os.name != "nt":
                 config_dir.chmod(0o700)
 
+            KaggleApi = _kaggle_api_class()
             api = KaggleApi()
-            # KaggleApi's defaults are class attributes; make every mutable credential/config
-            # field instance-local before set_config_value() is called.
+
+            # Make every mutable auth/config field instance-local before set_config_value().
             api.config_dir = str(config_dir)
             api.config_file = "kaggle.json"
             api.config = str(config_dir / api.config_file)
             api.config_values = {}
             api._authenticated = False
 
+            # Proven direct Python API authentication flow supplied by the operator.
             api.set_config_value(api.CONFIG_NAME_USER, username, quiet=True)
             api.set_config_value(api.CONFIG_NAME_KEY, token, quiet=True)
             api.authenticate()
 
-            # Same harmless health probe that already succeeded for the user's six accounts.
+            # Same harmless probe already observed as auth_ok on all six active accounts.
             api.kernels_list(page_size=1)
             return _ClientSlot(
                 account=account,
@@ -130,12 +147,30 @@ class KaggleApiPool:
             "probe_count": len(kernels or []),
         }
 
-    def auth_check_all(self) -> list[dict[str, Any]]:
-        return [
-            self.auth_check(account.account_id)
-            for account in self._registry.accounts
-            if account.enabled
-        ]
+    def auth_check_all(self, *, max_workers: int | None = None) -> list[dict[str, Any]]:
+        enabled = [account for account in self._registry.accounts if account.enabled]
+        if not enabled:
+            return []
+        workers = max_workers or len(enabled)
+        workers = max(1, min(workers, len(enabled), 16))
+        results: dict[str, dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="kaggle-auth") as executor:
+            futures = {
+                executor.submit(self.auth_check, account.account_id): account.account_id
+                for account in enabled
+            }
+            for future in as_completed(futures):
+                account_id = futures[future]
+                try:
+                    results[account_id] = future.result()
+                except Exception as exc:
+                    results[account_id] = {
+                        "account_id": account_id,
+                        "auth_ok": False,
+                        "error_type": exc.__class__.__name__,
+                        "error": str(exc)[:1000],
+                    }
+        return [results[account.account_id] for account in enabled]
 
     def kernels_list(
         self,
