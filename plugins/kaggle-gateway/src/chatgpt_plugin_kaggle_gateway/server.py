@@ -163,13 +163,17 @@ def kaggle_kernel_output_manifest(
 def main() -> None:
     host = os.getenv("CGP_GATEWAY_HOST", "127.0.0.1")
     port = int(os.getenv("CGP_GATEWAY_PORT", "8000"))
-    if host not in {"127.0.0.1", "localhost", "::1"} and os.getenv(
-        "CGP_GATEWAY_ALLOW_UNAUTHENTICATED_REMOTE"
-    ) != "1":
+    trusted_proxy = os.getenv("CGP_GATEWAY_TRUSTED_PROXY", "")
+    loopback = host in {"127.0.0.1", "localhost", "::1"}
+    trusted_cloudflare_container = trusted_proxy == "cloudflare-container"
+    explicit_unsafe_override = os.getenv("CGP_GATEWAY_ALLOW_UNAUTHENTICATED_REMOTE") == "1"
+
+    if not loopback and not trusted_cloudflare_container and not explicit_unsafe_override:
         raise RuntimeError(
-            "refusing unauthenticated non-loopback MCP binding; keep the gateway local/private "
-            "or place it behind an authenticated tunnel/proxy"
+            "refusing non-loopback MCP binding unless the process is behind an approved trusted "
+            "proxy/container boundary"
         )
+
     _mcp.run(
         transport="streamable-http",
         host=host,
