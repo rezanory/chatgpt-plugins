@@ -40,7 +40,7 @@ No CLI, browser session, GitHub Action, or new compute is involved.
 ## Step 2 — resolve exact owner/kernel refs
 
 Inventory results are grouped by logical account. For each candidate, retain the exact
-`owner/kernel-slug`. The gateway will reject later kernel-specific operations if the owner does not
+`owner/kernel-slug`. The gateway rejects later kernel-specific operations if the owner does not
 match the selected account's configured `owner_slug`.
 
 ## Step 3 — read status and logs
@@ -62,23 +62,43 @@ api.kernels_logs(kernel_ref)
 Returned logs are bounded and all configured gateway credentials are redacted before they can reach
 ChatGPT.
 
-## Step 4 — selected output recovery
+## Step 4 — selected output recovery and hashing
 
-The internal `KaggleApiPool.kernels_output()` method directly supports:
+The public read-only tool is:
+
+```text
+kaggle_kernel_output_manifest(
+  account_id,
+  kernel_ref,
+  artifact_names,
+  expected_fingerprint="..."
+)
+```
+
+It calls the direct API path:
 
 ```python
 api.kernels_output(
     kernel_ref,
-    path=output_path,
-    file_pattern=allowlisted_pattern,
+    path=temporary_output_path,
+    file_pattern=escaped_allowlist_pattern,
     force=False,
     quiet=True,
 )
 ```
 
-Output download is not yet exposed as a public read tool until the gateway deployment has a defined
-private artifact directory/storage policy. When enabled, it must keep the same direct-API path and
-must never route through CLI or GitHub Actions.
+The tool does **not** return raw downloaded files to ChatGPT. It:
+
+1. accepts only safe literal artifact-name fragments;
+2. escapes them before constructing Kaggle's filename-regex filter;
+3. downloads only matching existing outputs into a fresh private temporary directory;
+4. rejects symlinks/path escapes and bounds file count/total bytes;
+5. computes SHA-256 for every recovered file;
+6. optionally scans small files for the expected fingerprint value;
+7. returns only the manifest and exact fingerprint-hit paths;
+8. deletes the temporary local output before the MCP tool returns.
+
+This keeps artifact recovery read-only while allowing integrity comparison from ChatGPT.
 
 ## Known evidence target
 
@@ -94,8 +114,19 @@ and a known artifact identifier is:
 KAGGLE_EXECUTION_V62_2
 ```
 
-Do not assume the fingerprint is a filename. First inventory exact runs/files, then compare actual
-retrieved evidence/hash data against the expected fingerprint.
+Example:
+
+```text
+kaggle_kernel_output_manifest(
+  account_id="kg-01",
+  kernel_ref="<exact-owner>/<exact-kernel>",
+  artifact_names=["KAGGLE_EXECUTION_V62_2", "fingerprint"],
+  expected_fingerprint="fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838"
+)
+```
+
+Do not assume the fingerprint is a filename. Inventory exact runs first, then compare actual
+manifest hashes/content hits against the expected fingerprint.
 
 ## Rule before new compute
 
