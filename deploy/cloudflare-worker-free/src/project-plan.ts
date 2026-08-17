@@ -29,7 +29,7 @@ async function kaggleCall(env: WorkerEnv, body: Record<string, unknown>): Promis
     headers: {
       Authorization: authorization(env),
       "Content-Type": "application/json",
-      "User-Agent": "chatgpt-kaggle-project-plan/0.1",
+      "User-Agent": "chatgpt-kaggle-project-plan/0.2",
     },
     body: JSON.stringify(body),
   });
@@ -98,7 +98,7 @@ function allowedOutputUrl(raw: string): URL {
   return url;
 }
 
-async function readSmallOutput(env: WorkerEnv, files: OutputFile[], suffix: string): Promise<string> {
+async function readSmallOutput(files: OutputFile[], suffix: string): Promise<string> {
   const match = files.find((file) => file.fileName.endsWith(suffix));
   if (!match) throw new Error(`required recovered artifact not found: ${suffix}`);
   const response = await fetch(allowedOutputUrl(match.url).toString(), { redirect: "follow" });
@@ -123,13 +123,13 @@ const RELEVANT_KEY = /(model|backbone|architect|resolution|image|input|matrix|tr
 function relevantJson(value: unknown): Array<{ path: string; value: string | number | boolean | null }> {
   const result: Array<{ path: string; value: string | number | boolean | null }> = [];
   const visit = (node: unknown, path: string, inherited: boolean, depth: number): void => {
-    if (result.length >= 220 || depth > 8) return;
+    if (result.length >= 300 || depth > 9) return;
     if (node === null || typeof node === "string" || typeof node === "number" || typeof node === "boolean") {
       if (inherited && (typeof node !== "string" || node.length <= 500)) result.push({ path, value: node });
       return;
     }
     if (Array.isArray(node)) {
-      node.slice(0, 40).forEach((item, index) => visit(item, `${path}[${index}]`, inherited, depth + 1));
+      node.slice(0, 80).forEach((item, index) => visit(item, `${path}[${index}]`, inherited, depth + 1));
       return;
     }
     if (!node || typeof node !== "object") return;
@@ -143,16 +143,16 @@ function relevantJson(value: unknown): Array<{ path: string; value: string | num
 }
 
 function signalLines(texts: string[]): string[] {
-  const pattern = /(M0[1-9]|convnext|efficientnet|resnet|densenet|mobilenet|swin|maxvit|coatnet|regnet|vit|transformer|backbone|ensemble|champion|confirm|hpo|merge|resolution|matrix)/i;
+  const pattern = /(M(?:0[0-9]|1[0-2])|convnext|efficientnet|resnet|densenet|backbone|ensemble|champion|confirm|hpo|merge|resolution|image.size|matrix|model.id|seed|worker|shard|output.root|epoch|FINAL_TEST_TOKEN)/i;
   const out: string[] = [];
   const seen = new Set<string>();
   for (const text of texts) {
     for (const raw of text.split(/\r?\n/)) {
       const line = raw.trim();
-      if (!line || line.length > 420 || !pattern.test(line) || seen.has(line)) continue;
+      if (!line || line.length > 500 || !pattern.test(line) || seen.has(line)) continue;
       seen.add(line);
       out.push(line);
-      if (out.length >= 180) return out;
+      if (out.length >= 500) return out;
     }
   }
   return out;
@@ -164,36 +164,56 @@ function matches(text: string, regex: RegExp): string[] {
   return [...values];
 }
 
+function basename(value: string): string {
+  const parts = value.split("/");
+  return parts[parts.length - 1] || value;
+}
+
 export async function v622ProjectPlan(env: WorkerEnv): Promise<Record<string, unknown>> {
   const files = await enumerateOutputs(env);
-  const recipeText = await readSmallOutput(env, files, "/FROZEN_SHARED_TRAINING_RECIPE.json");
-  const configText = await readSmallOutput(env, files, "/training/M01/W01_M01_r224__M01/config.json");
-  const reportText = await readSmallOutput(env, files, "/training/M01/W01_M01_r224__M01/final_report.json");
-  const matrixText = await readSmallOutput(env, files, "/training/matrix_execution_report.json");
+  const recipeText = await readSmallOutput(files, "/FROZEN_SHARED_TRAINING_RECIPE.json");
+  const configText = await readSmallOutput(files, "/training/M01/W01_M01_r224__M01/config.json");
+  const reportText = await readSmallOutput(files, "/training/M01/W01_M01_r224__M01/final_report.json");
+  const matrixText = await readSmallOutput(files, "/training/matrix_execution_report.json");
 
-  const sourceSuffixes = [
-    "/SOURCE_PYTHON/shared_hpo_recipe.py",
-    "/SOURCE_PYTHON/backbone_comparison_contracts.py",
-    "/SOURCE_PYTHON/pneumonia_runner_base.py",
-    "/SOURCE_PYTHON/auto_ensemble_selection.py",
-    "/SOURCE_PYTHON/backbone_ensemble_selection.py",
-    "/SOURCE_PYTHON/select_champion.py",
-    "/SOURCE_PYTHON/v6_master.py",
-    "/SOURCE_PYTHON/v6_worker.py",
-  ];
+  const sourceInventory = files
+    .map((file) => file.fileName)
+    .filter((name) => /\/SOURCE_PYTHON\/[^/]+\.py$/i.test(name))
+    .map(basename)
+    .filter((value, index, array) => array.indexOf(value) === index)
+    .sort();
+
+  const priorityNames = new Set([
+    "shared_hpo_recipe.py",
+    "backbone_comparison_contracts.py",
+    "pneumonia_runner_base.py",
+    "kaggle_convnext_runner.py",
+    "kaggle_convnext_runner_hpo.py",
+    "run_training_matrix.py",
+    "training_matrix.py",
+    "matrix_runner.py",
+    "auto_ensemble_selection.py",
+    "backbone_ensemble_selection.py",
+    "select_champion.py",
+    "v6_master.py",
+    "v6_worker.py",
+  ]);
+  const discoveredRunnerNames = sourceInventory.filter((name) => /(runner|matrix|master|worker|hpo|ensemble|champion|recipe|backbone)/i.test(name));
+  const sourceNames = [...new Set([...priorityNames, ...discoveredRunnerNames])].slice(0, 30);
   const sources: string[] = [];
   const sourceFiles: string[] = [];
-  for (const suffix of sourceSuffixes) {
+  for (const name of sourceNames) {
     try {
-      sources.push(await readSmallOutput(env, files, suffix));
-      sourceFiles.push(suffix.split("/").pop() ?? suffix);
+      sources.push(await readSmallOutput(files, `/SOURCE_PYTHON/${name}`));
+      sourceFiles.push(name);
     } catch {
-      // Optional source module may not be present in a particular recovered package.
+      // Optional source module may not be present in this recovered package.
     }
   }
 
   const allText = [recipeText, configText, reportText, matrixText, ...sources].join("\n");
-  const modelCodes = matches(allText.toUpperCase(), /\bM0[1-9]\b/g).sort();
+  const modelCodes = matches(allText.toUpperCase(), /\bM(?:0[1-9]|1[0-2])\b/g)
+    .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
   const architectureTerms = matches(
     allText.toLocaleLowerCase("en-US"),
     /\b(?:convnext\w*|efficientnet\w*|resnet\w*|densenet\w*|mobilenet\w*|swin\w*|maxvit\w*|coatnet\w*|regnet\w*|vit\w*|transformer\w*)\b/g,
@@ -206,6 +226,7 @@ export async function v622ProjectPlan(env: WorkerEnv): Promise<Record<string, un
   return {
     source_kernel: `${OWNER}/${KERNEL_SLUG}`,
     recovered_output_count: files.length,
+    source_inventory: sourceInventory,
     source_files_inspected: sourceFiles,
     planned_model_codes: modelCodes,
     architecture_terms: architectureTerms,
