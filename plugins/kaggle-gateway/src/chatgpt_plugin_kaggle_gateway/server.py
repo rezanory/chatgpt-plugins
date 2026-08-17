@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import hashlib
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -8,6 +9,8 @@ from typing import Any
 
 from mcp.server import MCPServer
 from mcp_types import ToolAnnotations
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from .api_pool import KaggleApiPool
 from .artifacts import build_output_manifest
@@ -51,6 +54,12 @@ def _close_pool() -> None:
 
 
 atexit.register(_close_pool)
+
+
+@_mcp.custom_route("/healthz", methods=["GET"])
+async def healthz(_request: Request) -> JSONResponse:
+    """Public liveness endpoint for the free hosting platform."""
+    return JSONResponse({"service": "chatgpt-kaggle-gateway", "status": "ready"})
 
 
 @_mcp.tool(annotations=_READ_ONLY)
@@ -160,24 +169,47 @@ def kaggle_kernel_output_manifest(
     )
 
 
+def _mcp_path_secret() -> tuple[str, bool]:
+    """Return a URL-safe secret MCP path for hosted runtimes.
+
+    Render can generate a high-entropy environment value. We hash it before using it in the URL so
+    arbitrary base64 characters never become part of the path. The resulting path is a bearer-like
+    capability URL and must be treated as sensitive.
+    """
+    secret = os.getenv("CGP_MCP_PATH_SECRET", "").strip()
+    if not secret:
+        return "/mcp", False
+    digest = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+    return f"/mcp/{digest}", True
+
+
 def main() -> None:
     host = os.getenv("CGP_GATEWAY_HOST", "127.0.0.1")
-    port = int(os.getenv("CGP_GATEWAY_PORT", "8000"))
-    trusted_proxy = os.getenv("CGP_GATEWAY_TRUSTED_PROXY", "")
+    port = int(os.getenv("CGP_GATEWAY_PORT") or os.getenv("PORT") or "8000")
+    mcp_path, has_path_secret = _mcp_path_secret()
     loopback = host in {"127.0.0.1", "localhost", "::1"}
-    trusted_cloudflare_container = trusted_proxy == "cloudflare-container"
+    render_runtime = os.getenv("RENDER", "").lower() == "true"
     explicit_unsafe_override = os.getenv("CGP_GATEWAY_ALLOW_UNAUTHENTICATED_REMOTE") == "1"
 
-    if not loopback and not trusted_cloudflare_container and not explicit_unsafe_override:
+    if render_runtime and not has_path_secret:
+        raise RuntimeError("Render runtime requires CGP_MCP_PATH_SECRET")
+
+    protected_remote = render_runtime and has_path_secret
+    if not loopback and not protected_remote and not explicit_unsafe_override:
         raise RuntimeError(
-            "refusing non-loopback MCP binding unless the process is behind an approved trusted "
-            "proxy/container boundary"
+            "refusing non-loopback MCP binding without a protected hosted-runtime boundary"
         )
+
+    if render_runtime:
+        # Render logs are private to the service owner. This is the only place the capability path
+        # is surfaced so the operator can configure the ChatGPT custom MCP endpoint.
+        print(f"CGP_MCP_ENDPOINT_PATH={mcp_path}", flush=True)
 
     _mcp.run(
         transport="streamable-http",
         host=host,
         port=port,
+        streamable_http_path=mcp_path,
         stateless_http=True,
         json_response=True,
     )
