@@ -73,6 +73,117 @@ jobs:
           echo "account_id=$resolved_account_id" >> "$GITHUB_OUTPUT"
           echo "Cloudflare API token and deployment account resolved successfully."
 
+      - name: Ensure workers.dev account subdomain
+        if: steps.credentials.outputs.configured == 'true'
+        id: workers_dev
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.credentials.outputs.account_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain"
+
+          http_code="$(curl --silent --show-error \
+            --output /tmp/workers-subdomain.json \
+            --write-out '%{http_code}' \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$endpoint")"
+
+          current="$(python - /tmp/workers-subdomain.json <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          try:
+              payload = json.loads(path.read_text())
+          except Exception:
+              print("")
+              raise SystemExit(0)
+          result = payload.get("result") or {}
+          print(str(result.get("subdomain") or "").strip())
+          PY
+          )"
+
+          if [ "$http_code" = "200" ] && [ -n "$current" ]; then
+            echo "workers.dev account subdomain already exists; preserving it."
+            echo "subdomain=$current" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          primary="$(python - "$GITHUB_REPOSITORY_OWNER" <<'PY'
+          import re
+          import sys
+
+          owner = sys.argv[1].lower()
+          owner = re.sub(r"[^a-z0-9-]+", "-", owner).strip("-") or "cgp"
+          value = f"{owner}-chatgpt-plugins"[:63].strip("-")
+          print(value)
+          PY
+          )"
+          fallback="$(python - "$GITHUB_REPOSITORY_OWNER" "$CLOUDFLARE_ACCOUNT_ID" <<'PY'
+          import hashlib
+          import re
+          import sys
+
+          owner = re.sub(r"[^a-z0-9-]+", "-", sys.argv[1].lower()).strip("-") or "cgp"
+          suffix = hashlib.sha256(sys.argv[2].encode()).hexdigest()[:8]
+          base = f"{owner}-cgp"
+          print(f"{base[:53].rstrip('-')}-{suffix}")
+          PY
+          )"
+
+          for candidate in "$primary" "$fallback"; do
+            body="$(python - "$candidate" <<'PY'
+          import json
+          import sys
+          print(json.dumps({"subdomain": sys.argv[1]}))
+          PY
+          )"
+            create_code="$(curl --silent --show-error \
+              --output /tmp/workers-subdomain-create.json \
+              --write-out '%{http_code}' \
+              -X PUT \
+              -H 'Content-Type: application/json' \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              --data "$body" \
+              "$endpoint")"
+            created="$(python - /tmp/workers-subdomain-create.json <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          try:
+              payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          except Exception:
+              print("")
+              raise SystemExit(0)
+          result = payload.get("result") or {}
+          print(str(result.get("subdomain") or "").strip() if payload.get("success") else "")
+          PY
+          )"
+            if [ "$create_code" = "200" ] && [ -n "$created" ]; then
+              echo "workers.dev account subdomain registered successfully: $created"
+              echo "subdomain=$created" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          python - /tmp/workers-subdomain-create.json <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          try:
+              payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          except Exception:
+              raise SystemExit("Unable to register workers.dev account subdomain")
+          errors = payload.get("errors") or []
+          safe = [{"code": item.get("code"), "message": item.get("message")} for item in errors]
+          raise SystemExit(f"Unable to register workers.dev account subdomain: {safe}")
+          PY
+
       - name: Install deployment dependencies
         if: steps.credentials.outputs.configured == 'true'
         working-directory: deploy/cloudflare-container
