@@ -20,23 +20,50 @@ for path in list((ROOT / "packages").rglob("*.py")) + list((ROOT / "plugins").rg
         if re.search(pattern, text):
             fail(f"unsafe execution primitive {pattern!r} in {path.relative_to(ROOT)}")
 
-# The trusted profile registry must use steps/argv and never legacy command strings.
-profiles_path = ROOT / "plugins/kaggle/config/profiles.json"
-profiles = json.loads(profiles_path.read_text(encoding="utf-8"))
-for name, profile in profiles.items():
-    if "commands" in profile:
-        fail(f"profile {name} uses forbidden commands field")
-    for step in profile.get("steps", []):
-        argv = step.get("argv")
-        if not isinstance(argv, list) or not argv or not all(isinstance(v, str) for v in argv):
-            fail(f"profile {name} has invalid argv")
+# Direct Kaggle gateway invariant: runtime code uses the Python KaggleApi class directly. It must
+# never spawn the `kaggle` CLI or any subprocess. Tests are allowed to use test helpers, but src is
+# held to this boundary.
+gateway_src = ROOT / "plugins/kaggle-gateway/src"
+if gateway_src.exists():
+    for path in gateway_src.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for pattern in (
+            r"\bimport\s+subprocess\b",
+            r"\bfrom\s+subprocess\s+import\b",
+            r"subprocess\.",
+        ):
+            if re.search(pattern, text):
+                fail(
+                    "direct Kaggle gateway must not use subprocess/CLI: "
+                    f"{path.relative_to(ROOT)}"
+                )
 
-# Credential material must not be present in account metadata.
+# Operational Kaggle GitHub Actions are intentionally forbidden. GitHub Actions may validate this
+# repository, but Kaggle authentication/execution/status must occur in the long-running direct MCP
+# gateway, never in CI.
+for path in (ROOT / ".github/workflows").glob("kaggle-*.yml"):
+    fail(f"obsolete Kaggle runtime workflow is forbidden: {path.relative_to(ROOT)}")
+
+# The legacy trusted profile registry remains checked while the old relay package is retained for
+# migration/reference. It is not on the runtime path.
+profiles_path = ROOT / "plugins/kaggle/config/profiles.json"
+if profiles_path.exists():
+    profiles = json.loads(profiles_path.read_text(encoding="utf-8"))
+    for name, profile in profiles.items():
+        if "commands" in profile:
+            fail(f"profile {name} uses forbidden commands field")
+        for step in profile.get("steps", []):
+            argv = step.get("argv")
+            if not isinstance(argv, list) or not argv or not all(isinstance(v, str) for v in argv):
+                fail(f"profile {name} has invalid argv")
+
+# Credential material must not be present in legacy account metadata.
 accounts_path = ROOT / "plugins/kaggle/config/accounts.json"
-accounts_text = accounts_path.read_text(encoding="utf-8")
-for forbidden in ("KAGGLE_API_TOKEN", "KAGGLE_KEY", "api_token", "password", "private_key"):
-    if forbidden.lower() in accounts_text.lower():
-        fail(f"accounts.json contains forbidden credential-like field/text: {forbidden}")
+if accounts_path.exists():
+    accounts_text = accounts_path.read_text(encoding="utf-8")
+    for forbidden in ("KAGGLE_API_TOKEN", "KAGGLE_KEY", "api_token", "password", "private_key"):
+        if forbidden.lower() in accounts_text.lower():
+            fail(f"accounts.json contains forbidden credential-like field/text: {forbidden}")
 
 # Never interpolate raw Issue body/comment text into a workflow shell script.
 for path in (ROOT / ".github/workflows").glob("*.yml"):
