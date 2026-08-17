@@ -1,5 +1,6 @@
 import {
   kernelLogs,
+  kernelOutputFiles,
   kernelStatus,
   listKernels,
   type AccountId,
@@ -145,6 +146,51 @@ async function finalizationCandidates(env: WorkerEnv): Promise<Array<Record<stri
       }
     }),
   );
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function relevantArtifacts(fileNames: string[]): Record<string, string[]> {
+  const usable = fileNames.filter((name) => !/SOURCE_PYTHON|__pycache__/i.test(name));
+  const groups: Record<string, RegExp> = {
+    checkpoints: /(?:checkpoint|weights|best_model|model_best|\.pt$|\.pth$|\.ckpt$|\.h5$|\.keras$|\.onnx$|\.safetensors$)/i,
+    metrics_reports: /(?:metric|score|report|evaluation|eval_|result|matrix_execution_report)/i,
+    predictions: /(?:prediction|preds?|probabilit|logits?|oof|submission)/i,
+    recipes_manifests: /(?:recipe|manifest|fingerprint|config|threshold|calibrat)/i,
+    ensemble_champion: /(?:ensemble|champion|selection|selected|handoff|merge)/i,
+  };
+  const output: Record<string, string[]> = {};
+  for (const [key, pattern] of Object.entries(groups)) {
+    output[key] = usable.filter((name) => pattern.test(name)).slice(0, 120);
+  }
+  return output;
+}
+
+export async function v622ShardArtifacts(env: WorkerEnv, shardId: string): Promise<Record<string, unknown>> {
+  const target = RECOVERY_TARGETS.find((item) => item.kind === "train" && item.id === shardId.toUpperCase());
+  if (!target) throw new Error("unknown V6.2.2 shard; expected W01..W06");
+  const listing = await kernelOutputFiles(env, target.accountId, target.kernelRef, "", 2000);
+  const fileNames = stringArray(listing.file_names);
+  const groups = relevantArtifacts(fileNames);
+  const hints = new Set<string>();
+  const joined = fileNames.join("\n").toLocaleLowerCase("en-US");
+  for (const term of ARCHITECTURE_TERMS) if (joined.includes(term)) hints.add(term);
+  if (target.modelCode) hints.add(target.modelCode);
+  return {
+    shard_id: target.id,
+    account_id: target.accountId,
+    owner_slug: target.ownerSlug,
+    kernel_ref: target.kernelRef,
+    model_code: target.modelCode ?? null,
+    resolution: target.resolution ?? null,
+    model_hints: [...hints],
+    page_count: listing.page_count ?? null,
+    enumerated_file_count: listing.enumerated_file_count ?? fileNames.length,
+    truncated: listing.truncated ?? null,
+    artifact_groups: groups,
+  };
 }
 
 export async function v622RecoveryStatus(env: WorkerEnv): Promise<Record<string, unknown>> {
