@@ -5,7 +5,7 @@ This is the active zero-cost V0.1 production runtime.
 ## Runtime
 
 ```text
-ChatGPT -> MCP -> Cloudflare Worker Free -> direct Kaggle HTTPS API
+ChatGPT -> private MCP capability URL -> Cloudflare Worker Free -> direct Kaggle HTTPS API
 ChatGPT -> GitHub Issue -> signed webhook -> Worker Free -> direct Kaggle HTTPS API
 ```
 
@@ -16,6 +16,12 @@ There is no Cloudflare Container, Render service, Kaggle CLI, or user-PC runtime
 The Worker is deployed from GitHub by `.github/workflows/cloudflare-worker-free-deploy.yml` using
 only `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the `cloudflare-production`
 environment. Kaggle credentials are never passed through GitHub Actions.
+
+Live base URL:
+
+```text
+https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev
+```
 
 ## Required Worker secrets for read/recovery
 
@@ -28,18 +34,20 @@ CGP_KAGGLE_KG04_TOKEN
 CGP_KAGGLE_KG05_TOKEN
 CGP_KAGGLE_KG06_TOKEN
 CGP_KAGGLE_KG07_TOKEN
-CGP_MCP_PATH_SECRET
+CGP_MCP_PATH_TOKEN
 ```
 
-Usernames/owner slugs are public registry metadata compiled into `src/kaggle.ts`.
+`CGP_MCP_PATH_TOKEN` must be a random URL-safe value 32–128 characters long using only letters,
+numbers, `_`, and `-`. Enter the same value only in Cloudflare and in the ChatGPT custom MCP URL.
+Do not paste it into the conversation, Git, Issues, or Actions logs.
 
 The MCP endpoint is:
 
 ```text
-https://chatgpt-kaggle-gateway.<workers-dev-subdomain>.workers.dev/mcp/<sha256(CGP_MCP_PATH_SECRET)>
+https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/mcp/<CGP_MCP_PATH_TOKEN>
 ```
 
-The secret itself must not appear in Git, ChatGPT, Issues, or Actions logs.
+If the token is absent or malformed, the MCP route returns 404.
 
 ## Optional later write bridge
 
@@ -60,7 +68,7 @@ CGP_GITHUB_TOKEN
 and a GitHub repository webhook pointing to:
 
 ```text
-https://chatgpt-kaggle-gateway.<workers-dev-subdomain>.workers.dev/github/webhook
+https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/github/webhook
 ```
 
 with `Issues` events only and the same webhook secret.
