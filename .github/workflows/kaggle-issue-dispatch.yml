@@ -35,7 +35,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
-          printf '%s\n' 'Kaggle dispatch rejected: the job contract, account mapping, or execution profile is invalid. Inspect the workflow run for validation details; no Kaggle credential was loaded.' > /tmp/comment.md
+          printf '%s\n' 'Kaggle dispatch rejected: stage=plan. The job contract, account mapping, execution profile, or source policy is invalid. No Kaggle credential was loaded.' > /tmp/comment.md
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment.md
 
   dispatch:
@@ -73,11 +73,13 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout control-plane repository
+        id: checkout_control
         uses: actions/checkout@v4
         with:
           path: _plugins
 
       - name: Checkout immutable target source
+        id: checkout_source
         uses: actions/checkout@v4
         with:
           repository: ${{ matrix.source_repository }}
@@ -88,22 +90,33 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@v6
+        id: setup_uv
 
       - name: Install bridge and official Kaggle CLI
+        id: install
         working-directory: _plugins
         run: |
           uv sync --package chatgpt-plugin-kaggle
           uv pip install "kaggle==2.2.4"
 
       - name: Validate credential presence without printing it
+        id: credentials
         shell: bash
         run: |
           set +x
-          if [ -n "$KAGGLE_API_TOKEN" ]; then exit 0; fi
-          test -n "$KAGGLE_USERNAME"
-          test -n "$KAGGLE_KEY"
+          if [ -n "$KAGGLE_API_TOKEN" ]; then
+            printf '%s\n' 'mode=api-token' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$KAGGLE_USERNAME" ] && [ -n "$KAGGLE_KEY" ]; then
+            printf '%s\n' 'mode=legacy' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s\n' 'No Kaggle credential is configured for the selected GitHub Environment.' >&2
+          exit 42
 
       - name: Submit private source dataset and private Kaggle kernel
+        id: submit
         working-directory: _plugins
         shell: bash
         run: |
@@ -126,6 +139,7 @@ jobs:
             --comment-file /tmp/run-comment.md
 
       - name: Publish machine-readable run record to the control issue
+        id: publish
         working-directory: _plugins
         run: >-
           uv run --package chatgpt-plugin-kaggle python -m
@@ -137,7 +151,23 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          CHECKOUT_CONTROL_OUTCOME: ${{ steps.checkout_control.outcome }}
+          CHECKOUT_SOURCE_OUTCOME: ${{ steps.checkout_source.outcome }}
+          SETUP_UV_OUTCOME: ${{ steps.setup_uv.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          CREDENTIALS_OUTCOME: ${{ steps.credentials.outcome }}
+          SUBMIT_OUTCOME: ${{ steps.submit.outcome }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
         run: |
-          printf 'Kaggle task `%s` failed during validation/packaging/submission. No automatic source repair was attempted. Workflow run: %s/%s/actions/runs/%s\n' \
-            "$TASK_ID" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > /tmp/failure.md
+          stage='unknown'
+          if [ "$CHECKOUT_CONTROL_OUTCOME" != 'success' ]; then stage='checkout-control';
+          elif [ "$CHECKOUT_SOURCE_OUTCOME" != 'success' ]; then stage='checkout-source';
+          elif [ "$SETUP_UV_OUTCOME" != 'success' ]; then stage='setup-uv';
+          elif [ "$INSTALL_OUTCOME" != 'success' ]; then stage='install';
+          elif [ "$CREDENTIALS_OUTCOME" != 'success' ]; then stage='credentials';
+          elif [ "$SUBMIT_OUTCOME" != 'success' ]; then stage='submit';
+          elif [ "$PUBLISH_OUTCOME" != 'success' ]; then stage='publish';
+          fi
+          printf 'Kaggle task `%s` failed during validation/packaging/submission. stage=`%s`. No automatic source repair was attempted. Workflow run: %s/%s/actions/runs/%s\n' \
+            "$TASK_ID" "$stage" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > /tmp/failure.md
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/failure.md
