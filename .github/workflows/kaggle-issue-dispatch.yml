@@ -136,7 +136,8 @@ jobs:
             --accelerator "$ACCELERATOR" \
             --github-run-id "$GITHUB_RUN_ID" \
             --job-integrity-hash "$JOB_INTEGRITY_HASH" \
-            --comment-file /tmp/run-comment.md
+            --comment-file /tmp/run-comment.md \
+            --diagnostic-file /tmp/submit-diagnostic.md
 
       - name: Publish machine-readable run record to the control issue
         id: publish
@@ -170,4 +171,8 @@ jobs:
           fi
           printf 'Kaggle task `%s` failed during validation/packaging/submission. stage=`%s`. No automatic source repair was attempted. Workflow run: %s/%s/actions/runs/%s\n' \
             "$TASK_ID" "$stage" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > /tmp/failure.md
+          if [ "$stage" = 'submit' ] && [ -f /tmp/submit-diagnostic.md ]; then
+            printf '\n' >> /tmp/failure.md
+            cat /tmp/submit-diagnostic.md >> /tmp/failure.md
+          fi
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/failure.md
