@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from chatgpt_plugin_kaggle_gateway import api_pool
 from chatgpt_plugin_kaggle_gateway.config import GatewayAccount, GatewayRegistry
 
@@ -150,9 +149,11 @@ def test_kernel_owner_must_match_selected_account(monkeypatch):
     _credentials(monkeypatch)
     _use_fake(monkeypatch)
 
-    with api_pool.KaggleApiPool(_registry()) as pool:
-        with pytest.raises(ValueError, match="does not match account"):
-            pool.kernels_status("kg-01", "owner-two/foreign-kernel")
+    with (
+        api_pool.KaggleApiPool(_registry()) as pool,
+        pytest.raises(ValueError, match="does not match account"),
+    ):
+        pool.kernels_status("kg-01", "owner-two/foreign-kernel")
 
 
 def test_auth_error_redacts_token(monkeypatch):
