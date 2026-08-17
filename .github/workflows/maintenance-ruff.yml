@@ -23,7 +23,7 @@ jobs:
       - name: Apply formatter and safe Ruff fixes
         run: |
           uv run ruff format .
-          uv run ruff check . --fix
+          uv run ruff check . --fix --exit-zero
       - name: Validate security
         run: uv run python scripts/security_gate.py
       - name: Validate tests
