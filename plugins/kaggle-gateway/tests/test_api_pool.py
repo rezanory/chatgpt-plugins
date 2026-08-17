@@ -52,6 +52,11 @@ class FakeKaggleApi:
         self.events.append(("kernels_status", kernel_ref))
         return {"ref": kernel_ref, "status": "complete"}
 
+    def kernels_logs(self, kernel_ref):
+        self.events.append(("kernels_logs", kernel_ref))
+        token = self.config_values["key"]
+        return f"normal log\ncredential={token}\n"
+
 
 def _registry() -> GatewayRegistry:
     return GatewayRegistry(
@@ -81,11 +86,15 @@ def _credentials(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_direct_auth_uses_operator_proven_sequence_and_isolated_config(monkeypatch):
-    _credentials(monkeypatch)
+def _use_fake(monkeypatch, cls=FakeKaggleApi):
     FakeKaggleApi.created.clear()
     FakeKaggleApi.barrier = None
-    monkeypatch.setattr(api_pool, "_kaggle_api_class", lambda: FakeKaggleApi)
+    monkeypatch.setattr(api_pool, "_kaggle_api_class", lambda: cls)
+
+
+def test_direct_auth_uses_operator_proven_sequence_and_isolated_config(monkeypatch):
+    _credentials(monkeypatch)
+    _use_fake(monkeypatch)
 
     pool = api_pool.KaggleApiPool(_registry())
     try:
@@ -109,9 +118,8 @@ def test_direct_auth_uses_operator_proven_sequence_and_isolated_config(monkeypat
 
 def test_two_accounts_authenticate_in_parallel_without_config_collision(monkeypatch):
     _credentials(monkeypatch)
-    FakeKaggleApi.created.clear()
+    _use_fake(monkeypatch)
     FakeKaggleApi.barrier = threading.Barrier(2)
-    monkeypatch.setattr(api_pool, "_kaggle_api_class", lambda: FakeKaggleApi)
 
     pool = api_pool.KaggleApiPool(_registry())
     started = time.monotonic()
@@ -140,9 +148,7 @@ def test_global_kaggle_auth_env_is_rejected(monkeypatch):
 
 def test_kernel_owner_must_match_selected_account(monkeypatch):
     _credentials(monkeypatch)
-    FakeKaggleApi.created.clear()
-    FakeKaggleApi.barrier = None
-    monkeypatch.setattr(api_pool, "_kaggle_api_class", lambda: FakeKaggleApi)
+    _use_fake(monkeypatch)
 
     with api_pool.KaggleApiPool(_registry()) as pool:
         with pytest.raises(ValueError, match="does not match account"):
@@ -157,9 +163,41 @@ def test_auth_error_redacts_token(monkeypatch):
             token = self.config_values["key"]
             raise RuntimeError(f"authentication failed for secret={token}")
 
-    monkeypatch.setattr(api_pool, "_kaggle_api_class", lambda: FailingApi)
+    _use_fake(monkeypatch, FailingApi)
     with api_pool.KaggleApiPool(_registry()) as pool:
         result = pool.auth_check_all(max_workers=2)[0]
     assert result["auth_ok"] is False
     assert "token-one" not in result["error"]
     assert "[REDACTED]" in result["error"]
+
+
+def test_system_exit_from_one_account_does_not_kill_other_accounts(monkeypatch):
+    _credentials(monkeypatch)
+
+    class ExitOneApi(FakeKaggleApi):
+        def authenticate(self):
+            if self.config_values["username"] == "owner-one":
+                raise SystemExit(1)
+            self._authenticated = True
+
+    _use_fake(monkeypatch, ExitOneApi)
+    with api_pool.KaggleApiPool(_registry()) as pool:
+        results = pool.auth_check_all(max_workers=2)
+
+    assert results[0]["account_id"] == "kg-01"
+    assert results[0]["auth_ok"] is False
+    assert results[0]["error_type"] == "RuntimeError"
+    assert results[1]["account_id"] == "kg-02"
+    assert results[1]["auth_ok"] is True
+
+
+def test_kernel_logs_redact_all_gateway_credentials(monkeypatch):
+    _credentials(monkeypatch)
+    _use_fake(monkeypatch)
+
+    with api_pool.KaggleApiPool(_registry()) as pool:
+        log = pool.kernels_logs("kg-01", "owner-one/kernel")
+
+    assert "token-one" not in log
+    assert "owner-one" not in log
+    assert "[REDACTED]" in log
