@@ -1,0 +1,198 @@
+name: cloudflare-recovery-check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cloudflare-recovery-check.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    env:
+      WORKER_URL: https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev
+      MCP_PATH_TOKEN: 0cf90836657fd06e7b6f8f86bf8f3f9de41fa76076af41a93c402de2139c422c
+      SEARCH_TERM: pneumonia-v6-2-2
+      EXPECTED_FINGERPRINT: fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838
+    steps:
+      - name: Read exact refs, status, logs and output evidence
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          worker = os.environ["WORKER_URL"].rstrip("/")
+          token = os.environ["MCP_PATH_TOKEN"]
+          search = os.environ["SEARCH_TERM"]
+          fingerprint = os.environ["EXPECTED_FINGERPRINT"]
+          admin = f"{worker}/mcp/{token}/admin"
+
+          def get(path, params=None, timeout=45):
+              query = ""
+              if params:
+                  query = "?" + urllib.parse.urlencode(params, doseq=True)
+              url = admin + path + query
+              try:
+                  with urllib.request.urlopen(url, timeout=timeout) as response:
+                      text = response.read().decode("utf-8", errors="replace")
+                      return response.status, json.loads(text) if text else {}
+              except urllib.error.HTTPError as exc:
+                  text = exc.read().decode("utf-8", errors="replace")
+                  try:
+                      body = json.loads(text) if text else {}
+                  except json.JSONDecodeError:
+                      body = {"raw": text[:4000]}
+                  return exc.code, body
+              except Exception as exc:
+                  return 0, {"error_type": type(exc).__name__, "error": str(exc)[:1000]}
+
+          # Wait until the newly deployed recovery endpoints are visible.
+          ready = False
+          for _ in range(20):
+              status, _ = get(
+                  "/kernel-logs",
+                  {"account_id": "kg-01", "kernel_ref": "azadka/pneumonia-v6-2-2-train-w01-m01-r224"},
+                  timeout=20,
+              )
+              if status != 404:
+                  ready = True
+                  break
+              time.sleep(3)
+          if not ready:
+              raise SystemExit("recovery endpoints were not deployed")
+
+          auth_status, auth = get("/auth")
+          inventory_status, inventory = get("/inventory", {"search": search, "page_size": 20})
+
+          report = {
+              "auth_http": auth_status,
+              "inventory_http": inventory_status,
+              "worker_auth": auth.get("workers") if isinstance(auth, dict) else auth,
+              "accounts": [],
+          }
+
+          accounts = inventory.get("accounts") if isinstance(inventory, dict) else []
+          for item in accounts or []:
+              account_id = item.get("account_id")
+              owner_slug = item.get("owner_slug")
+              kernels = item.get("kernels") if isinstance(item.get("kernels"), list) else []
+              refs = [k.get("ref") for k in kernels[:5] if isinstance(k, dict) and k.get("ref")]
+              selected = kernels[0] if kernels and isinstance(kernels[0], dict) else {}
+              kernel_ref = selected.get("ref")
+              entry = {
+                  "account_id": account_id,
+                  "owner_slug": owner_slug,
+                  "top_refs": refs,
+                  "selected_ref": kernel_ref,
+                  "selected_title": selected.get("title"),
+                  "selected_last_run_time": selected.get("lastRunTime"),
+              }
+              if kernel_ref:
+                  status_http, status_payload = get(
+                      "/kernel-status", {"account_id": account_id, "kernel_ref": kernel_ref}
+                  )
+                  logs_http, logs_payload = get(
+                      "/kernel-logs", {"account_id": account_id, "kernel_ref": kernel_ref}, timeout=60
+                  )
+                  manifest_http, manifest_payload = get(
+                      "/output-manifest",
+                      {
+                          "account_id": account_id,
+                          "kernel_ref": kernel_ref,
+                          "artifact_name": ["KAGGLE_EXECUTION_V62_2", "fingerprint"],
+                          "expected_fingerprint": fingerprint,
+                      },
+                      timeout=90,
+                  )
+                  log_text = logs_payload.get("log", "") if isinstance(logs_payload, dict) else ""
+                  entry.update(
+                      {
+                          "status_http": status_http,
+                          "status": status_payload,
+                          "logs_http": logs_http,
+                          "log_chars": len(log_text),
+                          "log_has_execution_marker": "KAGGLE_EXECUTION_V62_2" in log_text,
+                          "log_has_expected_fingerprint": fingerprint in log_text,
+                          "log_tail": log_text[-1800:],
+                          "manifest_http": manifest_http,
+                          "manifest": manifest_payload,
+                      }
+                  )
+              report["accounts"].append(entry)
+
+          Path("/tmp/recovery-check.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+          print(json.dumps({
+              "auth_http": auth_status,
+              "inventory_http": inventory_status,
+              "selected": [
+                  {"account_id": a.get("account_id"), "ref": a.get("selected_ref"), "status_http": a.get("status_http")}
+                  for a in report["accounts"]
+              ],
+          }, indent=2))
+          PY
+
+      - name: Publish recovery evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("/tmp/recovery-check.json")
+          if not path.exists():
+              Path("/tmp/recovery-check.md").write_text(
+                  "## Live recovery check\n\nRecovery script did not produce a report.\n",
+                  encoding="utf-8",
+              )
+              raise SystemExit(0)
+
+          report = json.loads(path.read_text(encoding="utf-8"))
+          lines = [
+              "## Live recovery check — exact refs/status/evidence",
+              "",
+              f"- auth HTTP: `{report.get('auth_http')}`",
+              f"- inventory HTTP: `{report.get('inventory_http')}`",
+              "",
+              "### Selected latest matching kernels",
+              "",
+          ]
+          for item in report.get("accounts") or []:
+              lines += [
+                  f"#### {item.get('account_id')} — {item.get('owner_slug')}",
+                  "```json",
+                  json.dumps(
+                      {
+                          "selected_ref": item.get("selected_ref"),
+                          "selected_title": item.get("selected_title"),
+                          "selected_last_run_time": item.get("selected_last_run_time"),
+                          "top_refs": item.get("top_refs"),
+                          "status_http": item.get("status_http"),
+                          "status": item.get("status"),
+                          "logs_http": item.get("logs_http"),
+                          "log_chars": item.get("log_chars"),
+                          "log_has_execution_marker": item.get("log_has_execution_marker"),
+                          "log_has_expected_fingerprint": item.get("log_has_expected_fingerprint"),
+                          "manifest_http": item.get("manifest_http"),
+                          "manifest": item.get("manifest"),
+                      },
+                      indent=2,
+                  )[:18000],
+                  "```",
+              ]
+          Path("/tmp/recovery-check.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+          gh issue comment 17 --repo "$GITHUB_REPOSITORY" --body-file /tmp/recovery-check.md
