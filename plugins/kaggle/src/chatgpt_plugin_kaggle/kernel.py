@@ -27,7 +27,7 @@ def build_bootstrap(
     steps_json = json.dumps([{"argv": list(step.argv), "cwd": step.cwd} for step in profile.steps])
     globs_json = json.dumps(list(profile.artifact_globs))
     parameters_json = json.dumps(parameters or {}, sort_keys=True)
-    return f'''\
+    return f"""\
 from __future__ import annotations
 import glob, json, os, pathlib, subprocess, traceback, zipfile
 
@@ -121,7 +121,7 @@ except Exception as exc:
     }}
     RESULT.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8')
     raise
-'''
+"""
 
 
 def write_kernel_package(

@@ -46,7 +46,9 @@ def load_result_files(path: Path) -> tuple[dict, str]:
             result = {}
     log = ""
     if log_candidates:
-        log = sanitize_text(log_candidates[0].read_text(encoding="utf-8", errors="replace"), max_chars=16000)
+        log = sanitize_text(
+            log_candidates[0].read_text(encoding="utf-8", errors="replace"), max_chars=16000
+        )
     if "log_excerpt" in result:
         result["log_excerpt"] = sanitize_text(str(result["log_excerpt"]), max_chars=16000)
     return result, log

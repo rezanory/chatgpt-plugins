@@ -12,8 +12,7 @@ def test_failed_status_generates_sanitized_hashed_evidence(tmp_path: Path, monke
         target = Path(path) / "chatgpt-plugin"
         target.mkdir(parents=True)
         (target / "job.log").write_text(
-            "KAGGLE_API_TOKEN=KGAT_supersecretvalue\\n"
-            "ModuleNotFoundError: No module named 'x'"
+            "KAGGLE_API_TOKEN=KGAT_supersecretvalue\\nModuleNotFoundError: No module named 'x'"
         )
         (target / "result.json").write_text(
             json.dumps(

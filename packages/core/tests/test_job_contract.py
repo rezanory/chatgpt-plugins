@@ -1,6 +1,5 @@
 import pytest
-
-from chatgpt_plugins_core import ComputeJobSpec, JOB_SCHEMA_V1
+from chatgpt_plugins_core import JOB_SCHEMA_V1, ComputeJobSpec
 
 
 def valid_job():

@@ -11,9 +11,7 @@ def test_dispatch_task_builds_run_record_without_network(tmp_path: Path, monkeyp
     source.mkdir()
     (source / "app.py").write_text("print('ok')\n")
     subprocess.run(["git", "init", "-q", str(source)], check=True)
-    subprocess.run(
-        ["git", "-C", str(source), "config", "user.name", "Test"], check=True
-    )
+    subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
     subprocess.run(
         ["git", "-C", str(source), "config", "user.email", "test@example.com"],
         check=True,

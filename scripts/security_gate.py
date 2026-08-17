@@ -48,8 +48,7 @@ for path in (ROOT / ".github/workflows").glob("*.yml"):
     ):
         if forbidden in text:
             fail(
-                "workflow directly interpolates untrusted event content: "
-                f"{path.name}: {forbidden}"
+                f"workflow directly interpolates untrusted event content: {path.name}: {forbidden}"
             )
 
 if ERRORS:

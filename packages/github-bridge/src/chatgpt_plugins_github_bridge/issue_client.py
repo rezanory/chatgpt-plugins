@@ -22,7 +22,9 @@ class IssueComment:
 class GitHubIssueClient:
     """Minimal GitHub Issues REST client for Actions-side control-plane operations."""
 
-    def __init__(self, repository: str, token: str, *, api_base: str = "https://api.github.com") -> None:
+    def __init__(
+        self, repository: str, token: str, *, api_base: str = "https://api.github.com"
+    ) -> None:
         if "/" not in repository:
             raise ValueError("repository must be owner/name")
         if not token:
@@ -58,8 +60,7 @@ class GitHubIssueClient:
         comments: list[IssueComment] = []
         for page in range(1, max_pages + 1):
             path = (
-                f"/repos/{self.repository}/issues/{issue_number}/comments"
-                f"?per_page=100&page={page}"
+                f"/repos/{self.repository}/issues/{issue_number}/comments?per_page=100&page={page}"
             )
             data = self._request("GET", path)
             if not isinstance(data, list):

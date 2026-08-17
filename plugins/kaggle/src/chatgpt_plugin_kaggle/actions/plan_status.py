@@ -55,7 +55,9 @@ def main(argv: list[str] | None = None) -> int:
         if account is None or not account.descriptor.enabled:
             raise ValueError(f"run references unknown/disabled account: {run.account_id}")
         if account.descriptor.secret_scope != run.account_environment:
-            raise ValueError("run record account environment does not match trusted account registry")
+            raise ValueError(
+                "run record account environment does not match trusted account registry"
+            )
         if run.integrity_hash != job.integrity_hash():
             raise ValueError("job Issue body changed after submission; integrity hash mismatch")
         matrix.append(
@@ -73,7 +75,11 @@ def main(argv: list[str] | None = None) -> int:
     write_github_output("matrix", json.dumps({"include": matrix}, separators=(",", ":")))
     write_github_output("has_tasks", "true" if matrix else "false")
     write_github_output("missing_tasks", json.dumps(missing))
-    print(json.dumps({"job_id": job.job_id, "active_tasks": len(matrix), "missing_tasks": missing}, indent=2))
+    print(
+        json.dumps(
+            {"job_id": job.job_id, "active_tasks": len(matrix), "missing_tasks": missing}, indent=2
+        )
+    )
     return 0
 
 

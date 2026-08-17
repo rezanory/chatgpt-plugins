@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     title = str((event.get("issue") or {}).get("title") or "")
     if not title.startswith(_PREFIX):
         raise ValueError("inventory issue title must start with [KAGGLE-INVENTORY]")
-    search = title[len(_PREFIX):].strip()
+    search = title[len(_PREFIX) :].strip()
     if not _SAFE_SEARCH.fullmatch(search):
         raise ValueError("inventory search contains unsupported characters or is too long")
 

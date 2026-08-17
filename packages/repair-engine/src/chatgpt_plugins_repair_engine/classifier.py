@@ -5,23 +5,77 @@ import re
 
 from chatgpt_plugins_core import FailureCategory, FailureReport
 
-
 _RULES: list[tuple[FailureCategory, bool, float, re.Pattern[str]]] = [
     (FailureCategory.OOM, True, 0.98, re.compile(r"out of memory|cuda oom|cudnn.*alloc", re.I)),
-    (FailureCategory.API_RATE_LIMIT, True, 0.98, re.compile(r"rate.?limit|too many requests|http\s*429", re.I)),
-    (FailureCategory.PROVIDER_QUOTA, False, 0.98, re.compile(r"quota|usage limit|accelerator.*unavailable", re.I)),
-    (FailureCategory.AUTHENTICATION, False, 0.99, re.compile(r"unauthorized|forbidden|invalid.*token|authentication", re.I)),
-    (FailureCategory.DJANGO_MIGRATION, False, 0.92, re.compile(r"migration|makemigrations|migrate.*failed", re.I)),
-    (FailureCategory.DJANGO_CHECK, False, 0.95, re.compile(r"systemcheckerror|manage\.py check", re.I)),
-    (FailureCategory.IMPORT_ERROR, False, 0.98, re.compile(r"modulenotfounderror|importerror", re.I)),
-    (FailureCategory.DEPENDENCY, False, 0.96, re.compile(r"no matching distribution|resolutionimpossible|pip.*error", re.I)),
+    (
+        FailureCategory.API_RATE_LIMIT,
+        True,
+        0.98,
+        re.compile(r"rate.?limit|too many requests|http\s*429", re.I),
+    ),
+    (
+        FailureCategory.PROVIDER_QUOTA,
+        False,
+        0.98,
+        re.compile(r"quota|usage limit|accelerator.*unavailable", re.I),
+    ),
+    (
+        FailureCategory.AUTHENTICATION,
+        False,
+        0.99,
+        re.compile(r"unauthorized|forbidden|invalid.*token|authentication", re.I),
+    ),
+    (
+        FailureCategory.DJANGO_MIGRATION,
+        False,
+        0.92,
+        re.compile(r"migration|makemigrations|migrate.*failed", re.I),
+    ),
+    (
+        FailureCategory.DJANGO_CHECK,
+        False,
+        0.95,
+        re.compile(r"systemcheckerror|manage\.py check", re.I),
+    ),
+    (
+        FailureCategory.IMPORT_ERROR,
+        False,
+        0.98,
+        re.compile(r"modulenotfounderror|importerror", re.I),
+    ),
+    (
+        FailureCategory.DEPENDENCY,
+        False,
+        0.96,
+        re.compile(r"no matching distribution|resolutionimpossible|pip.*error", re.I),
+    ),
     (FailureCategory.SYNTAX, False, 0.99, re.compile(r"syntaxerror|indentationerror", re.I)),
     (FailureCategory.TEST_FAILURE, False, 0.85, re.compile(r"pytest|\bfailed\b.*\btest", re.I)),
     (FailureCategory.TIMEOUT, True, 0.95, re.compile(r"timed out|timeout|deadline exceeded", re.I)),
-    (FailureCategory.NETWORK, True, 0.94, re.compile(r"connection reset|temporary failure|dns|network is unreachable", re.I)),
-    (FailureCategory.TRANSPORT, True, 0.90, re.compile(r"kernel push error|api request failed|http\s*5\d\d", re.I)),
-    (FailureCategory.INFRASTRUCTURE, True, 0.90, re.compile(r"internal server error|service unavailable|runner lost", re.I)),
-    (FailureCategory.POLICY, False, 0.95, re.compile(r"policy violation|not permitted|terms of service", re.I)),
+    (
+        FailureCategory.NETWORK,
+        True,
+        0.94,
+        re.compile(r"connection reset|temporary failure|dns|network is unreachable", re.I),
+    ),
+    (
+        FailureCategory.TRANSPORT,
+        True,
+        0.90,
+        re.compile(r"kernel push error|api request failed|http\s*5\d\d", re.I),
+    ),
+    (
+        FailureCategory.INFRASTRUCTURE,
+        True,
+        0.90,
+        re.compile(r"internal server error|service unavailable|runner lost", re.I),
+    ),
+    (
+        FailureCategory.POLICY,
+        False,
+        0.95,
+        re.compile(r"policy violation|not permitted|terms of service", re.I),
+    ),
 ]
 
 

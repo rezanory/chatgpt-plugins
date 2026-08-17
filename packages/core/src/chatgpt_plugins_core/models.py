@@ -7,7 +7,6 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
-
 JOB_SCHEMA_V1 = "chatgpt.compute.job/v1"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 _COMMIT = re.compile(r"^[0-9a-fA-F]{40,64}$")
@@ -207,7 +206,9 @@ class ComputeJobSpec:
         if set(repair_raw) - {"enabled", "max_attempts"}:
             raise ValueError("repair_policy contains unsupported fields")
         metadata = value.get("metadata") or {}
-        if not isinstance(metadata, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in metadata.items()):
+        if not isinstance(metadata, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in metadata.items()
+        ):
             raise ValueError("metadata must be a string-to-string object")
         return cls(
             schema=str(value.get("schema", "")),

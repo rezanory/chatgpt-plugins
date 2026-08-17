@@ -100,7 +100,9 @@ def main(argv: list[str] | None = None) -> int:
                     "sha256": sha256_file(path),
                 }
             )
-    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    (output_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
     record = StatusRecord(
         schema="chatgpt.compute.status/v1",
@@ -117,7 +119,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     Path(args.comment_file).write_text(render_status_comment(record), encoding="utf-8")
     write_github_output("state", normalized.state)
-    write_github_output("terminal", "true" if normalized.state in {"succeeded", "failed"} else "false")
+    write_github_output(
+        "terminal", "true" if normalized.state in {"succeeded", "failed"} else "false"
+    )
     print(json.dumps({"state": normalized.state, "artifact_name": record.artifact_name}))
     return 0
 

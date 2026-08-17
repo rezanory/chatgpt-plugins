@@ -31,7 +31,9 @@ class ExecutionStep:
             raise ValueError("execution step argv is too large")
         for arg in self.argv:
             if not _SAFE_ARG.fullmatch(arg):
-                raise ValueError("execution step contains unsafe control characters or oversized argument")
+                raise ValueError(
+                    "execution step contains unsafe control characters or oversized argument"
+                )
         if self.cwd.startswith("/") or ".." in Path(self.cwd).parts:
             raise ValueError("execution step cwd must stay inside the packaged source")
 
@@ -98,7 +100,9 @@ def load_accounts(path: str) -> list[KaggleAccountConfig]:
             KaggleAccountConfig(
                 descriptor=descriptor,
                 owner_slug=owner_slug,
-                default_accelerator=(str(item["default_accelerator"]) if item.get("default_accelerator") else None),
+                default_accelerator=(
+                    str(item["default_accelerator"]) if item.get("default_accelerator") else None
+                ),
             )
         )
     return result
@@ -134,7 +138,6 @@ def load_profiles(path: str) -> dict[str, ExecutionProfile]:
     return profiles
 
 
-
 def load_repo_policy(path: str) -> RepoPolicy:
     data = _load_json(path)
     if not isinstance(data, dict):
@@ -145,14 +148,21 @@ def load_repo_policy(path: str) -> RepoPolicy:
     allow_any = bool(data.get("allow_any", False))
     return RepoPolicy(patterns, allow_any=allow_any)
 
+
 def load_settings() -> Settings:
     allowlist = json.loads(os.getenv("SOURCE_REPO_ALLOWLIST", "[]"))
     allow_any = os.getenv("ALLOW_ANY_SOURCE_REPO", "false").lower() in {"1", "true", "yes"}
     return Settings(
         db_path=os.getenv("CHATGPT_PLUGINS_DB", ".local/chatgpt-plugins.sqlite3"),
-        public_base_url=os.getenv("CHATGPT_PLUGINS_PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("/"),
-        accounts_file=os.getenv("KAGGLE_ACCOUNTS_FILE", "plugins/kaggle/config/accounts.example.json"),
-        profiles_file=os.getenv("KAGGLE_PROFILES_FILE", "plugins/kaggle/config/profiles.example.json"),
+        public_base_url=os.getenv(
+            "CHATGPT_PLUGINS_PUBLIC_BASE_URL", "http://127.0.0.1:8000"
+        ).rstrip("/"),
+        accounts_file=os.getenv(
+            "KAGGLE_ACCOUNTS_FILE", "plugins/kaggle/config/accounts.example.json"
+        ),
+        profiles_file=os.getenv(
+            "KAGGLE_PROFILES_FILE", "plugins/kaggle/config/profiles.example.json"
+        ),
         repo_policy=RepoPolicy(allowlist, allow_any=allow_any),
         github_repository=os.getenv("GITHUB_ORCHESTRATOR_REPOSITORY") or None,
         github_workflow=os.getenv("GITHUB_ORCHESTRATOR_WORKFLOW", "kaggle-dispatch.yml"),

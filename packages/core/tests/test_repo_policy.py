@@ -1,5 +1,4 @@
 import pytest
-
 from chatgpt_plugins_core import RepoPolicy, RepositoryNotAllowed
 
 

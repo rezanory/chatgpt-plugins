@@ -1,4 +1,10 @@
-from chatgpt_plugins_core import AccountDescriptor, AccountScheduler, JobRequest, NoEligibleAccount, SourceRef
+from chatgpt_plugins_core import (
+    AccountDescriptor,
+    AccountScheduler,
+    JobRequest,
+    NoEligibleAccount,
+    SourceRef,
+)
 
 
 def account(account_id: str, caps: set[str], max_parallel: int = 1, weight: float = 1.0):

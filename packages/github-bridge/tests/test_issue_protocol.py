@@ -1,4 +1,4 @@
-from chatgpt_plugins_core import ComputeJobSpec, JOB_SCHEMA_V1
+from chatgpt_plugins_core import JOB_SCHEMA_V1, ComputeJobSpec
 from chatgpt_plugins_github_bridge import (
     RunRecord,
     latest_runs_by_task,

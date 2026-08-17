@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from chatgpt_plugins_core import ComputeJobSpec
 
@@ -50,7 +51,9 @@ class RunRecord:
         if set(value) != required:
             missing = required - set(value)
             unknown = set(value) - required
-            raise ValueError(f"invalid run record keys; missing={sorted(missing)} unknown={sorted(unknown)}")
+            raise ValueError(
+                f"invalid run record keys; missing={sorted(missing)} unknown={sorted(unknown)}"
+            )
         return cls(**{key: str(value[key]) for key in required})
 
 

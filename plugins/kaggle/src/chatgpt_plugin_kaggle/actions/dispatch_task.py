@@ -150,7 +150,11 @@ def main(argv: list[str] | None = None) -> int:
             integrity_hash=args.job_integrity_hash,
         )
         Path(args.comment_file).write_text(render_run_comment(record), encoding="utf-8")
-        print(json.dumps({"kernel_ref": kernel_ref, "dataset_ref": dataset_ref, "task_id": args.task_id}))
+        print(
+            json.dumps(
+                {"kernel_ref": kernel_ref, "dataset_ref": dataset_ref, "task_id": args.task_id}
+            )
+        )
         return 0
     except Exception as exc:
         _write_diagnostic(args.diagnostic_file, stage=stage, exc=exc)

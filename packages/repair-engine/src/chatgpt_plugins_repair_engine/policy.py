@@ -50,7 +50,9 @@ def decide_repair(job: JobSnapshot, failure: FailureReport) -> RepairDecision:
         return RepairDecision(RepairAction.STOP, "repair attempt budget exhausted")
     next_attempt = job.repair_attempt + 1
     if failure.retryable and failure.category not in _SOURCE_CATEGORIES:
-        return RepairDecision(RepairAction.RETRY, "failure is classified as transient", next_attempt)
+        return RepairDecision(
+            RepairAction.RETRY, "failure is classified as transient", next_attempt
+        )
     if failure.category in _SOURCE_CATEGORIES:
         return RepairDecision(
             RepairAction.REPAIR_SOURCE,

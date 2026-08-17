@@ -9,7 +9,13 @@ from ..config import load_accounts, load_profiles, load_repo_policy
 from .common import load_github_event, write_github_output
 
 
-def build_matrix(title: str, body: str, accounts_file: str, profiles_file: str, repo_policy_file: str | None = None) -> tuple[dict, list[dict]]:
+def build_matrix(
+    title: str,
+    body: str,
+    accounts_file: str,
+    profiles_file: str,
+    repo_policy_file: str | None = None,
+) -> tuple[dict, list[dict]]:
     job = parse_job_issue(title, body)
     if repo_policy_file:
         load_repo_policy(repo_policy_file).require(job.source.repository)
@@ -39,7 +45,9 @@ def build_matrix(title: str, body: str, accounts_file: str, profiles_file: str, 
                 "accelerator": accelerator,
                 "source_repository": job.source.repository,
                 "source_commit": job.source.commit,
-                "parameters_json": json.dumps(task.parameters, sort_keys=True, separators=(",", ":")),
+                "parameters_json": json.dumps(
+                    task.parameters, sort_keys=True, separators=(",", ":")
+                ),
                 "job_integrity_hash": job.integrity_hash(),
             }
         )
