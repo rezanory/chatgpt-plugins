@@ -2,8 +2,8 @@
 
 ## Trust boundaries
 
-1. **ChatGPT conversation** — requests work but never contains Kaggle credentials.
-2. **Custom MCP capability path** — protects read/recovery access to the Worker.
+1. **ChatGPT conversation** — requests work but never contains Kaggle credentials or the MCP path token.
+2. **Private MCP capability URL** — protects read/recovery access to the Worker.
 3. **Cloudflare Worker Free** — active public runtime and direct Kaggle HTTPS client.
 4. **Kaggle API** — external provider boundary.
 5. **Kaggle logs/outputs** — untrusted external data returned in bounded form.
@@ -18,7 +18,7 @@ Cloudflare Worker Secrets hold Kaggle API keys. The source stores only public ac
 GitHub Actions must never receive any `CGP_KAGGLE_*_TOKEN`, `KAGGLE_API_TOKEN`, `KAGGLE_USERNAME`,
 or `KAGGLE_KEY` value.
 
-Read/recovery requires six account tokens plus `CGP_MCP_PATH_SECRET`. Later write control additionally
+Read/recovery requires six account tokens plus `CGP_MCP_PATH_TOKEN`. Later write control additionally
 requires `CGP_GITHUB_WEBHOOK_SECRET` and a repository-scoped `CGP_GITHUB_TOKEN`.
 
 ## Kaggle authentication
@@ -36,9 +36,13 @@ Every kernel-specific operation rejects an owner that does not match the selecte
 
 ## MCP read boundary
 
-The root `/mcp` route is not served. `CGP_MCP_PATH_SECRET` is SHA-256 hashed and only the derived
-capability path is accepted. If the secret is absent, MCP is disabled. The eight exposed tools are
-read-only and contain no submission/cancel/delete tool.
+The root `/mcp` route is not served. A random URL-safe `CGP_MCP_PATH_TOKEN`, 32–128 characters long,
+is accepted only at `/mcp/<token>`. If the token is absent or malformed, MCP is disabled. Treat the
+full MCP URL as a bearer capability: store it only in the Cloudflare Worker Secret and ChatGPT app
+configuration, never in source, Issue text, Actions logs, or the conversation.
+
+This avoids Cloudflare Access/Zero Trust onboarding entirely and therefore introduces no payment-
+detail dependency for the free V0.1 path.
 
 ## Output/log handling
 
@@ -79,7 +83,8 @@ deploy/cloudflare-container/
 ```
 
 The active `wrangler.jsonc` has no Container, Durable Object binding, queue, or other paid runtime
-binding. Its historical `deleted_classes` migration only cleans the previously created DO class.
+binding, and preview URLs are disabled. Its historical `deleted_classes` migration only cleans the
+previously created DO class.
 
 ## CI/deployment boundary
 
