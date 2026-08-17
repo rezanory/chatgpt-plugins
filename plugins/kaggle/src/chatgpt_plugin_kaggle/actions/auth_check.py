@@ -16,11 +16,15 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         run_kaggle(["datasets", "list", "-m", "-p", "1"], timeout=120)
-        body = f"Kaggle auth check: account=`{args.account_id}` owner=`{args.owner}` status=`AUTH_OK`.\n"
+        body = (
+            f"Kaggle auth check: account=`{args.account_id}` owner=`{args.owner}` "
+            "status=`AUTH_OK`.\n"
+        )
     except KaggleCliError as exc:
         safe = sanitize_text(str(exc), max_chars=1500).strip()
         body = (
-            f"Kaggle auth check: account=`{args.account_id}` owner=`{args.owner}` status=`AUTH_FAILED`.\n\n"
+            f"Kaggle auth check: account=`{args.account_id}` owner=`{args.owner}` "
+            "status=`AUTH_FAILED`.\n\n"
             "```text\n"
             f"{safe}\n"
             "```\n"
