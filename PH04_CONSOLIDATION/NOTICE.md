@@ -1,1 +1,0 @@
-Do not treat this directory as canonical Radlina source. It is temporary connector staging only.
