@@ -8,7 +8,8 @@ The Worker is already deployed from `main`:
 https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev
 ```
 
-`GET /healthz` has passed live validation. No paid runtime or user-PC service is required.
+`GET /healthz` has passed live validation. No paid runtime, Zero Trust subscription, or user-PC
+service is required.
 
 ## 2. Active source
 
@@ -32,26 +33,31 @@ CGP_KAGGLE_KG04_TOKEN
 CGP_KAGGLE_KG05_TOKEN
 CGP_KAGGLE_KG06_TOKEN
 CGP_KAGGLE_KG07_TOKEN
-CGP_MCP_PATH_SECRET
+CGP_MCP_PATH_TOKEN
 ```
 
 The six public usernames are already compiled into the Worker registry. Do not add Kaggle secrets to
 GitHub Actions, commits, Issues, or ChatGPT.
 
-## 4. MCP path
+`CGP_MCP_PATH_TOKEN` must be a random URL-safe string between 32 and 128 characters containing only
+letters, numbers, `_`, and `-`. Keep the value private and enter it only in the Cloudflare Secret
+field and later inside the ChatGPT custom MCP endpoint URL.
 
-The MCP route is derived as:
+## 4. Private MCP endpoint
+
+The endpoint is simply:
 
 ```text
-/mcp/<sha256(CGP_MCP_PATH_SECRET)>
+https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/mcp/<CGP_MCP_PATH_TOKEN>
 ```
 
-The root `/mcp` route is intentionally unavailable. The capability path must be treated as private.
+There is no SHA-256 calculation and no Cloudflare Access/Zero Trust onboarding. The root `/mcp`
+route is intentionally unavailable.
 
 ## 5. Connect ChatGPT
 
-After the secrets are configured, connect the Worker HTTPS endpoint plus the private MCP path as the
-custom MCP server and scan tools. Expected surface:
+In ChatGPT Developer Mode, create the custom MCP app with the full private endpoint above. No OAuth
+provider is required for this capability URL. Scan tools. Expected read-only surface:
 
 ```text
 kaggle_accounts
