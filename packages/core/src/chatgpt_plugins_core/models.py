@@ -159,7 +159,8 @@ class ComputeJobSpec:
         account_ids = [task.account_id for task in self.tasks]
         if len(account_ids) != len(set(account_ids)):
             raise ValueError(
-                "V0.1 parallel issues require unique account_id values; split sequential work into later jobs"
+                "V0.1 parallel issues require unique account_id values; "
+                "split sequential work into later jobs"
             )
         if len(self.metadata) > 32:
             raise ValueError("metadata exceeds V0.1 limit")
@@ -226,7 +227,9 @@ class ComputeJobSpec:
         return asdict(self)
 
     def canonical_json(self) -> str:
-        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(
+            self.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
 
     def integrity_hash(self) -> str:
         return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
