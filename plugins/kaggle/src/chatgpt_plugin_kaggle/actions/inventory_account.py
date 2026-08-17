@@ -15,24 +15,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--comment-file", required=True)
     args = parser.parse_args(argv)
 
-    cli_args = ["kernels", "list", "-m", "--page-size", "50", "-v", "--sort-by", "dateRun"]
+    cli_args = [
+        "kernels",
+        "list",
+        "-m",
+        "--page-size",
+        "50",
+        "-v",
+        "--sort-by",
+        "dateRun",
+    ]
     if args.search:
         cli_args += ["-s", args.search]
 
     try:
         output = run_kaggle(cli_args, timeout=120)
         safe = sanitize_text(output, max_chars=12_000).strip()
+        search_suffix = f" search=`{args.search}`" if args.search else ""
         body = (
-            f"Kaggle inventory: account=`{args.account_id}` owner=`{args.owner}` status=`OK`"
-            + (f" search=`{args.search}`" if args.search else "")
-            + ".\n\n```csv\n"
-            + (safe or "(no matching kernels)")
-            + "\n```\n"
+            f"Kaggle inventory: account=`{args.account_id}` owner=`{args.owner}` "
+            f"status=`OK`{search_suffix}.\n\n"
+            "```csv\n"
+            f"{safe or '(no matching kernels)'}\n"
+            "```\n"
         )
     except KaggleCliError as exc:
         safe = sanitize_text(str(exc), max_chars=2_000).strip()
         body = (
-            f"Kaggle inventory: account=`{args.account_id}` owner=`{args.owner}` status=`AUTH_OR_API_FAILED`.\n\n"
+            f"Kaggle inventory: account=`{args.account_id}` owner=`{args.owner}` "
+            "status=`AUTH_OR_API_FAILED`.\n\n"
             "```text\n"
             f"{safe}\n"
             "```\n"
