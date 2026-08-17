@@ -4,7 +4,7 @@ export interface WorkerEnv {
   CGP_CONTROL_REPOSITORY: string;
   CGP_GITHUB_ALLOWED_ACTORS: string;
   CGP_WRITE_ENABLED: string;
-  CGP_MCP_PATH_SECRET?: string;
+  CGP_MCP_PATH_TOKEN?: string;
   CGP_GITHUB_WEBHOOK_SECRET?: string;
   CGP_GITHUB_TOKEN?: string;
   CGP_KAGGLE_KG01_TOKEN?: string;
