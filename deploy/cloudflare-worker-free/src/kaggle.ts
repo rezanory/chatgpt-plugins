@@ -50,6 +50,9 @@ const MAX_LOG_CHARS = 200_000;
 const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
 const MAX_ARTIFACT_TOTAL_BYTES = 16 * 1024 * 1024;
 const MAX_ARTIFACT_FILES = 8;
+const OUTPUT_PAGE_SIZE = 100;
+const MAX_OUTPUT_PAGES = 20;
+const MAX_OUTPUT_ENUM_FILES = OUTPUT_PAGE_SIZE * MAX_OUTPUT_PAGES;
 
 export class KaggleGatewayError extends Error {
   readonly status: number;
@@ -299,6 +302,12 @@ interface OutputFile {
   url: string;
 }
 
+interface OutputEnumeration {
+  files: OutputFile[];
+  pageCount: number;
+  truncated: boolean;
+}
+
 function outputFiles(value: unknown): OutputFile[] {
   if (!Array.isArray(value)) return [];
   const files: OutputFile[] = [];
@@ -309,6 +318,84 @@ function outputFiles(value: unknown): OutputFile[] {
     files.push({ fileName: record.fileName, url: record.url });
   }
   return files;
+}
+
+function nextPageToken(value: Record<string, unknown>): string {
+  if (typeof value.nextPageToken === "string") return value.nextPageToken;
+  if (typeof value.next_page_token === "string") return value.next_page_token;
+  return "";
+}
+
+async function enumerateOutputFiles(
+  env: WorkerEnv,
+  accountId: string,
+  account: AccountCredentials,
+  kernelSlug: string,
+  maxFiles = MAX_OUTPUT_ENUM_FILES,
+): Promise<OutputEnumeration> {
+  const files: OutputFile[] = [];
+  let pageToken = "";
+  let pageCount = 0;
+  let truncated = false;
+
+  while (pageCount < MAX_OUTPUT_PAGES && files.length < maxFiles) {
+    const request: Record<string, unknown> = {
+      userName: account.ownerSlug,
+      kernelSlug,
+      pageSize: OUTPUT_PAGE_SIZE,
+    };
+    if (pageToken) request.pageToken = pageToken;
+
+    const response = await kaggleCall(env, accountId, "ListKernelSessionOutput", request);
+    const batch = outputFiles(response.files);
+    const remaining = maxFiles - files.length;
+    files.push(...batch.slice(0, remaining));
+    pageCount += 1;
+
+    const next = nextPageToken(response);
+    if (!next) break;
+    if (files.length >= maxFiles || pageCount >= MAX_OUTPUT_PAGES || next === pageToken) {
+      truncated = true;
+      break;
+    }
+    pageToken = next;
+  }
+
+  return { files, pageCount, truncated };
+}
+
+export async function kernelOutputFiles(
+  env: WorkerEnv,
+  accountId: string,
+  kernelRef: string,
+  contains = "",
+  maxFiles = 1000,
+): Promise<Record<string, unknown>> {
+  if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > MAX_OUTPUT_ENUM_FILES) {
+    throw new Error(`max_files must be between 1 and ${MAX_OUTPUT_ENUM_FILES}`);
+  }
+  if (contains.length > 200) throw new Error("contains must be at most 200 characters");
+
+  const account = accountCredentials(env, accountId);
+  const [, kernelSlug] = splitKernelRef(account, kernelRef);
+  const enumeration = await enumerateOutputFiles(env, accountId, account, kernelSlug, maxFiles);
+  const needle = contains.trim().toLocaleLowerCase("en-US");
+  const matching = needle
+    ? enumeration.files.filter((file) => file.fileName.toLocaleLowerCase("en-US").includes(needle))
+    : enumeration.files;
+
+  return {
+    account_id: account.accountId,
+    owner_slug: account.ownerSlug,
+    role: account.role,
+    kernel_ref: kernelRef,
+    contains: contains || null,
+    page_count: enumeration.pageCount,
+    enumerated_file_count: enumeration.files.length,
+    matching_file_count: matching.length,
+    truncated: enumeration.truncated,
+    file_names: matching.map((file) => file.fileName),
+  };
 }
 
 function safeArtifactName(value: string): string {
@@ -357,12 +444,14 @@ export async function kernelOutputManifest(
   const artifactNames = requestedArtifactNames.map(safeArtifactName);
   const account = accountCredentials(env, accountId);
   const [, kernelSlug] = splitKernelRef(account, kernelRef);
-  const output = await kaggleCall(env, accountId, "ListKernelSessionOutput", {
-    userName: account.ownerSlug,
+  const enumeration = await enumerateOutputFiles(
+    env,
+    accountId,
+    account,
     kernelSlug,
-    pageSize: 100,
-  });
-  const availableFiles = outputFiles(output.files);
+    MAX_OUTPUT_ENUM_FILES,
+  );
+  const availableFiles = enumeration.files;
   const selected = availableFiles.filter((file) => isSelectedFile(file.fileName, artifactNames));
   let totalBytes = 0;
   const files: Array<Record<string, unknown>> = [];
@@ -408,8 +497,10 @@ export async function kernelOutputManifest(
     role: account.role,
     kernel_ref: kernelRef,
     requested_artifact_names: artifactNames,
+    page_count: enumeration.pageCount,
     available_file_count: availableFiles.length,
-    available_file_names: availableFiles.slice(0, 100).map((file) => file.fileName),
+    enumeration_truncated: enumeration.truncated,
+    available_file_names: availableFiles.slice(0, 200).map((file) => file.fileName),
     files,
     fingerprint_hits: fingerprintHits,
     expected_fingerprint: expectedFingerprint || null,
