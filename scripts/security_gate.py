@@ -134,6 +134,11 @@ if kaggle_client.is_file():
         'kernelExecutionType: "SAVE_AND_RUN_ALL"',
         'throw new Error("master account is read-only")',
         "CGP_MCP_PATH_TOKEN",
+        "MAX_OUTPUT_PAGES",
+        "MAX_OUTPUT_ENUM_FILES",
+        "pageToken",
+        "nextPageToken",
+        "kernelOutputFiles(",
     )
     for fragment in required_kaggle:
         if fragment not in kaggle_text:
@@ -154,6 +159,9 @@ if worker_entry.is_file():
         "kaggle_kernels_inventory_all",
         "kaggle_master_auth_check",
         "kaggle_master_kernel_status",
+        "kaggle_kernel_output_files",
+        "kaggle_master_kernel_output_files",
+        '`${adminRoot}/output-files`',
         "master_configured",
     )
     for fragment in required_entry:
