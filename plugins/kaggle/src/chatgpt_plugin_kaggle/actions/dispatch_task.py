@@ -21,8 +21,7 @@ def resolve_commit(source_dir: Path) -> str:
         ["git", "-C", str(source_dir), "rev-parse", "HEAD"],
         check=True,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     return proc.stdout.strip()
 
