@@ -15,6 +15,7 @@ _ENV = re.compile(r"^[A-Z][A-Z0-9_]{1,119}$")
 class GatewayAccount:
     account_id: str
     owner_slug: str
+    username_env: str
     token_env: str
     enabled: bool = True
 
@@ -23,21 +24,27 @@ class GatewayAccount:
             raise ValueError(f"invalid account_id: {self.account_id!r}")
         if not _OWNER.fullmatch(self.owner_slug):
             raise ValueError(f"invalid owner_slug for {self.account_id!r}")
+        if not _ENV.fullmatch(self.username_env):
+            raise ValueError(f"invalid username_env for {self.account_id!r}")
         if not _ENV.fullmatch(self.token_env):
             raise ValueError(f"invalid token_env for {self.account_id!r}")
 
     @property
-    def token_configured(self) -> bool:
-        value = os.getenv(self.token_env, "")
-        return bool(value and not any(ch.isspace() for ch in value))
-
-    def require_token(self) -> str:
+    def credentials_configured(self) -> bool:
+        username = os.getenv(self.username_env, "")
         token = os.getenv(self.token_env, "")
+        return bool(username and token and not any(ch.isspace() for ch in token))
+
+    def require_credentials(self) -> tuple[str, str]:
+        username = os.getenv(self.username_env, "").strip()
+        token = os.getenv(self.token_env, "")
+        if not username:
+            raise RuntimeError(f"Kaggle username is not configured for {self.account_id}")
         if not token:
             raise RuntimeError(f"Kaggle API token is not configured for {self.account_id}")
         if any(ch.isspace() for ch in token):
             raise RuntimeError(f"Kaggle API token contains whitespace for {self.account_id}")
-        return token
+        return username, token
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,8 +55,11 @@ class GatewayRegistry:
         ids = [account.account_id for account in self.accounts]
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate account_id in gateway registry")
-        envs = [account.token_env for account in self.accounts]
-        if len(envs) != len(set(envs)):
+        username_envs = [account.username_env for account in self.accounts]
+        if len(username_envs) != len(set(username_envs)):
+            raise ValueError("duplicate username_env in gateway registry")
+        token_envs = [account.token_env for account in self.accounts]
+        if len(token_envs) != len(set(token_envs)):
             raise ValueError("duplicate token_env in gateway registry")
 
     def get(self, account_id: str, *, require_enabled: bool = True) -> GatewayAccount:
@@ -66,7 +76,7 @@ class GatewayRegistry:
                 "account_id": account.account_id,
                 "owner_slug": account.owner_slug,
                 "enabled": account.enabled,
-                "token_configured": account.token_configured,
+                "credentials_configured": account.credentials_configured,
             }
             for account in self.accounts
         ]
@@ -89,7 +99,7 @@ def load_registry(path: str | Path | None = None) -> GatewayRegistry:
     for item in raw:
         if not isinstance(item, dict):
             raise ValueError("each gateway account entry must be an object")
-        allowed = {"account_id", "owner_slug", "token_env", "enabled"}
+        allowed = {"account_id", "owner_slug", "username_env", "token_env", "enabled"}
         unknown = set(item) - allowed
         if unknown:
             raise ValueError(f"unsupported gateway account fields: {sorted(unknown)}")
@@ -97,6 +107,7 @@ def load_registry(path: str | Path | None = None) -> GatewayRegistry:
             GatewayAccount(
                 account_id=str(item["account_id"]),
                 owner_slug=str(item["owner_slug"]),
+                username_env=str(item["username_env"]),
                 token_env=str(item["token_env"]),
                 enabled=bool(item.get("enabled", True)),
             )
