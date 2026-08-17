@@ -6,6 +6,7 @@ import {
   type AccountId,
   type WorkerEnv,
 } from "./kaggle";
+import { v622ProjectPlan } from "./project-plan";
 
 type RunKind = "train" | "hpo" | "confirm" | "finalization";
 
@@ -169,8 +170,10 @@ function relevantArtifacts(fileNames: string[]): Record<string, string[]> {
 }
 
 export async function v622ShardArtifacts(env: WorkerEnv, shardId: string): Promise<Record<string, unknown>> {
-  const target = RECOVERY_TARGETS.find((item) => item.kind === "train" && item.id === shardId.toUpperCase());
-  if (!target) throw new Error("unknown V6.2.2 shard; expected W01..W06");
+  const normalized = shardId.toUpperCase();
+  if (normalized === "PLAN") return v622ProjectPlan(env);
+  const target = RECOVERY_TARGETS.find((item) => item.kind === "train" && item.id === normalized);
+  if (!target) throw new Error("unknown V6.2.2 shard; expected PLAN or W01..W06");
   const listing = await kernelOutputFiles(env, target.accountId, target.kernelRef, "", 2000);
   const fileNames = stringArray(listing.file_names);
   const groups = relevantArtifacts(fileNames);
