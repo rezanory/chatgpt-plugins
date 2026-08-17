@@ -19,9 +19,9 @@
   },
   {
     "account_id": "kg-03",
-    "owner_slug": "rezanory",
+    "owner_slug": "re zanory",
     "secret_scope": "kaggle-03",
-    "enabled": true,
+    "enabled": false,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
     "default_accelerator": "NvidiaTeslaT4"
