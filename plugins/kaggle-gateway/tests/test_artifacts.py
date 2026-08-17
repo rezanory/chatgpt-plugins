@@ -4,7 +4,6 @@ import hashlib
 from pathlib import Path
 
 import pytest
-
 from chatgpt_plugin_kaggle_gateway.artifacts import build_output_manifest
 
 
