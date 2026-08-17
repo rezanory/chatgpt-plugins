@@ -6,6 +6,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/v622-project-plan-report.yml'
+      - 'deploy/cloudflare-worker-free/src/project-plan.ts'
+      - 'deploy/cloudflare-worker-free/src/recovery.ts'
+      - 'deploy/cloudflare-worker-free/src/index.ts'
 
 permissions:
   contents: read
@@ -27,7 +30,8 @@ jobs:
           from pathlib import Path
           value = json.loads(Path('/tmp/v622-plan.json').read_text(encoding='utf-8'))
           assert value.get('source_kernel')
-          assert isinstance(value.get('planned_model_codes'), list)
+          assert value.get('planned_model_codes') == [f'M{i:02d}' for i in range(1, 13)]
+          assert isinstance(value.get('source_inventory'), list)
           PY
             then
               ok=1
@@ -50,7 +54,7 @@ jobs:
           import json
           from pathlib import Path
           value = json.loads(Path('/tmp/v622-plan.json').read_text(encoding='utf-8'))
-          body = '## Recovered V6.2.2 project execution contract\n\n```json\n' + json.dumps(value, indent=2) + '\n```\n'
+          body = '## Recovered V6.2.2 project execution contract v2\n\n```json\n' + json.dumps(value, indent=2) + '\n```\n'
           Path('/tmp/v622-plan.md').write_text(body, encoding='utf-8')
           PY
           gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/v622-plan.md
