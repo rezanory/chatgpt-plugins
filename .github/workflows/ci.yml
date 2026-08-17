@@ -64,23 +64,23 @@ jobs:
           set -o pipefail
           python -m compileall -q packages plugins 2>&1 | tee /tmp/ci-compile.log
 
-      - name: Render Free Docker validation
-        id: render
+      - name: Cloudflare Workers Free validation
+        id: worker_free
         continue-on-error: true
+        working-directory: deploy/cloudflare-worker-free
         shell: bash
         run: |
           set -o pipefail
-          docker build \
-            -f deploy/render-free/Dockerfile \
-            -t chatgpt-kaggle-gateway-render-ci \
-            . 2>&1 | tee /tmp/ci-render.log
+          npm install --no-audit --no-fund 2>&1 | tee /tmp/ci-worker-free-install.log
+          npm run check 2>&1 | tee /tmp/ci-worker-free-check.log
+          npm run deploy:dry 2>&1 | tee /tmp/ci-worker-free-dry.log
 
       - name: Publish safe CI diagnostic
         if: >-
           always() &&
           (steps.sync.outcome == 'failure' || steps.security.outcome == 'failure' ||
            steps.ruff.outcome == 'failure' || steps.tests.outcome == 'failure' ||
-           steps.compile.outcome == 'failure' || steps.render.outcome == 'failure')
+           steps.compile.outcome == 'failure' || steps.worker_free.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
           SYNC_OUTCOME: ${{ steps.sync.outcome }}
@@ -88,7 +88,7 @@ jobs:
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
           COMPILE_OUTCOME: ${{ steps.compile.outcome }}
-          RENDER_OUTCOME: ${{ steps.render.outcome }}
+          WORKER_FREE_OUTCOME: ${{ steps.worker_free.outcome }}
         shell: bash
         run: |
           issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"[CI-DIAGNOSTIC] Latest main failure" in:title' --json number --jq '.[0].number // empty')"
@@ -104,8 +104,8 @@ jobs:
             printf -- '- ruff: `%s`\n' "$RUFF_OUTCOME"
             printf -- '- tests: `%s`\n' "$TESTS_OUTCOME"
             printf -- '- compile: `%s`\n' "$COMPILE_OUTCOME"
-            printf -- '- render: `%s`\n' "$RENDER_OUTCOME"
-            for item in sync security ruff tests compile render; do
+            printf -- '- worker-free: `%s`\n' "$WORKER_FREE_OUTCOME"
+            for item in sync security ruff tests compile worker-free-install worker-free-check worker-free-dry; do
               file="/tmp/ci-${item}.log"
               if [ -f "$file" ]; then
                 printf '\n### %s tail\n```text\n' "$item"
@@ -128,9 +128,9 @@ jobs:
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
           COMPILE_OUTCOME: ${{ steps.compile.outcome }}
-          RENDER_OUTCOME: ${{ steps.render.outcome }}
+          WORKER_FREE_OUTCOME: ${{ steps.worker_free.outcome }}
         shell: bash
         run: |
-          for value in "$SYNC_OUTCOME" "$SECURITY_OUTCOME" "$RUFF_OUTCOME" "$TESTS_OUTCOME" "$COMPILE_OUTCOME" "$RENDER_OUTCOME"; do
+          for value in "$SYNC_OUTCOME" "$SECURITY_OUTCOME" "$RUFF_OUTCOME" "$TESTS_OUTCOME" "$COMPILE_OUTCOME" "$WORKER_FREE_OUTCOME"; do
             if [ "$value" = 'failure' ]; then exit 1; fi
           done
