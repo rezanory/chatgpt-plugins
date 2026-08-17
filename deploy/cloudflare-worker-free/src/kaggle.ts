@@ -256,7 +256,8 @@ export async function kernelLogs(
     userName: account.ownerSlug,
     kernelSlug,
   });
-  return String(response.log ?? "").slice(0, MAX_LOG_CHARS);
+  const log = String(response.log ?? "");
+  return log.length > MAX_LOG_CHARS ? log.slice(-MAX_LOG_CHARS) : log;
 }
 
 interface OutputFile {
@@ -327,7 +328,8 @@ export async function kernelOutputManifest(
     kernelSlug,
     pageSize: 100,
   });
-  const selected = outputFiles(output.files).filter((file) => isSelectedFile(file.fileName, artifactNames));
+  const availableFiles = outputFiles(output.files);
+  const selected = availableFiles.filter((file) => isSelectedFile(file.fileName, artifactNames));
   let totalBytes = 0;
   const files: Array<Record<string, unknown>> = [];
   const fingerprintHits: string[] = [];
@@ -370,6 +372,8 @@ export async function kernelOutputManifest(
     account_id: account.accountId,
     kernel_ref: kernelRef,
     requested_artifact_names: artifactNames,
+    available_file_count: availableFiles.length,
+    available_file_names: availableFiles.slice(0, 100).map((file) => file.fileName),
     files,
     fingerprint_hits: fingerprintHits,
     expected_fingerprint: expectedFingerprint || null,
