@@ -13,6 +13,8 @@ from ..sanitize import sanitize_text
 from ..status import classify_result_failure, load_result_files, normalize_kernel_status
 from .common import write_github_output
 
+DEFAULT_FILE_PATTERN = r".*(result\.json|job\.log)$"
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -32,6 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--artifact-name", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--comment-file", required=True)
+    parser.add_argument("--file-pattern", default=DEFAULT_FILE_PATTERN)
     args = parser.parse_args(argv)
 
     output_dir = Path(args.output_dir).resolve()
@@ -51,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
             kernel_output(
                 args.kernel_ref,
                 output_dir,
-                file_pattern=r".*(result\.json|job\.log)$",
+                file_pattern=args.file_pattern,
             )
         except Exception as exc:
             # Status itself is still useful even if output collection is temporarily unavailable.
