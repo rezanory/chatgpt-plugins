@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from typing import Any
 
 from .api_pool import KaggleApiPool
@@ -89,6 +90,7 @@ def main() -> None:
     parser.add_argument("--search", default="pneumonia-v6-2-2")
     parser.add_argument("--page-size", type=int, default=20)
     parser.add_argument("--max-workers", type=int, default=6)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
     if not 1 <= args.page_size <= 100:
@@ -97,7 +99,14 @@ def main() -> None:
         raise SystemExit("--max-workers must be between 1 and 16")
 
     result = run(args.search, args.page_size, args.max_workers)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    payload = json.dumps(result, ensure_ascii=False, indent=2)
+    print(payload)
+
+    if args.output is not None:
+        output_path = args.output.expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(payload + "\n", encoding="utf-8")
+
     raise SystemExit(0 if result["all_auth_ok"] else 2)
 
 
