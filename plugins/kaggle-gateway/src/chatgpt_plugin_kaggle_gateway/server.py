@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from mcp.server import MCPServer
+from mcp_types import ToolAnnotations
 
 from .api_pool import KaggleApiPool
 from .config import load_registry
@@ -21,6 +22,12 @@ _mcp = MCPServer(
 )
 _pool_instance: KaggleApiPool | None = None
 _pool_lock = threading.Lock()
+_READ_ONLY = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
 
 
 def _pool() -> KaggleApiPool:
@@ -45,25 +52,25 @@ def _close_pool() -> None:
 atexit.register(_close_pool)
 
 
-@_mcp.tool()
+@_mcp.tool(annotations=_READ_ONLY)
 def kaggle_accounts() -> list[dict[str, str | bool]]:
     """List configured logical Kaggle accounts without exposing credentials."""
     return load_registry().public_view()
 
 
-@_mcp.tool()
+@_mcp.tool(annotations=_READ_ONLY)
 def kaggle_auth_check(account_id: str) -> dict[str, Any]:
     """Authenticate one account and verify it with KaggleApi.kernels_list(page_size=1)."""
     return _pool().auth_check(account_id)
 
 
-@_mcp.tool()
+@_mcp.tool(annotations=_READ_ONLY)
 def kaggle_auth_check_all(max_workers: int = 6) -> list[dict[str, Any]]:
     """Verify all enabled Kaggle accounts in parallel using isolated KaggleApi instances."""
     return _pool().auth_check_all(max_workers=max_workers)
 
 
-@_mcp.tool()
+@_mcp.tool(annotations=_READ_ONLY)
 def kaggle_kernels_list(
     account_id: str,
     search: str = "",
@@ -79,7 +86,7 @@ def kaggle_kernels_list(
     )
 
 
-@_mcp.tool()
+@_mcp.tool(annotations=_READ_ONLY)
 def kaggle_kernels_inventory_all(
     search: str,
     page_size: int = 20,
@@ -122,10 +129,16 @@ def kaggle_kernels_inventory_all(
     return [results[account.account_id] for account in enabled]
 
 
-@_mcp.tool()
+@_mcp.tool(annotations=_READ_ONLY)
 def kaggle_kernel_status(account_id: str, kernel_ref: str) -> Any:
     """Get the latest run status for an existing owner/kernel through the direct Python API."""
     return _pool().kernels_status(account_id, kernel_ref)
+
+
+@_mcp.tool(annotations=_READ_ONLY)
+def kaggle_kernel_logs(account_id: str, kernel_ref: str) -> str:
+    """Read the execution log for an existing owner/kernel through the direct Python API."""
+    return _pool().kernels_logs(account_id, kernel_ref)
 
 
 def main() -> None:
