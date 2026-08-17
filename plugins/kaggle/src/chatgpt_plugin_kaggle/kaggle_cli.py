@@ -25,23 +25,61 @@ def ensure_auth_present() -> None:
     )
 
 
-def run_kaggle(args: list[str], *, timeout: int = 120) -> str:
-    ensure_auth_present()
-    command = ["kaggle", *args]
-    proc = subprocess.run(
+def _run_once(command: list[str], *, timeout: int, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         command,
         check=False,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         timeout=timeout,
-        env=os.environ.copy(),
+        env=env,
     )
+
+
+def run_kaggle(args: list[str], *, timeout: int = 120) -> str:
+    """Run the official Kaggle CLI without exposing credentials.
+
+    V0.1 prefers the current ``KAGGLE_API_TOKEN`` flow. Some operators still possess the legacy
+    Kaggle API key that historically lived in ``kaggle.json``. During bootstrap those keys can be
+    accidentally placed in the new-token secret slot. If (and only if) the CLI explicitly reports
+    that authentication is required, we make one in-memory compatibility retry using the selected
+    account's public owner slug as ``KAGGLE_USERNAME`` and the supplied secret as ``KAGGLE_KEY``.
+    The secret is never printed, persisted, or returned to ChatGPT.
+    """
+
+    ensure_auth_present()
+    command = ["kaggle", *args]
+    base_env = os.environ.copy()
+    proc = _run_once(command, timeout=timeout, env=base_env)
     output = sanitize_text(proc.stdout or "", max_chars=30_000)
-    if proc.returncode != 0:
+    if proc.returncode == 0:
+        return output
+
+    token = base_env.get("KAGGLE_API_TOKEN", "")
+    owner = base_env.get("KAGGLE_OWNER", "")
+    legacy_key = base_env.get("KAGGLE_KEY", "")
+    auth_required = "authentication required" in output.lower()
+
+    # Compatibility bridge for a legacy API key stored in the new-token slot. The fallback is
+    # deliberately narrow: only an explicit authentication-required response may trigger it.
+    if token and owner and not legacy_key and auth_required:
+        fallback_env = base_env.copy()
+        fallback_env.pop("KAGGLE_API_TOKEN", None)
+        fallback_env["KAGGLE_USERNAME"] = fallback_env.get("KAGGLE_USERNAME") or owner
+        fallback_env["KAGGLE_KEY"] = token
+        retry = _run_once(command, timeout=timeout, env=fallback_env)
+        retry_output = sanitize_text(retry.stdout or "", max_chars=30_000)
+        if retry.returncode == 0:
+            return retry_output
         rendered_command = " ".join(command[:3])
-        raise KaggleCliError(f"{rendered_command} failed ({proc.returncode}): {output[-8000:]}")
-    return output
+        raise KaggleCliError(
+            f"{rendered_command} failed after current-token auth and legacy-key compatibility retry "
+            f"({retry.returncode}): {retry_output[-8000:]}"
+        )
+
+    rendered_command = " ".join(command[:3])
+    raise KaggleCliError(f"{rendered_command} failed ({proc.returncode}): {output[-8000:]}")
 
 
 def create_private_dataset(path: Path) -> str:
