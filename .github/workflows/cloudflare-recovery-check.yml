@@ -37,6 +37,14 @@ jobs:
           search = os.environ["SEARCH_TERM"]
           fingerprint = os.environ["EXPECTED_FINGERPRINT"]
           admin = f"{worker}/mcp/{token}/admin"
+          expected_workers = {
+              "kg-02": "radlinaradlina",
+              "kg-03": "rezanory",
+              "kg-04": "reyhanehazad",
+              "kg-05": "trickermark",
+              "kg-06": "msdenis",
+              "kg-07": "nisabulutmark",
+          }
 
           def get(path, params=None, timeout=45):
               query = ""
@@ -64,22 +72,37 @@ jobs:
               except Exception as exc:
                   return 0, {"error_type": type(exc).__name__, "error": str(exc)[:1000]}
 
-          # Wait until the newly deployed recovery endpoints are visible.
+          # Gate recovery on the corrected six-worker identity map being live.
+          auth_status = 0
+          auth = {}
           ready = False
-          for _ in range(20):
-              status, _ = get(
-                  "/kernel-logs",
-                  {"account_id": "kg-01", "kernel_ref": "azadka/pneumonia-v6-2-2-train-w01-m01-r224"},
-                  timeout=20,
-              )
-              if status in (200, 502):
+          for _ in range(30):
+              auth_status, auth = get("/auth", timeout=30)
+              workers = auth.get("workers") if isinstance(auth, dict) else []
+              observed = {
+                  item.get("account_id"): item.get("owner_slug")
+                  for item in workers or []
+                  if isinstance(item, dict) and item.get("auth_ok")
+              }
+              if auth_status == 200 and observed == expected_workers:
                   ready = True
                   break
               time.sleep(3)
           if not ready:
-              raise SystemExit("recovery endpoints were not deployed")
+              Path("/tmp/recovery-check.json").write_text(
+                  json.dumps(
+                      {
+                          "auth_http": auth_status,
+                          "worker_auth": auth.get("workers") if isinstance(auth, dict) else auth,
+                          "expected_workers": expected_workers,
+                          "accounts": [],
+                      },
+                      indent=2,
+                  ),
+                  encoding="utf-8",
+              )
+              raise SystemExit("corrected six-worker mapping did not become live")
 
-          auth_status, auth = get("/auth")
           inventory_status, inventory = get("/inventory", {"search": search, "page_size": 20})
 
           report = {
@@ -143,7 +166,13 @@ jobs:
               "auth_http": auth_status,
               "inventory_http": inventory_status,
               "selected": [
-                  {"account_id": a.get("account_id"), "ref": a.get("selected_ref"), "status_http": a.get("status_http")}
+                  {
+                      "account_id": a.get("account_id"),
+                      "ref": a.get("selected_ref"),
+                      "status_http": a.get("status_http"),
+                      "logs_http": a.get("logs_http"),
+                      "manifest_http": a.get("manifest_http"),
+                  }
                   for a in report["accounts"]
               ],
           }, indent=2))
@@ -173,6 +202,11 @@ jobs:
               "",
               f"- auth HTTP: `{report.get('auth_http')}`",
               f"- inventory HTTP: `{report.get('inventory_http')}`",
+              "",
+              "### Worker identity map",
+              "```json",
+              json.dumps(report.get("worker_auth"), indent=2),
+              "```",
               "",
               "### Selected latest matching kernels",
               "",
