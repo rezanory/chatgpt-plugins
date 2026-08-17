@@ -6,7 +6,7 @@
     "strict": true,
     "noEmit": true,
     "lib": ["ES2022"],
-    "types": ["./worker-configuration.d.ts", "node"]
+    "types": ["./worker-configuration.d.ts"]
   },
   "include": ["src/**/*.ts", "worker-configuration.d.ts"]
 }
