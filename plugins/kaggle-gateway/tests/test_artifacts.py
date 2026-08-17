@@ -50,8 +50,8 @@ def test_manifest_hashes_selected_outputs_and_finds_fingerprint():
     assert result["fingerprint_hits"] == ["KAGGLE_EXECUTION_V62_2.json"]
     by_name = {item["path"]: item for item in result["files"]}
     expected_bytes = (
-        '{"fingerprint":"fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838"}'
-    ).encode()
+        b'{"fingerprint":"fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838"}'
+    )
     assert by_name["KAGGLE_EXECUTION_V62_2.json"]["sha256"] == hashlib.sha256(
         expected_bytes
     ).hexdigest()
