@@ -1,0 +1,66 @@
+name: kaggle-auth-check
+run-name: "Kaggle auth check for issue #${{ github.event.issue.number }}"
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  plan:
+    if: startsWith(github.event.issue.title, '[KAGGLE-AUTH]')
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --package chatgpt-plugin-kaggle
+      - name: Build enabled-account matrix
+        id: plan
+        run: >-
+          uv run --package chatgpt-plugin-kaggle python -m
+          chatgpt_plugin_kaggle.actions.plan_auth
+          --accounts-file plugins/kaggle/config/accounts.json
+
+  auth:
+    needs: plan
+    if: needs.plan.result == 'success' && needs.plan.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ matrix.account_environment }}
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      KAGGLE_OWNER: ${{ matrix.kaggle_owner }}
+      ACCOUNT_ID: ${{ matrix.account_id }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install bridge and official Kaggle CLI
+        run: |
+          uv sync --package chatgpt-plugin-kaggle
+          uv pip install "kaggle==2.2.4"
+      - name: Perform harmless authenticated API check
+        run: >-
+          uv run --package chatgpt-plugin-kaggle python -m
+          chatgpt_plugin_kaggle.actions.auth_check
+          --account-id "$ACCOUNT_ID"
+          --owner "$KAGGLE_OWNER"
+          --comment-file /tmp/auth-comment.md
+      - name: Publish sanitized auth result
+        run: >-
+          uv run --package chatgpt-plugin-kaggle python -m
+          chatgpt_plugin_kaggle.actions.post_comment
+          --issue "$ISSUE_NUMBER" --file /tmp/auth-comment.md
