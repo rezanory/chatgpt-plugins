@@ -64,7 +64,7 @@ jobs:
           set -o pipefail
           python -m compileall -q packages plugins 2>&1 | tee /tmp/ci-compile.log
 
-      - name: Cloudflare runtime typecheck
+      - name: Cloudflare runtime validation
         id: cloudflare
         continue-on-error: true
         working-directory: deploy/cloudflare-container
@@ -73,6 +73,7 @@ jobs:
           set -o pipefail
           npm install --no-audit --no-fund 2>&1 | tee /tmp/ci-cloudflare-install.log
           npm run check 2>&1 | tee /tmp/ci-cloudflare.log
+          npm run deploy:dry 2>&1 | tee /tmp/ci-cloudflare-dry.log
 
       - name: Publish safe CI diagnostic
         if: >-
@@ -104,7 +105,7 @@ jobs:
             printf -- '- tests: `%s`\n' "$TESTS_OUTCOME"
             printf -- '- compile: `%s`\n' "$COMPILE_OUTCOME"
             printf -- '- cloudflare: `%s`\n' "$CLOUDFLARE_OUTCOME"
-            for item in sync security ruff tests compile cloudflare-install cloudflare; do
+            for item in sync security ruff tests compile cloudflare-install cloudflare cloudflare-dry; do
               file="/tmp/ci-${item}.log"
               if [ -f "$file" ]; then
                 printf '\n### %s tail\n```text\n' "$item"
