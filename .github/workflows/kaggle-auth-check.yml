@@ -19,13 +19,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv sync --package chatgpt-plugin-kaggle
+      - name: Install planner
+        id: install_plan
+        run: uv sync --package chatgpt-plugin-kaggle
       - name: Build enabled-account matrix
         id: plan
         run: >-
           uv run --package chatgpt-plugin-kaggle python -m
           chatgpt_plugin_kaggle.actions.plan_auth
           --accounts-file plugins/kaggle/config/accounts.json
+      - name: Publish safe planning failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          printf '%s\n' 'Kaggle auth check failed before credentials were loaded: stage=`plan`.' > /tmp/auth-plan-failure.md
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/auth-plan-failure.md
 
   auth:
     needs: plan
@@ -39,20 +49,22 @@ jobs:
     environment: ${{ matrix.account_environment }}
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
       KAGGLE_OWNER: ${{ matrix.kaggle_owner }}
       ACCOUNT_ID: ${{ matrix.account_id }}
       ISSUE_NUMBER: ${{ github.event.issue.number }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        id: checkout
       - uses: astral-sh/setup-uv@v6
+        id: setup_uv
       - name: Install bridge and official Kaggle CLI
+        id: install
         run: |
           uv sync --package chatgpt-plugin-kaggle
           uv pip install "kaggle==2.2.4"
       - name: Perform harmless authenticated API check
+        id: auth_check
         run: >-
           uv run --package chatgpt-plugin-kaggle python -m
           chatgpt_plugin_kaggle.actions.auth_check
@@ -60,7 +72,27 @@ jobs:
           --owner "$KAGGLE_OWNER"
           --comment-file /tmp/auth-comment.md
       - name: Publish sanitized auth result
+        id: publish
         run: >-
           uv run --package chatgpt-plugin-kaggle python -m
           chatgpt_plugin_kaggle.actions.post_comment
           --issue "$ISSUE_NUMBER" --file /tmp/auth-comment.md
+      - name: Publish safe workflow-stage failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          SETUP_UV_OUTCOME: ${{ steps.setup_uv.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          AUTH_OUTCOME: ${{ steps.auth_check.outcome }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+        run: |
+          stage='unknown'
+          if [ "$CHECKOUT_OUTCOME" != 'success' ]; then stage='checkout';
+          elif [ "$SETUP_UV_OUTCOME" != 'success' ]; then stage='setup-uv';
+          elif [ "$INSTALL_OUTCOME" != 'success' ]; then stage='install';
+          elif [ "$AUTH_OUTCOME" != 'success' ]; then stage='auth';
+          elif [ "$PUBLISH_OUTCOME" != 'success' ]; then stage='publish';
+          fi
+          printf 'Kaggle auth check infrastructure failure: account=`%s` stage=`%s`.\n' "$ACCOUNT_ID" "$stage" > /tmp/auth-infra-failure.md
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/auth-infra-failure.md
