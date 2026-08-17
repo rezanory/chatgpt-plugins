@@ -1,0 +1,19 @@
+[project]
+name = "chatgpt-plugin-kaggle-gateway"
+version = "0.1.0"
+description = "Direct multi-account MCP gateway from ChatGPT to Kaggle official MCP"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.28,<1",
+  "mcp>=1.28.1,<2",
+]
+
+[project.scripts]
+kaggle-gateway = "chatgpt_plugin_kaggle_gateway.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chatgpt_plugin_kaggle_gateway"]
