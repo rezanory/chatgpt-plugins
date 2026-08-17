@@ -1,4 +1,5 @@
-export type AccountId = "kg-02" | "kg-03" | "kg-04" | "kg-05" | "kg-06" | "kg-07";
+export type WorkerAccountId = "kg-02" | "kg-03" | "kg-04" | "kg-05" | "kg-06" | "kg-07";
+export type AccountId = WorkerAccountId | "master";
 
 export interface WorkerEnv {
   CGP_CONTROL_REPOSITORY: string;
@@ -13,12 +14,14 @@ export interface WorkerEnv {
   CGP_KAGGLE_KG05_TOKEN?: string;
   CGP_KAGGLE_KG06_TOKEN?: string;
   CGP_KAGGLE_KG07_TOKEN?: string;
+  CGP_KAGGLE_MASTER_TOKEN?: string;
 }
 
 interface AccountDescriptor {
   accountId: AccountId;
   ownerSlug: string;
   username: string;
+  role: "worker" | "master";
 }
 
 interface AccountCredentials extends AccountDescriptor {
@@ -26,13 +29,20 @@ interface AccountCredentials extends AccountDescriptor {
 }
 
 export const ACCOUNTS: readonly AccountDescriptor[] = [
-  { accountId: "kg-02", ownerSlug: "radlinaradlina", username: "radlinaradlina" },
-  { accountId: "kg-03", ownerSlug: "rezanory", username: "rezanory" },
-  { accountId: "kg-04", ownerSlug: "reyhanehazad", username: "reyhanehazad" },
-  { accountId: "kg-05", ownerSlug: "trickermark", username: "trickermark" },
-  { accountId: "kg-06", ownerSlug: "msdenis", username: "msdenis" },
-  { accountId: "kg-07", ownerSlug: "nisabulutmark", username: "nisabulutmark" },
+  { accountId: "kg-02", ownerSlug: "radlinaradlina", username: "radlinaradlina", role: "worker" },
+  { accountId: "kg-03", ownerSlug: "rezanory", username: "rezanory", role: "worker" },
+  { accountId: "kg-04", ownerSlug: "reyhanehazad", username: "reyhanehazad", role: "worker" },
+  { accountId: "kg-05", ownerSlug: "trickermark", username: "trickermark", role: "worker" },
+  { accountId: "kg-06", ownerSlug: "msdenis", username: "msdenis", role: "worker" },
+  { accountId: "kg-07", ownerSlug: "nisabulutmark", username: "nisabulutmark", role: "worker" },
 ] as const;
+
+export const MASTER_ACCOUNT: AccountDescriptor = {
+  accountId: "master",
+  ownerSlug: "azadka",
+  username: "azadka",
+  role: "master",
+};
 
 const KAGGLE_SERVICE = "kernels.KernelsApiService";
 const KAGGLE_API_ROOT = "https://api.kaggle.com/v1";
@@ -67,10 +77,13 @@ function tokenFor(env: WorkerEnv, accountId: AccountId): string | undefined {
       return env.CGP_KAGGLE_KG06_TOKEN;
     case "kg-07":
       return env.CGP_KAGGLE_KG07_TOKEN;
+    case "master":
+      return env.CGP_KAGGLE_MASTER_TOKEN;
   }
 }
 
 function accountDescriptor(accountId: string): AccountDescriptor {
+  if (accountId === MASTER_ACCOUNT.accountId) return MASTER_ACCOUNT;
   const account = ACCOUNTS.find((candidate) => candidate.accountId === accountId);
   if (!account) {
     throw new Error(`unknown or disabled Kaggle account: ${accountId}`);
@@ -118,6 +131,12 @@ async function parseResponse(response: Response): Promise<Record<string, unknown
   throw new KaggleGatewayError("Kaggle returned a non-object response", response.status);
 }
 
+function authorizationFor(account: AccountCredentials): string {
+  return account.token.startsWith("KGAT_")
+    ? `Bearer ${account.token}`
+    : `Basic ${btoa(`${account.username}:${account.token}`)}`;
+}
+
 async function kaggleCall(
   env: WorkerEnv,
   accountId: string,
@@ -125,13 +144,10 @@ async function kaggleCall(
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const account = accountCredentials(env, accountId);
-  const authorization = account.token.startsWith("KGAT_")
-    ? `Bearer ${account.token}`
-    : `Basic ${btoa(`${account.username}:${account.token}`)}`;
   const response = await fetch(`${KAGGLE_API_ROOT}/${KAGGLE_SERVICE}/${requestName}`, {
     method: "POST",
     headers: {
-      Authorization: authorization,
+      Authorization: authorizationFor(account),
       "Content-Type": "application/json",
       "User-Agent": "chatgpt-kaggle-gateway-worker-free/0.1",
     },
@@ -151,8 +167,18 @@ export function publicAccounts(): Array<Record<string, string | boolean>> {
   return ACCOUNTS.map((account) => ({
     account_id: account.accountId,
     owner_slug: account.ownerSlug,
+    role: account.role,
     enabled: true,
   }));
+}
+
+export function publicMaster(): Record<string, string | boolean> {
+  return {
+    account_id: MASTER_ACCOUNT.accountId,
+    owner_slug: MASTER_ACCOUNT.ownerSlug,
+    role: MASTER_ACCOUNT.role,
+    enabled: true,
+  };
 }
 
 export async function listKernels(
@@ -181,6 +207,7 @@ export async function authCheck(env: WorkerEnv, accountId: string): Promise<Reco
   return {
     account_id: account.accountId,
     owner_slug: account.ownerSlug,
+    role: account.role,
     auth_ok: true,
     probe_count: kernels.length,
   };
@@ -195,6 +222,7 @@ export async function authCheckAll(env: WorkerEnv): Promise<Array<Record<string,
         return {
           account_id: account.accountId,
           owner_slug: account.ownerSlug,
+          role: account.role,
           auth_ok: false,
           error_type: error instanceof Error ? error.name : "Error",
           error: error instanceof Error ? error.message.slice(0, 1000) : "unknown error",
@@ -202,6 +230,10 @@ export async function authCheckAll(env: WorkerEnv): Promise<Array<Record<string,
       }
     }),
   );
+}
+
+export async function masterAuthCheck(env: WorkerEnv): Promise<Record<string, unknown>> {
+  return authCheck(env, MASTER_ACCOUNT.accountId);
 }
 
 export async function inventoryAll(
@@ -216,6 +248,7 @@ export async function inventoryAll(
         return {
           account_id: account.accountId,
           owner_slug: account.ownerSlug,
+          role: account.role,
           ok: true,
           kernels: await listKernels(env, account.accountId, search, pageSize),
         };
@@ -223,6 +256,7 @@ export async function inventoryAll(
         return {
           account_id: account.accountId,
           owner_slug: account.ownerSlug,
+          role: account.role,
           ok: false,
           error_type: error instanceof Error ? error.name : "Error",
           error: error instanceof Error ? error.message.slice(0, 1000) : "unknown error",
@@ -370,6 +404,8 @@ export async function kernelOutputManifest(
 
   return {
     account_id: account.accountId,
+    owner_slug: account.ownerSlug,
+    role: account.role,
     kernel_ref: kernelRef,
     requested_artifact_names: artifactNames,
     available_file_count: availableFiles.length,
@@ -409,6 +445,7 @@ export async function rerunExisting(
   kernelRef: string,
 ): Promise<Record<string, unknown>> {
   const account = accountCredentials(env, accountId);
+  if (account.role === "master") throw new Error("master account is read-only");
   splitKernelRef(account, kernelRef);
   const current = await getKernel(env, accountId, kernelRef);
   const metadata = asRecord(current.metadata);
