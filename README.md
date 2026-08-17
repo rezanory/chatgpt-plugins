@@ -67,8 +67,10 @@ kg-07 -> nisabulutmark
 - `kaggle_kernel_logs`
 - `kaggle_kernel_output_manifest`
 
-The MCP endpoint is not exposed at a predictable `/mcp` URL. `CGP_MCP_PATH_SECRET` is hashed and
-used as a capability path. If that secret is absent the MCP route remains unavailable.
+The MCP endpoint is not exposed at a predictable `/mcp` URL. A URL-safe 32–128 character Worker
+Secret named `CGP_MCP_PATH_TOKEN` becomes the private capability path `/mcp/<token>`. The same token
+is entered only in Cloudflare and the ChatGPT custom-app endpoint; it must never be pasted into the
+conversation, Git, Issues, or Actions logs. If the token is absent or malformed, MCP is disabled.
 
 ## Recovery before write
 
@@ -109,8 +111,9 @@ deploy/cloudflare-worker-free/
   src/github.ts
 ```
 
-`wrangler.jsonc` has `workers_dev: true` and deliberately contains no Containers, Durable Objects,
-queues, or paid runtime bindings.
+`wrangler.jsonc` has `workers_dev: true`, disables preview URLs, and deliberately contains no active
+Containers, Durable Objects, queues, or paid runtime bindings. Its historical migration only deletes
+the abandoned `KaggleGatewayContainer` class.
 
 Live deployment is performed by:
 
@@ -138,7 +141,7 @@ CGP_KAGGLE_KG04_TOKEN
 CGP_KAGGLE_KG05_TOKEN
 CGP_KAGGLE_KG06_TOKEN
 CGP_KAGGLE_KG07_TOKEN
-CGP_MCP_PATH_SECRET
+CGP_MCP_PATH_TOKEN
 ```
 
 For the later write bridge also configure:
