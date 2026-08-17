@@ -31,7 +31,8 @@ def build_matrix(
             raise ValueError(f"profile {task.profile!r} is unknown")
         if not profile.capabilities.issubset(account.descriptor.capabilities):
             raise ValueError(
-                f"account {task.account_id!r} lacks capabilities required by profile {task.profile!r}"
+                f"account {task.account_id!r} lacks capabilities required by "
+                f"profile {task.profile!r}"
             )
         accelerator = task.accelerator or account.default_accelerator or ""
         matrix.append(
