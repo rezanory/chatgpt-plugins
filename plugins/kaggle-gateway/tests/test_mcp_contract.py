@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from mcp import Client
 from chatgpt_plugin_kaggle_gateway import server
+from mcp import Client
 
 _EXPECTED_TOOLS = {
     "kaggle_accounts",
@@ -29,6 +29,6 @@ def test_mcp_exposes_only_expected_read_recovery_surface():
 
     for tool in by_name.values():
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is True
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.read_only_hint is True
+        assert tool.annotations.destructive_hint is False
+        assert tool.annotations.idempotent_hint is True
