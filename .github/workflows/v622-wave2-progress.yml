@@ -2,6 +2,8 @@ name: v622-current-wave-progress
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'
   push:
     branches: [main]
     paths:
@@ -15,11 +17,17 @@ permissions:
   contents: read
   issues: write
 
+# This workflow is read-only with respect to Kaggle. A newer status refresh may
+# safely cancel an older one so transient endpoint trouble cannot create a queue.
+concurrency:
+  group: v622-current-wave-progress
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Resolve latest successfully launched canonical wave
+      - name: Resolve current wave and latest lightweight receipts
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -31,55 +39,79 @@ jobs:
           from pathlib import Path
 
           comments = json.loads(Path('/tmp/v622-comments.json').read_text(encoding='utf-8'))
-          latest = None
-          for comment in comments:
-              body = str(comment.get('body') or '')
-              if not body.startswith('## V6.2.2 strict control receipt'):
-                  continue
+          latest_launch = None
+          latest_progress = {}
+
+          def json_block(body):
               match = re.search(r'```json\s*(\{.*?\})\s*```', body, flags=re.S)
               if not match:
-                  continue
+                  return None
               try:
-                  receipt = json.loads(match.group(1))
+                  value = json.loads(match.group(1))
               except Exception:
-                  continue
-              if receipt.get('action') != 'launch_wave':
-                  continue
-              if receipt.get('error') not in (None, ''):
-                  continue
-              results = receipt.get('results') or []
-              if len(results) != 6:
-                  continue
-              try:
-                  wave = int(receipt.get('wave'))
-              except Exception:
-                  continue
-              if not 2 <= wave <= 6:
-                  continue
-              latest = (str(comment.get('created_at') or ''), wave, str(receipt.get('request_id') or ''))
+                  return None
+              return value if isinstance(value, dict) else None
 
-          if latest is None:
-              latest = ('', 1, 'recovered-wave1-baseline')
+          for comment in comments:
+              body = str(comment.get('body') or '')
+              created_at = str(comment.get('created_at') or '')
 
-          _, wave, request_id = latest
+              if body.startswith('## V6.2.2 strict control receipt'):
+                  receipt = json_block(body)
+                  if receipt and receipt.get('action') == 'launch_wave' and receipt.get('error') in (None, ''):
+                      results = receipt.get('results') or []
+                      try:
+                          wave = int(receipt.get('wave'))
+                      except Exception:
+                          wave = 0
+                      if 2 <= wave <= 6 and len(results) == 6:
+                          candidate = (created_at, wave, str(receipt.get('request_id') or ''))
+                          if latest_launch is None or candidate[0] >= latest_launch[0]:
+                              latest_launch = candidate
+
+              progress_match = re.match(r'^## V6\.2\.2 Wave ([1-6]) live Kaggle progress\b', body)
+              if progress_match:
+                  wave = int(progress_match.group(1))
+                  payload = json_block(body)
+                  if not payload or payload.get('wave') != wave or len(payload.get('jobs') or []) != 6:
+                      continue
+                  previous = latest_progress.get(str(wave))
+                  if previous is None or created_at >= previous['created_at']:
+                      latest_progress[str(wave)] = {
+                          'created_at': created_at,
+                          'payload': payload,
+                      }
+
+          if latest_launch is None:
+              latest_launch = ('', 1, 'recovered-wave1-baseline')
+
+          _, current_wave, request_id = latest_launch
+          context = {
+              'current_wave': current_wave,
+              'current_request_id': request_id,
+              'latest_progress': latest_progress,
+          }
+          Path('/tmp/v622-progress-context.json').write_text(
+              json.dumps(context, indent=2) + '\n', encoding='utf-8'
+          )
           Path('/tmp/v622-current-wave.env').write_text(
-              f'CURRENT_WAVE={wave}\nCURRENT_REQUEST_ID={request_id}\n',
+              f'CURRENT_WAVE={current_wave}\nCURRENT_REQUEST_ID={request_id}\n',
               encoding='utf-8',
           )
           PY
           cat /tmp/v622-current-wave.env >> "$GITHUB_ENV"
 
-      - name: Read canonical matrix with lightweight per-wave probes
+      - name: Read current wave from lightweight endpoint only
         shell: bash
         run: |
           base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/wave-status'
-          for wave in $(seq 1 6); do
-            ok=0
-            for attempt in $(seq 1 24); do
-              code="$(curl --silent --show-error --max-time 120 \
-                -o "/tmp/v622-wave-${wave}.json" -w '%{http_code}' \
-                "${base}?wave=${wave}" || true)"
-              if [ "$code" = '200' ] && WAVE="$wave" python - <<'PY'
+          wave="$CURRENT_WAVE"
+          ok=0
+          for attempt in $(seq 1 6); do
+            code="$(curl --silent --show-error --max-time 30 \
+              -o "/tmp/v622-wave-${wave}.json" -w '%{http_code}' \
+              "${base}?wave=${wave}" || true)"
+            if [ "$code" = '200' ] && WAVE="$wave" python - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -89,22 +121,19 @@ jobs:
           assert value.get('wave') == wave
           assert len(value.get('tasks') or []) == 6
           PY
-              then
-                ok=1
-                break
-              fi
-              sleep 5
-            done
-            if [ "$ok" != '1' ]; then
-              echo "Wave $wave lightweight status endpoint did not become ready." >&2
-              cat "/tmp/v622-wave-${wave}.json" 2>/dev/null || true
-              exit 1
+            then
+              ok=1
+              break
             fi
+            sleep 5
           done
+          if [ "$ok" != '1' ]; then
+            echo "Current Wave $wave lightweight status endpoint did not become ready." >&2
+            cat "/tmp/v622-wave-${wave}.json" 2>/dev/null || true
+            exit 1
+          fi
 
-      - name: Publish pipelined matrix safe progress
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Build progress only when status meaningfully changes
         shell: bash
         run: |
           python - <<'PY'
@@ -114,42 +143,81 @@ jobs:
 
           current_wave = int(os.environ['CURRENT_WAVE'])
           request_id = os.environ.get('CURRENT_REQUEST_ID') or None
-          waves = {}
-          all_tasks = []
-          for wave in range(1, 7):
-              value = json.loads(Path(f'/tmp/v622-wave-{wave}.json').read_text(encoding='utf-8'))
-              waves[wave] = value
-              all_tasks.extend(value.get('tasks') or [])
+          context = json.loads(Path('/tmp/v622-progress-context.json').read_text(encoding='utf-8'))
+          current = json.loads(Path(f'/tmp/v622-wave-{current_wave}.json').read_text(encoding='utf-8'))
+          latest_progress = context.get('latest_progress') or {}
 
-          totals = {
-              'expected_total': 36,
-              'complete': sum(1 for row in all_tasks if row.get('lifecycle') == 'complete'),
-              'in_progress': sum(1 for row in all_tasks if row.get('lifecycle') == 'in_progress'),
-              'needs_repair': sum(1 for row in all_tasks if row.get('lifecycle') == 'needs_repair'),
-              'missing': sum(1 for row in all_tasks if row.get('lifecycle') == 'missing'),
-              'unknown': sum(1 for row in all_tasks if row.get('lifecycle') == 'unknown'),
+          previous_payload = (latest_progress.get(str(current_wave)) or {}).get('payload') or {}
+          previous_jobs = previous_payload.get('jobs') or []
+          previous_by_worker = {
+              str(row.get('worker_id') or ''): str(row.get('status') or '')
+              for row in previous_jobs
           }
-          totals['created'] = totals['complete'] + totals['in_progress'] + totals['needs_repair']
-          totals['remaining_not_created'] = totals['missing']
 
-          current = waves[current_wave]
+          def comparable_statuses(rows):
+              values = []
+              for row in rows:
+                  worker_id = str(row.get('worker_id') or '')
+                  status = str(row.get('status') or '')
+                  # PROBE_ERROR is diagnostic uncertainty, not a training state
+                  # transition. Preserve the prior known state for change detection.
+                  if status == 'PROBE_ERROR' and worker_id in previous_by_worker:
+                      status = previous_by_worker[worker_id]
+                  values.append((worker_id, status, str(row.get('lifecycle') or '')))
+              return sorted(values)
+
+          current_jobs = current.get('tasks') or []
+          previous_vector = comparable_statuses(previous_jobs)
+          current_vector = comparable_statuses(current_jobs)
+          meaningful_change = not previous_jobs or current_vector != previous_vector
+
+          summaries = {}
+          for wave in range(1, 7):
+              if wave == current_wave:
+                  summaries[str(wave)] = current.get('counts') or {}
+                  continue
+              prior = (latest_progress.get(str(wave)) or {}).get('payload') or {}
+              counts = prior.get('counts')
+              if isinstance(counts, dict):
+                  summaries[str(wave)] = counts
+
+          totals = None
+          if len(summaries) == 6:
+              keys = ('complete', 'in_progress', 'needs_repair', 'missing', 'unknown')
+              totals = {'expected_total': 36}
+              for key in keys:
+                  totals[key] = sum(int((summaries[str(wave)] or {}).get(key, 0)) for wave in range(1, 7))
+              totals['created'] = totals['complete'] + totals['in_progress'] + totals['needs_repair']
+              totals['remaining_not_created'] = totals['missing']
+
           body = {
               'wave': current_wave,
               'worker_range': [f'W{1 + (current_wave - 1) * 6:02d}', f'W{current_wave * 6:02d}'],
               'launch_request_id': request_id,
               'scheduling_policy': 'per_account_predecessor_complete',
+              'status_scope': 'fresh_current_wave_plus_latest_lightweight_wave_receipts',
+              'generated_at': current.get('generated_at'),
               'canonical_matrix_summary': totals,
-              'wave_summaries': {
-                  str(wave): waves[wave].get('counts') or {}
-                  for wave in range(1, 7)
-              },
+              'wave_summaries': summaries,
               'counts': current.get('counts') or {},
-              'jobs': current.get('tasks') or [],
+              'jobs': current_jobs,
           }
-          Path('/tmp/v622-current-wave.md').write_text(
-              f'## V6.2.2 Wave {current_wave} live Kaggle progress\n\n```json\n'
-              + json.dumps(body, indent=2) + '\n```\n',
-              encoding='utf-8',
-          )
+
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as handle:
+              handle.write(f"PUBLISH_PROGRESS={'1' if meaningful_change else '0'}\n")
+
+          if meaningful_change:
+              Path('/tmp/v622-current-wave.md').write_text(
+                  f'## V6.2.2 Wave {current_wave} live Kaggle progress\n\n```json\n'
+                  + json.dumps(body, indent=2) + '\n```\n',
+                  encoding='utf-8',
+              )
+          else:
+              print('No meaningful current-wave status change; no Issue comment will be published.')
           PY
-          gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/v622-current-wave.md
+
+      - name: Publish lightweight current-wave progress
+        if: env.PUBLISH_PROGRESS == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/v622-current-wave.md
