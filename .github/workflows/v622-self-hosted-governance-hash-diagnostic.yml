@@ -1,0 +1,157 @@
+name: v622-self-hosted-governance-hash-diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-self-hosted-governance-hash-diagnostic.yml'
+      - 'deploy/cloudflare-worker-free/src/v622-selection-artifact-worker.ts'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-self-hosted-governance-hash-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, windows, x64, v622]
+    environment: cloudflare-production
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve local Python
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = Get-ChildItem "$env:RUNNER_TOOL_CACHE\Python" -Filter python.exe -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $python) {
+            $cmd = Get-Command python.exe -ErrorAction SilentlyContinue
+            if ($cmd) { $python = $cmd.Source }
+          }
+          if (-not $python) { throw 'No local Python found.' }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_PYTHON=$python`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Deploy temporary protected artifact bridge
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $accountId = ([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if ([string]::IsNullOrWhiteSpace($env:CLOUDFLARE_API_TOKEN) -or [string]::IsNullOrWhiteSpace($accountId)) { throw 'Cloudflare credentials missing.' }
+          Write-Host "::add-mask::$accountId"
+          $env:CLOUDFLARE_ACCOUNT_ID = $accountId
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_CF_ACCOUNT_ID=$accountId`n", [System.Text.UTF8Encoding]::new($false))
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
+            npm run check
+            if ($LASTEXITCODE -ne 0) { throw 'Worker check failed' }
+            npx wrangler deploy src/v622-selection-artifact-worker.ts --name chatgpt-kaggle-gateway
+            if ($LASTEXITCODE -ne 0) { throw 'Temporary bridge deploy failed' }
+          } finally { Pop-Location }
+
+      - name: Create ephemeral capability
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $token = (& $env:V622_PYTHON -c "import secrets; print(secrets.token_urlsafe(48))").Trim()
+          if (-not $token) { throw 'Capability generation failed.' }
+          Write-Host "::add-mask::$token"
+          $env:CLOUDFLARE_ACCOUNT_ID = $env:V622_CF_ACCOUNT_ID
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            $token | npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN
+            if ($LASTEXITCODE -ne 0) { throw 'Capability install failed' }
+          } finally { Pop-Location }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_DIAG_TOKEN=$token`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Diagnose canonical select_champion source identity
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $script = @'
+          import hashlib, json, os, urllib.request
+          base = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/selection-artifact'
+          payload = json.dumps({'worker_id':'W01','artifact_name':'select_champion.py'}).encode()
+          req = urllib.request.Request(base, data=payload, method='POST', headers={
+              'Authorization': f"Bearer {os.environ['V622_DIAG_TOKEN']}",
+              'Content-Type': 'application/json',
+              'User-Agent': 'v622-governance-hash-diagnostic',
+          })
+          with urllib.request.urlopen(req, timeout=120) as response:
+              value = json.loads(response.read().decode())
+          content = value['content']
+          def h(text): return hashlib.sha256(text.encode('utf-8')).hexdigest()
+          lf = content.replace('\r\n','\n').replace('\r','\n')
+          lf_no_bom = lf.lstrip('\ufeff')
+          lines = [line.strip() for line in lf_no_bom.splitlines() if line.strip()][:5]
+          receipt = {
+              'project':'PNEUMONIA V6.2.2',
+              'stage':'governance_hash_diagnostic',
+              'worker_id':value.get('worker_id'),
+              'kernel_ref':value.get('kernel_ref'),
+              'artifact_name':value.get('artifact_name'),
+              'file_name':value.get('file_name'),
+              'bytes':value.get('bytes'),
+              'worker_raw_sha256':value.get('sha256'),
+              'content_reencoded_sha256':h(content),
+              'normalized_lf_sha256':h(lf),
+              'normalized_lf_no_bom_sha256':h(lf_no_bom),
+              'inventory_expected_sha256':'f6be9ddf5060dbea5fab233ee0d349820ef679c64662eec23dd01c2929aec9b2',
+              'first_nonempty_lines':lines,
+              'locked_test_used':False,
+              'external_cohort_used':False,
+          }
+          body = '## V6.2.2 governance hash diagnostic receipt\n\n```json\n' + json.dumps(receipt, indent=2) + '\n```\n'
+          data = json.dumps({'body':body}).encode()
+          issue_req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/18/comments",
+              data=data, method='POST', headers={
+                  'Authorization': f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  'Accept':'application/vnd.github+json',
+                  'Content-Type':'application/json',
+                  'X-GitHub-Api-Version':'2022-11-28',
+                  'User-Agent':'v622-governance-hash-diagnostic',
+              })
+          with urllib.request.urlopen(issue_req, timeout=30) as response:
+              if response.status not in (200,201): raise RuntimeError(response.status)
+          print(json.dumps(receipt))
+          '@
+          $script | & $env:V622_PYTHON -
+          if ($LASTEXITCODE -ne 0) { throw 'Governance hash diagnostic failed.' }
+
+      - name: Remove capability and restore canonical Worker
+        if: always()
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $env:CLOUDFLARE_ACCOUNT_ID = $env:V622_CF_ACCOUNT_ID
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            '{"CGP_PROJECT_CONTROL_TOKEN":null}' | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\v622-delete-control.json"
+            npx wrangler secret bulk "$env:RUNNER_TEMP\v622-delete-control.json"
+            Remove-Item "$env:RUNNER_TEMP\v622-delete-control.json" -Force -ErrorAction SilentlyContinue
+            npx wrangler deploy
+          } finally { Pop-Location }
