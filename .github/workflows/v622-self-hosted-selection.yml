@@ -1,0 +1,407 @@
+name: v622-self-hosted-selection
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-self-hosted-selection.yml'
+      - 'deploy/cloudflare-worker-free/src/v622-selection-artifact-worker.ts'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-self-hosted-selection
+  cancel-in-progress: true
+
+jobs:
+  select:
+    runs-on: [self-hosted, windows, x64, v622]
+    environment: cloudflare-production
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve existing local Python
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidates = @()
+          if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TOOL_CACHE)) {
+            $pythonRoot = Join-Path $env:RUNNER_TOOL_CACHE 'Python'
+            if (Test-Path $pythonRoot) {
+              $candidates += Get-ChildItem -Path $pythonRoot -Filter python.exe -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending |
+                Select-Object -ExpandProperty FullName
+            }
+          }
+          $command = Get-Command python.exe -ErrorAction SilentlyContinue
+          if ($command) { $candidates += $command.Source }
+          $python = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $python) { throw 'No existing Python executable found on self-hosted runner.' }
+          Write-Host "Using Python: $python"
+          & $python --version
+          if ($LASTEXITCODE -ne 0) { throw 'Resolved Python executable is not runnable.' }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_PYTHON=$python`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Install validation-selection Python dependencies
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & $env:V622_PYTHON -m pip install --disable-pip-version-check --user numpy pandas scipy scikit-learn
+          if ($LASTEXITCODE -ne 0) { throw 'Selection Python dependency installation failed.' }
+
+      - name: Deploy temporary protected selection artifact bridge
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $accountId = ([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if ([string]::IsNullOrWhiteSpace($env:CLOUDFLARE_API_TOKEN) -or [string]::IsNullOrWhiteSpace($accountId)) {
+            throw 'Cloudflare deployment credentials are not configured.'
+          }
+          Write-Host "::add-mask::$accountId"
+          $env:CLOUDFLARE_ACCOUNT_ID = $accountId
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_CF_ACCOUNT_ID=$accountId`n", [System.Text.UTF8Encoding]::new($false))
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
+            npm run check
+            if ($LASTEXITCODE -ne 0) { throw 'Worker typecheck failed' }
+            npx wrangler deploy src/v622-selection-artifact-worker.ts --name chatgpt-kaggle-gateway
+            if ($LASTEXITCODE -ne 0) { throw 'Temporary selection bridge deploy failed' }
+          }
+          finally { Pop-Location }
+
+      - name: Create ephemeral selection capability
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $token = (& $env:V622_PYTHON -c "import secrets; print(secrets.token_urlsafe(48))").Trim()
+          if ([string]::IsNullOrWhiteSpace($token)) { throw 'Could not generate selection capability.' }
+          Write-Host "::add-mask::$token"
+          $env:CLOUDFLARE_ACCOUNT_ID = $env:V622_CF_ACCOUNT_ID
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            $token | npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install ephemeral selection capability.' }
+          }
+          finally { Pop-Location }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_SELECTION_TOKEN=$token`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Recover validation artifacts and run recovered governance
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $script = @'
+          import csv
+          import dataclasses
+          import hashlib
+          import inspect
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+          import urllib.request
+
+          BASE = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/selection-artifact'
+          ROOT = pathlib.Path(os.environ.get('RUNNER_TEMP', '.')) / 'v622-selection-runtime'
+          EXP = ROOT / 'experiments'
+          SRC = ROOT / 'governance'
+          OUT = ROOT / 'selection-output'
+          EXP.mkdir(parents=True, exist_ok=True)
+          SRC.mkdir(parents=True, exist_ok=True)
+          OUT.mkdir(parents=True, exist_ok=True)
+
+          expected_source_hashes = {
+              'select_champion.py': 'f6be9ddf5060dbea5fab233ee0d349820ef679c64662eec23dd01c2929aec9b2',
+              'auto_ensemble_selection.py': '39502bdf29fe696e510f44895e9d8d35959fce8e16e2ec0928a5f31dcb451311',
+              'backbone_ensemble_selection.py': '9657bc631b5c1b67da15b47562fd10d2c9e3831acb3dcedea59b108fec95f979',
+          }
+          source_names = [
+              'select_champion.py',
+              'auto_ensemble_selection.py',
+              'backbone_ensemble_selection.py',
+              'balanced_metrics.py',
+              'backbone_comparison_contracts.py',
+              'source_package_integrity.py',
+              'v6_fingerprint_contracts.py',
+          ]
+
+          def fetch(worker_id, artifact_name):
+              payload = json.dumps({'worker_id': worker_id, 'artifact_name': artifact_name}).encode('utf-8')
+              req = urllib.request.Request(
+                  BASE,
+                  data=payload,
+                  method='POST',
+                  headers={
+                      'Authorization': f"Bearer {os.environ['V622_SELECTION_TOKEN']}",
+                      'Content-Type': 'application/json',
+                      'User-Agent': 'v622-self-hosted-selection',
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=120) as response:
+                  value = json.loads(response.read().decode('utf-8'))
+              if value.get('project') != 'PNEUMONIA V6.2.2' or value.get('purpose') != 'validation_only_selection_artifact':
+                  raise RuntimeError(f'Unexpected artifact response for {worker_id}/{artifact_name}')
+              content = value.get('content')
+              if not isinstance(content, str):
+                  raise RuntimeError(f'Artifact content missing for {worker_id}/{artifact_name}')
+              digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
+              if digest != value.get('sha256'):
+                  raise RuntimeError(f'Artifact transport hash mismatch for {worker_id}/{artifact_name}')
+              return value, content
+
+          source_manifest = []
+          for name in source_names:
+              value, content = fetch('W01', name)
+              path = SRC / name
+              path.write_text(content, encoding='utf-8')
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              expected = expected_source_hashes.get(name)
+              if expected and digest != expected:
+                  raise RuntimeError(f'Recovered governance hash mismatch for {name}: {digest} != {expected}')
+              source_manifest.append({'name': name, 'sha256': digest, 'bytes': path.stat().st_size})
+
+          transport_manifest = []
+          prediction_schema = None
+          prediction_rows = {}
+
+          def rebind_prediction_paths(value, local_prediction):
+              if isinstance(value, dict):
+                  return {k: rebind_prediction_paths(v, local_prediction) for k, v in value.items()}
+              if isinstance(value, list):
+                  return [rebind_prediction_paths(v, local_prediction) for v in value]
+              if isinstance(value, str):
+                  normalized = value.replace('\\', '/').lower()
+                  if normalized.endswith('/val_predictions.csv') or normalized == 'val_predictions.csv':
+                      return str(local_prediction)
+              return value
+
+          for worker_number in range(1, 37):
+              worker_id = f'W{worker_number:02d}'
+              run_dir = EXP / worker_id
+              run_dir.mkdir(parents=True, exist_ok=True)
+
+              report_meta, report_text = fetch(worker_id, 'final_report.json')
+              pred_meta, pred_text = fetch(worker_id, 'val_predictions.csv')
+              report_original = run_dir / 'final_report.original.json'
+              prediction_path = run_dir / 'val_predictions.csv'
+              report_original.write_text(report_text, encoding='utf-8')
+              prediction_path.write_text(pred_text, encoding='utf-8')
+
+              report_value = json.loads(report_text)
+              rebound = rebind_prediction_paths(report_value, prediction_path.resolve())
+              report_path = run_dir / 'final_report.json'
+              report_path.write_text(json.dumps(rebound, indent=2, ensure_ascii=False), encoding='utf-8')
+
+              with prediction_path.open('r', encoding='utf-8', newline='') as handle:
+                  reader = csv.reader(handle)
+                  header = next(reader)
+                  row_count = sum(1 for _ in reader)
+              if prediction_schema is None:
+                  prediction_schema = header
+              elif header != prediction_schema:
+                  raise RuntimeError(f'Prediction schema mismatch at {worker_id}')
+              prediction_rows[worker_id] = row_count
+              transport_manifest.append({
+                  'worker_id': worker_id,
+                  'report_sha256': report_meta.get('sha256'),
+                  'prediction_sha256': pred_meta.get('sha256'),
+                  'prediction_rows': row_count,
+                  'transport_rebinding_only': True,
+              })
+
+          if len(set(prediction_rows.values())) != 1:
+              raise RuntimeError(f'Prediction row-count mismatch across canonical runs: {prediction_rows}')
+
+          single_out = OUT / 'single'
+          single_out.mkdir(parents=True, exist_ok=True)
+          subprocess.run([
+              sys.executable,
+              str(SRC / 'select_champion.py'),
+              '--experiments-root', str(EXP),
+              '--output-dir', str(single_out),
+          ], check=True, cwd=str(SRC))
+
+          leaderboard_path = single_out / 'validation_leaderboard.csv'
+          champion_path = single_out / 'validation_champion_candidate.json'
+          if not leaderboard_path.exists() or not champion_path.exists():
+              raise RuntimeError('Recovered select_champion.py did not create required outputs')
+
+          import pandas as pd
+          leaderboard = pd.read_csv(leaderboard_path)
+          if len(leaderboard) != 36:
+              raise RuntimeError(f'Validation leaderboard must contain 36 rows, got {len(leaderboard)}')
+          if leaderboard['run_id'].astype(str).nunique() != 36:
+              raise RuntimeError('Validation leaderboard run_id uniqueness mismatch')
+          champion = json.loads(champion_path.read_text(encoding='utf-8'))
+
+          sys.path.insert(0, str(SRC))
+          import auto_ensemble_selection as aes
+
+          best_runs = aes.best_run_per_model(leaderboard)
+          if len(best_runs) != 12:
+              raise RuntimeError(f'best_run_per_model must return 12 model families, got {len(best_runs)}')
+
+          signature = inspect.signature(aes.select_automatic_ensemble)
+          kwargs = {}
+          unsupported = []
+          ensemble_out = OUT / 'ensemble'
+          ensemble_out.mkdir(parents=True, exist_ok=True)
+          for name, parameter in signature.parameters.items():
+              if name in {'leaderboard', 'validation_leaderboard'}:
+                  kwargs[name] = leaderboard
+              elif name in {'selection_size'}:
+                  kwargs[name] = 3
+              elif name in {'output_dir', 'output'}:
+                  kwargs[name] = ensemble_out
+              elif name in {'seed'}:
+                  kwargs[name] = 2026
+              elif name in {'folds', 'n_splits'}:
+                  kwargs[name] = 5
+              elif name in {'weight_step'}:
+                  kwargs[name] = 0.05
+              elif name in {'minimum_mean_weight'}:
+                  kwargs[name] = 0.05
+              elif name in {'allowed', 'allowed_models', 'allowed_model_ids'}:
+                  kwargs[name] = None
+              elif parameter.default is inspect.Parameter.empty:
+                  unsupported.append(name)
+          if unsupported:
+              raise RuntimeError(f'Unsupported required select_automatic_ensemble parameters: {unsupported}; signature={signature}')
+
+          ensemble_result = aes.select_automatic_ensemble(**kwargs)
+
+          def compact(value, depth=0):
+              if depth > 6:
+                  return '<depth-limited>'
+              if dataclasses.is_dataclass(value):
+                  value = dataclasses.asdict(value)
+              if hasattr(value, 'tolist') and not isinstance(value, (str, bytes, dict, list, tuple)):
+                  try:
+                      value = value.tolist()
+                  except Exception:
+                      value = str(value)
+              if isinstance(value, dict):
+                  out = {}
+                  for key, child in value.items():
+                      if str(key) in {'oof_probability', 'oof_prediction', 'oof_raw_probability', 'oof_fold'}:
+                          continue
+                      out[str(key)] = compact(child, depth + 1)
+                  return out
+              if isinstance(value, (list, tuple)):
+                  if len(value) > 30:
+                      return {'length': len(value), 'sha256': hashlib.sha256(json.dumps([str(v) for v in value], sort_keys=True).encode()).hexdigest()}
+                  return [compact(v, depth + 1) for v in value]
+              if isinstance(value, pathlib.Path):
+                  return value.name
+              if isinstance(value, (str, int, float, bool)) or value is None:
+                  return value
+              return str(value)
+
+          best_model_runs = []
+          for run in best_runs:
+              best_model_runs.append({
+                  'model_id': str(getattr(run, 'model_id', '')),
+                  'run_id': str(getattr(run, 'run_id', '')),
+                  'validation_rank': int(getattr(run, 'validation_rank', 0)),
+                  'screening_minutes': float(getattr(run, 'screening_minutes', 0.0)),
+              })
+
+          receipt = {
+              'project': 'PNEUMONIA V6.2.2',
+              'stage': 'validation_only_model_and_ensemble_selection',
+              'canonical_runs': 36,
+              'model_families': 12,
+              'locked_test_used': False,
+              'external_cohort_used': False,
+              'hpo_repeated': False,
+              'confirmation_repeated': False,
+              'prediction_schema': prediction_schema,
+              'prediction_rows_per_run': next(iter(prediction_rows.values())),
+              'governance_sources': source_manifest,
+              'select_automatic_ensemble_signature': str(signature),
+              'single_champion_candidate': compact(champion),
+              'best_run_per_model': best_model_runs,
+              'ensemble_selection': compact(ensemble_result),
+              'freeze_status': 'NOT_FROZEN_PENDING_BACKBONE_COMPARISON_GATE',
+              'transport_note': 'Original final_report.json hashes retained; only val_predictions.csv path strings were rebound locally for transport. Metrics/predictions were not modified.',
+          }
+
+          receipt_path = ROOT / 'selection-receipt.json'
+          receipt_path.write_text(json.dumps(receipt, indent=2, ensure_ascii=False), encoding='utf-8')
+          md = (
+              '## V6.2.2 validation-only model + ensemble selection receipt\n\n'
+              '> Recovered governance executed on the 36 canonical validation artifacts. Locked official test and external cohorts remained unopened.\n\n'
+              '```json\n' + json.dumps(receipt, indent=2, ensure_ascii=False) + '\n```\n'
+          )
+          if len(md.encode('utf-8')) > 60000:
+              raise RuntimeError('Selection journal receipt exceeds safety size budget')
+          payload = json.dumps({'body': md}).encode('utf-8')
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/18/comments",
+              data=payload,
+              method='POST',
+              headers={
+                  'Authorization': f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  'Accept': 'application/vnd.github+json',
+                  'Content-Type': 'application/json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'User-Agent': 'v622-self-hosted-selection',
+              },
+          )
+          with urllib.request.urlopen(req, timeout=30) as response:
+              if response.status not in (200, 201):
+                  raise RuntimeError(f'Issue receipt publication failed HTTP {response.status}')
+          print(json.dumps({'selection_complete': True, 'runs': 36, 'models': 12, 'freeze_status': receipt['freeze_status']}))
+          '@
+          $script | & $env:V622_PYTHON -
+          if ($LASTEXITCODE -ne 0) { throw 'V6.2.2 validation-only selection failed.' }
+
+      - name: Remove ephemeral capability and restore canonical Worker
+        if: always()
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $env:CLOUDFLARE_ACCOUNT_ID = $env:V622_CF_ACCOUNT_ID
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            '{"CGP_PROJECT_CONTROL_TOKEN":null}' | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\v622-delete-control.json"
+            npx wrangler secret bulk "$env:RUNNER_TEMP\v622-delete-control.json"
+            Remove-Item "$env:RUNNER_TEMP\v622-delete-control.json" -Force -ErrorAction SilentlyContinue
+            npx wrangler deploy
+            if ($LASTEXITCODE -ne 0) { Write-Error 'Canonical Worker restore deploy failed.' }
+          }
+          finally { Pop-Location }
+
+      - name: Publish selection diagnostic on failure
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $body = "## V6.2.2 self-hosted selection diagnostic receipt`n`n- Result: validation-only selection workflow failed before a successful selection receipt was published.`n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n- No training, repair, HPO, locked official test, or external evaluation was launched by this workflow.`n- Canonical Worker restore step was scheduled with always().`n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
