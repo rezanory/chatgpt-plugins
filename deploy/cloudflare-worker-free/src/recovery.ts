@@ -222,6 +222,80 @@ async function dynamicMatrixRuns(env: WorkerEnv): Promise<Array<Record<string, u
   );
 }
 
+function runString(run: Record<string, unknown>, key: string): string {
+  const value = run[key];
+  return typeof value === "string" ? value : "";
+}
+
+function latestEpoch(log: string): { current: number | null; total: number | null } {
+  const matches = [...log.matchAll(/\bEpoch\s+(\d+)\s*\/\s*(\d+)/gi)];
+  const last = matches[matches.length - 1];
+  if (!last) return { current: null, total: null };
+  return { current: Number(last[1]), total: Number(last[2]) };
+}
+
+function stageFromLog(log: string): "head" | "finetune" | "unknown" {
+  const lower = log.toLocaleLowerCase("en-US");
+  const head = Math.max(lower.lastIndexOf("head stage"), lower.lastIndexOf("head training"), lower.lastIndexOf("best_head"));
+  const finetune = Math.max(lower.lastIndexOf("finetune"), lower.lastIndexOf("fine-tune"), lower.lastIndexOf("best_finetune"));
+  if (head < 0 && finetune < 0) return "unknown";
+  return finetune > head ? "finetune" : "head";
+}
+
+function errorMarker(log: string): string | null {
+  const checks: Array<[string, RegExp]> = [
+    ["traceback", /Traceback \(most recent call last\)/i],
+    ["oom", /(?:out of memory|ResourceExhaustedError|CUDA.*memory)/i],
+    ["killed", /(?:^|\n)Killed(?:\n|$)/i],
+    ["disk", /No space left on device/i],
+  ];
+  for (const [label, pattern] of checks) if (pattern.test(log)) return label;
+  return null;
+}
+
+export async function v622MatrixProgress(env: WorkerEnv): Promise<Record<string, unknown>> {
+  const matrixRuns = await dynamicMatrixRuns(env);
+  const active = matrixRuns.filter(
+    (run) => run.lifecycle === "in_progress" || run.lifecycle === "needs_repair",
+  );
+  const jobs = await Promise.all(
+    active.map(async (run) => {
+      const accountId = runString(run, "account_id");
+      const kernelRef = runString(run, "kernel_ref");
+      let log = "";
+      let logProbeOk = false;
+      try {
+        log = await kernelLogs(env, accountId, kernelRef);
+        logProbeOk = true;
+      } catch {
+        // Status remains authoritative; progress probe intentionally exposes no raw error text.
+      }
+      const epoch = latestEpoch(log);
+      return {
+        worker_id: run.worker_id ?? null,
+        account_id: accountId,
+        model_id: run.model_id ?? null,
+        resolution: run.resolution ?? null,
+        status: run.status ?? null,
+        lifecycle: run.lifecycle ?? null,
+        log_probe_ok: logProbeOk,
+        bounded_log_chars: log.length,
+        stage: logProbeOk ? stageFromLog(log) : "unknown",
+        last_epoch_current: epoch.current,
+        last_epoch_total: epoch.total,
+        pass_marker: /["']status["']\s*:\s*["']PASS["']/i.test(log),
+        error_marker: errorMarker(log),
+      };
+    }),
+  );
+  return {
+    project: "PNEUMONIA V6.2.2",
+    generated_at: new Date().toISOString(),
+    active_count: jobs.length,
+    jobs,
+  };
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
@@ -245,8 +319,9 @@ function relevantArtifacts(fileNames: string[]): Record<string, string[]> {
 export async function v622ShardArtifacts(env: WorkerEnv, shardId: string): Promise<Record<string, unknown>> {
   const normalized = shardId.toUpperCase();
   if (normalized === "PLAN") return v622ProjectPlan(env);
+  if (normalized === "PROGRESS") return v622MatrixProgress(env);
   const target = RECOVERY_TARGETS.find((item) => item.kind === "train" && item.id === normalized);
-  if (!target) throw new Error("unknown V6.2.2 shard; expected PLAN or W01..W06");
+  if (!target) throw new Error("unknown V6.2.2 shard; expected PLAN, PROGRESS or W01..W06");
   const listing = await kernelOutputFiles(env, target.accountId, target.kernelRef, "", 2000);
   const fileNames = stringArray(listing.file_names);
   const groups = relevantArtifacts(fileNames);
