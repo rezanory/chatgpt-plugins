@@ -66,42 +66,73 @@ jobs:
         if: env.ACTION == 'noop'
         run: echo 'No control action requested.'
 
+      - name: Resolve lightweight gate wave
+        if: env.ACTION != 'noop'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          action = os.environ['ACTION']
+          if action == 'launch_wave':
+              gate_wave = int(os.environ['WAVE']) - 1
+          else:
+              worker_number = int(os.environ['WORKER_ID'][1:])
+              gate_wave = ((worker_number - 1) // 6) + 1
+          Path('/tmp/gate-wave').write_text(str(gate_wave), encoding='utf-8')
+          PY
+          echo "GATE_WAVE=$(cat /tmp/gate-wave)" >> "$GITHUB_ENV"
+
       - name: Validate live project gate
         if: env.ACTION != 'noop'
         shell: bash
         run: |
-          url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/status'
-          code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-live.json -w '%{http_code}' "$url" || true)"
-          test "$code" = '200'
-          python - <<'PY'
+          url="https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/wave-status?wave=$GATE_WAVE"
+          ok=0
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-wave-gate.json -w '%{http_code}' "$url" || true)"
+            if [ "$code" = '200' ] && python - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          value = json.loads(Path('/tmp/v622-live.json').read_text(encoding='utf-8'))
-          rows = value.get('canonical_matrix_runs') or []
-          by_worker = {str(x.get('worker_id')): x for x in rows}
+          value = json.loads(Path('/tmp/v622-wave-gate.json').read_text(encoding='utf-8'))
+          assert value.get('project') == 'PNEUMONIA V6.2.2'
+          assert value.get('wave') == int(os.environ['GATE_WAVE'])
+          tasks = value.get('tasks') or []
+          assert len(tasks) == 6
           action = os.environ['ACTION']
 
           if action == 'launch_wave':
-              wave = int(os.environ['WAVE'])
-              prior_start = 1 if wave == 2 else 1 + (wave - 2) * 6
-              prior = [f'W{i:02d}' for i in range(prior_start, prior_start + 6)]
-              missing = [wid for wid in prior if wid not in by_worker]
               incomplete = [
-                  f"{wid}:{by_worker[wid].get('status')}"
-                  for wid in prior if wid in by_worker and by_worker[wid].get('status') != 'COMPLETE'
+                  f"{row.get('worker_id')}:{row.get('status')}"
+                  for row in tasks if row.get('status') != 'COMPLETE'
               ]
-              if missing or incomplete:
-                  raise SystemExit(f'previous wave gate failed; missing={missing}; incomplete={incomplete}')
-          elif action == 'repair_worker':
+              if incomplete:
+                  raise SystemExit(f'previous wave gate failed; incomplete={incomplete}')
+          else:
               wid = os.environ['WORKER_ID']
-              row = by_worker.get(wid)
+              row = next((item for item in tasks if item.get('worker_id') == wid), None)
               if row is None:
-                  raise SystemExit(f'{wid} is not present in canonical inventory')
-              if row.get('lifecycle') != 'needs_repair':
-                  raise SystemExit(f"{wid} is not repairable; lifecycle={row.get('lifecycle')}")
+                  raise SystemExit(f'{wid} is not present in wave gate')
+              actual_failures = {'ERROR', 'FAILED', 'CANCELLED', 'CANCELED', 'DEAD'}
+              if row.get('status') not in actual_failures:
+                  raise SystemExit(
+                      f"{wid} is not repairable; status={row.get('status')} lifecycle={row.get('lifecycle')}"
+                  )
           PY
+            then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ok" != '1' ]; then
+            echo 'Lightweight V6.2.2 gate did not pass.' >&2
+            cat /tmp/v622-wave-gate.json 2>/dev/null || true
+            exit 1
+          fi
 
       - name: Install Worker dependencies
         if: env.ACTION != 'noop'
