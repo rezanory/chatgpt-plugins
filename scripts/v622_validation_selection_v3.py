@@ -16,6 +16,7 @@ spec.loader.exec_module(module)
 _original_request = module._request
 _governance_names = set(module.SOURCE_NAMES)
 _expected_hashes = dict(module.EXPECTED_SOURCE_HASHES)
+_original_write_text = pathlib.Path.write_text
 
 
 def resilient_request(worker_id: str, artifact_name: str, timeout: int = 120):
@@ -48,5 +49,25 @@ def resilient_request(worker_id: str, artifact_name: str, timeout: int = 120):
     raise RuntimeError(f"Canonical governance artifact did not converge for {artifact_name}: {last_error}")
 
 
+def byte_preserving_write_text(
+    self: pathlib.Path,
+    data: str,
+    encoding: str | None = None,
+    errors: str | None = None,
+    newline: str | None = None,
+) -> int:
+    try:
+        if self.parent.resolve() == module.SRC.resolve():
+            codec = encoding or "utf-8"
+            return self.write_bytes(data.encode(codec, errors or "strict"))
+    except Exception:
+        pass
+    return _original_write_text(self, data, encoding=encoding, errors=errors, newline=newline)
+
+
 module._request = resilient_request
-module.main()
+pathlib.Path.write_text = byte_preserving_write_text
+try:
+    module.main()
+finally:
+    pathlib.Path.write_text = _original_write_text
