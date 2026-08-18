@@ -1,5 +1,6 @@
 name: v622-self-hosted-selected-kernel-source
 
+# trigger: selected W16 source recovery
 on:
   workflow_dispatch:
   push:
