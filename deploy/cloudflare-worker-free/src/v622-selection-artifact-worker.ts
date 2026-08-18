@@ -1,4 +1,3 @@
-// Trigger-only touch: selection bridge semantics unchanged.
 interface SelectionEnv {
   CGP_PROJECT_CONTROL_TOKEN?: string;
   CGP_KAGGLE_KG02_TOKEN?: string;
@@ -19,10 +18,16 @@ type CanonicalTask = {
   kernelRef: string;
 };
 
+type LocatedArtifact = {
+  fileName: string;
+  url: string;
+};
+
 const API_ROOT = "https://api.kaggle.com/v1/kernels.KernelsApiService";
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_PAGES = 20;
 const PAGE_SIZE = 100;
+const CANONICAL_SELECT_CHAMPION_SHA256 = "f6be9ddf5060dbea5fab233ee0d349820ef679c64662eec23dd01c2929aec9b2";
 const VALIDATION_ARTIFACTS = new Set([
   "final_report.json",
   "validation_metrics.json",
@@ -136,9 +141,9 @@ function nextPageToken(value: Record<string, unknown>): string {
   return "";
 }
 
-function outputRows(value: unknown): Array<{ fileName: string; url: string }> {
+function outputRows(value: unknown): LocatedArtifact[] {
   if (!Array.isArray(value)) return [];
-  const rows: Array<{ fileName: string; url: string }> = [];
+  const rows: LocatedArtifact[] = [];
   for (const item of value) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const row = item as Record<string, unknown>;
@@ -158,11 +163,36 @@ function allowedUrl(raw: string): URL {
   return url;
 }
 
-async function locateArtifact(env: SelectionEnv, task: CanonicalTask, artifactName: string): Promise<{ fileName: string; url: string }> {
+function parentDirectory(fileName: string): string {
+  const normalized = fileName.replaceAll("\\", "/");
+  const index = normalized.lastIndexOf("/");
+  return index < 0 ? "" : normalized.slice(0, index + 1);
+}
+
+function hex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
+  return hex(await crypto.subtle.digest("SHA-256", buffer));
+}
+
+async function downloadArtifactBytes(rawUrl: string, artifactName: string): Promise<ArrayBuffer> {
+  const url = allowedUrl(rawUrl);
+  const response = await fetch(url.toString(), { redirect: "follow" });
+  if (!response.ok) throw new Error(`${artifactName} download HTTP ${response.status}`);
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > MAX_BYTES) throw new Error(`${artifactName} exceeds selection artifact size limit`);
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > MAX_BYTES) throw new Error(`${artifactName} exceeds selection artifact size limit`);
+  return bytes;
+}
+
+async function listArtifactMatches(env: SelectionEnv, task: CanonicalTask, artifactName: string): Promise<LocatedArtifact[]> {
   const token = tokenFor(env, task.accountId);
   const kernelSlug = task.kernelRef.split("/")[1];
   let pageToken = "";
-  const matches: Array<{ fileName: string; url: string }> = [];
+  const matches: LocatedArtifact[] = [];
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const body: Record<string, unknown> = { userName: task.ownerSlug, kernelSlug, pageSize: PAGE_SIZE };
     if (pageToken) body.pageToken = pageToken;
@@ -171,7 +201,7 @@ async function locateArtifact(env: SelectionEnv, task: CanonicalTask, artifactNa
       headers: {
         Authorization: authHeader(token, task.ownerSlug),
         "Content-Type": "application/json",
-        "User-Agent": "chatgpt-v622-selection-artifact-bridge/0.1",
+        "User-Agent": "chatgpt-v622-selection-artifact-bridge/0.2",
       },
       body: JSON.stringify(body),
     });
@@ -192,12 +222,54 @@ async function locateArtifact(env: SelectionEnv, task: CanonicalTask, artifactNa
     pageToken = next;
   }
   if (matches.length < 1) throw new Error(`${artifactName} not found for ${task.workerId}`);
-  matches.sort((a, b) => a.fileName.length - b.fileName.length || a.fileName.localeCompare(b.fileName));
-  return matches[0];
+  return matches;
 }
 
-function hex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer), byte => byte.toString(16).padStart(2, "0")).join("");
+async function locateCanonicalGovernanceArtifact(
+  env: SelectionEnv,
+  task: CanonicalTask,
+  artifactName: string,
+  matches: LocatedArtifact[],
+): Promise<LocatedArtifact> {
+  const selectMatches = artifactName === "select_champion.py"
+    ? matches
+    : await listArtifactMatches(env, task, "select_champion.py");
+
+  let canonicalSelect: LocatedArtifact | null = null;
+  for (const candidate of selectMatches) {
+    const bytes = await downloadArtifactBytes(candidate.url, "select_champion.py");
+    if (await sha256Hex(bytes) === CANONICAL_SELECT_CHAMPION_SHA256) {
+      canonicalSelect = candidate;
+      break;
+    }
+  }
+
+  if (!canonicalSelect) {
+    throw new Error("canonical select_champion.py source package not found by recovered SHA-256");
+  }
+
+  if (artifactName === "select_champion.py") return canonicalSelect;
+
+  const canonicalDirectory = parentDirectory(canonicalSelect.fileName);
+  const scoped = matches.filter(candidate => parentDirectory(candidate.fileName) === canonicalDirectory);
+  if (scoped.length !== 1) {
+    throw new Error(`${artifactName} must resolve exactly once inside canonical governance source package; found ${scoped.length}`);
+  }
+  return scoped[0];
+}
+
+async function locateArtifact(
+  env: SelectionEnv,
+  task: CanonicalTask,
+  artifactName: string,
+  governance: boolean,
+): Promise<LocatedArtifact> {
+  const matches = await listArtifactMatches(env, task, artifactName);
+  if (governance) {
+    return locateCanonicalGovernanceArtifact(env, task, artifactName, matches);
+  }
+  matches.sort((a, b) => a.fileName.length - b.fileName.length || a.fileName.localeCompare(b.fileName));
+  return matches[0];
 }
 
 async function readArtifact(env: SelectionEnv, workerId: string, artifactNameRaw: string): Promise<Record<string, unknown>> {
@@ -213,15 +285,9 @@ async function readArtifact(env: SelectionEnv, workerId: string, artifactNameRaw
   }
   if (lower.includes("external") || lower.includes("lockbox")) throw new Error("external/lockbox artifacts are forbidden");
 
-  const located = await locateArtifact(env, task, artifactName);
-  const url = allowedUrl(located.url);
-  const response = await fetch(url.toString(), { redirect: "follow" });
-  if (!response.ok) throw new Error(`${artifactName} download HTTP ${response.status}`);
-  const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > MAX_BYTES) throw new Error(`${artifactName} exceeds selection artifact size limit`);
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength > MAX_BYTES) throw new Error(`${artifactName} exceeds selection artifact size limit`);
-  const sha256 = hex(await crypto.subtle.digest("SHA-256", bytes));
+  const located = await locateArtifact(env, task, artifactName, isGovernance);
+  const bytes = await downloadArtifactBytes(located.url, artifactName);
+  const sha256 = await sha256Hex(bytes);
   const content = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   return {
     project: "PNEUMONIA V6.2.2",
@@ -234,6 +300,7 @@ async function readArtifact(env: SelectionEnv, workerId: string, artifactNameRaw
     bytes: bytes.byteLength,
     sha256,
     content,
+    governance_source_package_pinned: isGovernance,
   };
 }
 
