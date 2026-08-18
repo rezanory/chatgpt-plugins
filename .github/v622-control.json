@@ -1,6 +1,6 @@
 {
-  "request_id": "status-refresh-20260818-0652z",
-  "action": "noop",
-  "wave": null,
+  "request_id": "launch-wave4-20260818-0653z",
+  "action": "launch_wave",
+  "wave": 4,
   "worker_id": null
 }
