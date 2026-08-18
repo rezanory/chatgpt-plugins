@@ -31,10 +31,27 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Resolve existing local Python
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidates = @()
+          if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TOOL_CACHE)) {
+            $pythonRoot = Join-Path $env:RUNNER_TOOL_CACHE 'Python'
+            if (Test-Path $pythonRoot) {
+              $candidates += Get-ChildItem -Path $pythonRoot -Filter python.exe -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending |
+                Select-Object -ExpandProperty FullName
+            }
+          }
+          $command = Get-Command python.exe -ErrorAction SilentlyContinue
+          if ($command) { $candidates += $command.Source }
+          $python = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $python) { throw 'No existing Python executable found on self-hosted runner.' }
+          Write-Host "Using Python: $python"
+          & $python --version
+          if ($LASTEXITCODE -ne 0) { throw 'Resolved Python executable is not runnable.' }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_PYTHON=$python`n", [System.Text.UTF8Encoding]::new($false))
 
       - name: Deploy current read-only Worker source
         shell: powershell
@@ -65,13 +82,12 @@ jobs:
           finally { Pop-Location }
 
       - name: Recover exact 36-run artifacts and validation evidence
-        id: recover36
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          @'
+          $script = @'
           import json
           import os
           import time
@@ -235,7 +251,9 @@ jobs:
           post(artifact_lines)
           post(validation_lines)
           print(json.dumps({'artifact_recovery_complete': True, 'validation_snapshot_complete': True, 'runs': 36}))
-          '@ | python -
+          '@
+          $script | & $env:V622_PYTHON -
+          if ($LASTEXITCODE -ne 0) { throw 'recovery36 Python script failed' }
 
       - name: Publish compact failure receipt
         if: failure()
