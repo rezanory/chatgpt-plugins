@@ -1,0 +1,81 @@
+name: v622-validation-metrics-snapshot
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-validation-metrics-snapshot.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read canonical validation metrics by wave
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/shard-artifacts'
+          for wave in 1 2 3 4 5; do
+            ok=0
+            for attempt in $(seq 1 40); do
+              code="$(curl --silent --show-error --max-time 180 -o "/tmp/results-w${wave}.json" -w '%{http_code}' "${base}?shard=RESULTS-W${wave}" || true)"
+              if [ "$code" = '200' ] && WAVE="$wave" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          wave=int(os.environ['WAVE'])
+          value=json.loads(Path(f'/tmp/results-w{wave}.json').read_text())
+          assert value.get('project') == 'PNEUMONIA V6.2.2'
+          assert value.get('report') == 'validation_metrics'
+          assert value.get('wave') == wave
+          assert len(value.get('results') or []) == 6
+          PY
+              then
+                ok=1
+                break
+              fi
+              sleep 5
+            done
+            if [ "$ok" != '1' ]; then
+              echo "metrics endpoint for Wave $wave did not become ready" >&2
+              cat "/tmp/results-w${wave}.json" 2>/dev/null || true
+              exit 1
+            fi
+          done
+
+      - name: Build exact 27-run metrics snapshot
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          wanted={f'W{i:02d}' for i in range(1,25)} | {'W27','W28','W30'}
+          rows=[]
+          for wave in range(1,6):
+              value=json.loads(Path(f'/tmp/results-w{wave}.json').read_text())
+              for row in value.get('results') or []:
+                  if row.get('worker_id') in wanted:
+                      rows.append(row)
+          rows.sort(key=lambda x:int(str(x.get('worker_id'))[1:]))
+          assert len(rows)==27, [r.get('worker_id') for r in rows]
+          complete=[r for r in rows if r.get('status')=='COMPLETE']
+          payload={
+              'snapshot_workers':[r.get('worker_id') for r in rows],
+              'row_count':len(rows),
+              'complete_count':len(complete),
+              'results':rows,
+          }
+          Path('/tmp/v622-metrics.md').write_text(
+              '## V6.2.2 validation metrics snapshot — 27 completed runs\n\n```json\n'
+              + json.dumps(payload, indent=2) + '\n```\n', encoding='utf-8')
+          PY
+
+      - name: Publish metrics snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/v622-metrics.md
