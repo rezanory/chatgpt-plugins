@@ -1,0 +1,107 @@
+name: v622-self-hosted-kaggle-quota
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-self-hosted-kaggle-quota.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-kaggle-quota-readonly
+  cancel-in-progress: true
+
+jobs:
+  quota:
+    runs-on: [self-hosted, windows, x64, v622]
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Read Kaggle accelerator quotas
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          K_MASTER: ${{ secrets.CGP_KAGGLE_MASTER_TOKEN }}
+          K_KG02: ${{ secrets.CGP_KAGGLE_KG02_TOKEN }}
+          K_KG03: ${{ secrets.CGP_KAGGLE_KG03_TOKEN }}
+          K_KG04: ${{ secrets.CGP_KAGGLE_KG04_TOKEN }}
+          K_KG05: ${{ secrets.CGP_KAGGLE_KG05_TOKEN }}
+          K_KG06: ${{ secrets.CGP_KAGGLE_KG06_TOKEN }}
+          K_KG07: ${{ secrets.CGP_KAGGLE_KG07_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if (-not $python) { throw 'python.exe not found on self-hosted runner' }
+          $script = @'
+          import base64, json, os, re, urllib.request
+
+          endpoint = 'https://api.kaggle.com/v1/kernels.KernelsApiService/GetAcceleratorQuotaStatistics'
+          accounts = [
+              ('master','azadka','K_MASTER'),
+              ('kg-02','radlinaradlina','K_KG02'),
+              ('kg-03','rezanory','K_KG03'),
+              ('kg-04','reyhanehazad','K_KG04'),
+              ('kg-05','trickermark','K_KG05'),
+              ('kg-06','msdenis','K_KG06'),
+              ('kg-07','nisabulutmark','K_KG07'),
+          ]
+
+          def seconds(value):
+              if value is None: return None
+              if isinstance(value, (int,float)): return float(value)
+              if isinstance(value, dict):
+                  sec = float(value.get('seconds',0) or 0)
+                  nanos = float(value.get('nanos',0) or 0)
+                  return sec + nanos/1e9
+              s = str(value).strip()
+              m = re.fullmatch(r'(-?[0-9]+(?:\.[0-9]+)?)s', s)
+              if m: return float(m.group(1))
+              try: return float(s)
+              except Exception: return None
+
+          rows=[]
+          for account, username, env_name in accounts:
+              token=(os.environ.get(env_name) or '').strip()
+              row={'account_id':account,'owner_slug':username}
+              if not token:
+                  row.update({'status':'TOKEN_NOT_IN_GITHUB_ACTIONS','gpu':None,'tpu':None})
+                  rows.append(row); continue
+              auth = f'Bearer {token}' if token.startswith('KGAT_') else 'Basic ' + base64.b64encode(f'{username}:{token}'.encode()).decode()
+              req=urllib.request.Request(endpoint,data=b'{}',method='POST',headers={
+                  'Authorization':auth,'Content-Type':'application/json','User-Agent':'v622-quota-readonly/1.0'})
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r:
+                      value=json.loads(r.read().decode())
+                  def quota(q):
+                      if not isinstance(q,dict): return None
+                      used=seconds(q.get('timeUsed') if 'timeUsed' in q else q.get('time_used'))
+                      total=seconds(q.get('totalTimeAllowed') if 'totalTimeAllowed' in q else q.get('total_time_allowed'))
+                      if used is None or total is None: return {'raw_shape':sorted(q.keys())}
+                      return {'used_hours':round(used/3600,3),'remaining_hours':round(max(0,total-used)/3600,3),'total_hours':round(total/3600,3)}
+                  row.update({'status':'OK','gpu':quota(value.get('gpuQuota') or value.get('gpu_quota')),
+                              'tpu':quota(value.get('tpuQuota') or value.get('tpu_quota')),
+                              'refresh_at':value.get('quotaRefreshTime') or value.get('quota_refresh_time')})
+              except Exception as exc:
+                  row.update({'status':'QUERY_ERROR','error':f'{type(exc).__name__}: {exc}'[:300],'gpu':None,'tpu':None})
+              rows.append(row)
+
+          receipt={'project':'PNEUMONIA V6.2.2','stage':'kaggle_accelerator_quota_readonly','runner':os.environ.get('RUNNER_NAME'),
+                   'source':'Kaggle GetAcceleratorQuotaStatistics (same API used by official kaggle quota CLI)',
+                   'accounts':rows,'no_kaggle_compute_launched':True}
+          md='## V6.2.2 Kaggle accelerator quota receipt\n\n```json\n'+json.dumps(receipt,indent=2)+'\n```\n'
+          payload=json.dumps({'body':md}).encode()
+          issue=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/18/comments",data=payload,method='POST',headers={
+              'Authorization':f"Bearer {os.environ['GITHUB_TOKEN']}",'Accept':'application/vnd.github+json','Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'v622-quota-readonly'})
+          with urllib.request.urlopen(issue,timeout=30) as r:
+              if r.status not in (200,201): raise RuntimeError(r.status)
+          print(json.dumps({'quota_probe_complete':True,'statuses':{r['account_id']:r['status'] for r in rows}}))
+          '@
+          $script | & $python -
+          if ($LASTEXITCODE -ne 0) { throw 'Kaggle quota probe failed.' }
