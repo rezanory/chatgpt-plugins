@@ -1,5 +1,6 @@
 name: v622-self-hosted-backbone-launch-watch
 
+# trigger: latest backbone launch run watcher
 on:
   workflow_dispatch:
   push:
