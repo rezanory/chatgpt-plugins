@@ -200,17 +200,15 @@ function statusValue(payload: Record<string, unknown>): string {
   return typeof value === "string" ? value.trim().toUpperCase() : "UNKNOWN";
 }
 
-async function assertPreviousWaveComplete(env: MatrixEnv, wave: number): Promise<void> {
-  if (wave === 2) return;
-  const previous = v622WavePlan(wave - 1);
-  const statuses = await Promise.all(previous.map((task) => kernelStatus(env, task.accountId, task.kernelRef)));
-  const incomplete = previous
-    .map((task, index) => ({ task, status: statusValue(statuses[index]) }))
-    .filter((item) => item.status !== "COMPLETE");
-  if (incomplete.length) {
-    const summary = incomplete.map((item) => `${item.task.workerId}:${item.status}`).join(",");
-    throw new Error(`previous wave is not complete: ${summary}`);
+function predecessorFor(task: MatrixTask): MatrixTask | null {
+  if (task.wave <= 2) return null;
+  const workerNumber = Number(task.workerId.slice(1));
+  const slot = (workerNumber - 1) % 6;
+  const predecessor = taskFor(task.wave - 1, slot);
+  if (predecessor.accountId !== task.accountId) {
+    throw new Error(`canonical account lane mismatch: ${predecessor.workerId}->${task.workerId}`);
   }
+  return predecessor;
 }
 
 async function saveNewKernel(
@@ -283,12 +281,40 @@ async function launchTask(env: MatrixEnv, task: MatrixTask, template: Record<str
     try { status = await kernelStatus(env, task.accountId, task.kernelRef); } catch { /* report existing even if status probe fails */ }
     return { ...task, action: "existing", status };
   }
+
+  const predecessor = predecessorFor(task);
+  if (predecessor) {
+    let predecessorStatus = "PROBE_ERROR";
+    let predecessorProbeError: string | null = null;
+    try {
+      predecessorStatus = statusValue(await kernelStatus(env, predecessor.accountId, predecessor.kernelRef));
+    } catch (error) {
+      predecessorProbeError = error instanceof Error ? error.message.slice(0, 500) : "unknown predecessor probe error";
+    }
+    if (predecessorStatus !== "COMPLETE") {
+      return {
+        ...task,
+        action: "deferred",
+        predecessorWorkerId: predecessor.workerId,
+        predecessorKernelRef: predecessor.kernelRef,
+        predecessorStatus,
+        predecessorProbeError,
+      };
+    }
+  }
+
   const blob = asRecord(template.blob);
   const templateSource = typeof blob.source === "string" ? blob.source : "";
   if (!templateSource) throw new Error("canonical template GetKernel returned no source");
   const source = transformNotebookSource(templateSource, task);
   const result = await saveNewKernel(env, task, source, template);
-  return { ...task, action: "submitted", result };
+  return {
+    ...task,
+    action: "submitted",
+    predecessorWorkerId: predecessor?.workerId ?? null,
+    predecessorStatus: predecessor ? "COMPLETE" : null,
+    result,
+  };
 }
 
 export function projectControlAuthorized(request: Request, env: MatrixEnv): boolean {
@@ -299,13 +325,13 @@ export function projectControlAuthorized(request: Request, env: MatrixEnv): bool
 }
 
 export async function launchV622Wave(env: MatrixEnv, wave: number): Promise<Record<string, unknown>> {
-  await assertPreviousWaveComplete(env, wave);
   const plan = v622WavePlan(wave);
   const template = await getKernel(env, "master", TEMPLATE_REF);
   const results = await Promise.all(plan.map((task) => launchTask(env, task, template)));
   return {
     project: "PNEUMONIA V6.2.2",
     wave,
+    scheduling_policy: "per_account_predecessor_complete",
     source_template: TEMPLATE_REF,
     source_fingerprint: EXPECTED_SOURCE_FINGERPRINT,
     frozen_recipe_sha256: EXPECTED_RECIPE_SHA256,
