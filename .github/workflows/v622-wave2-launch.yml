@@ -86,16 +86,17 @@ jobs:
         shell: bash
         run: |
           url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/wave'
-          code="$(curl --silent --show-error --max-time 180 \
-            -o /tmp/wave-launch.json -w '%{http_code}' \
-            -X POST \
-            -H "Authorization: Bearer $PROJECT_CONTROL_TOKEN" \
-            -H 'Content-Type: application/json' \
-            --data '{"wave":2}' \
-            "$url" || true)"
-          cat /tmp/wave-launch.json
-          test "$code" = '200'
-          python - <<'PY'
+          ok=0
+          last_code='000'
+          for attempt in $(seq 1 24); do
+            last_code="$(curl --silent --show-error --max-time 180 \
+              -o /tmp/wave-launch.json -w '%{http_code}' \
+              -X POST \
+              -H "Authorization: Bearer $PROJECT_CONTROL_TOKEN" \
+              -H 'Content-Type: application/json' \
+              --data '{"wave":2}' \
+              "$url" || true)"
+            if [ "$last_code" = '200' ] && python - <<'PY'
           import json
           from pathlib import Path
           value = json.loads(Path('/tmp/wave-launch.json').read_text(encoding='utf-8'))
@@ -104,6 +105,19 @@ jobs:
           assert len(results) == 6
           assert all(item.get('action') in {'submitted','existing'} for item in results)
           PY
+            then
+              ok=1
+              break
+            fi
+            # Secret updates create a new Worker version; allow it to become active before retrying.
+            sleep 5
+          done
+          if [ "$ok" != '1' ]; then
+            echo "Wave launch did not succeed; last HTTP status: $last_code" >&2
+            cat /tmp/wave-launch.json 2>/dev/null || true
+            exit 1
+          fi
+          cat /tmp/wave-launch.json
 
       - name: Remove ephemeral project control capability
         if: always()
