@@ -1,6 +1,6 @@
 {
-  "request_id": "init-noop",
-  "action": "noop",
-  "wave": null,
+  "request_id": "launch-wave3-20260818-0218z",
+  "action": "launch_wave",
+  "wave": 3,
   "worker_id": null
 }
