@@ -1,5 +1,6 @@
 name: v622-self-hosted-dispatch-backbone-launch
 
+# trigger: exact backbone launch dispatcher
 on:
   workflow_dispatch:
   push:
