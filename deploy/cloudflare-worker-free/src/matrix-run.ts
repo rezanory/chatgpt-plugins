@@ -2,6 +2,7 @@ import {
   getKernel,
   kernelStatus,
   listKernels,
+  rerunExisting,
   type WorkerAccountId,
   type WorkerEnv,
 } from "./kaggle";
@@ -28,6 +29,7 @@ const KAGGLE_SERVICE = "kernels.KernelsApiService";
 const EXPECTED_SOURCE_FINGERPRINT = "fe64ed64fc0a0bba80c55e343206046aa13edf87722a41494dd384b1d06b1838";
 const EXPECTED_RECIPE_SHA256 = "f5ebe3321e75d7edaf1dfa60b53835bbb23008592001bc833405e10c8890116c";
 const RESOLUTIONS: readonly Resolution[] = [224, 320, 384];
+const REPAIRABLE = new Set(["ERROR", "FAILED", "CANCELLED", "CANCELED", "DEAD"]);
 const ACCOUNTS: readonly { accountId: WorkerAccountId; ownerSlug: string; username: string }[] = [
   { accountId: "kg-02", ownerSlug: "radlinaradlina", username: "radlinaradlina" },
   { accountId: "kg-03", ownerSlug: "rezanory", username: "rezanory" },
@@ -90,6 +92,18 @@ function taskFor(wave: number, slot: number): MatrixTask {
   };
 }
 
+function taskForWorker(workerId: string): MatrixTask {
+  const match = workerId.trim().toUpperCase().match(/^W(\d{2})$/);
+  if (!match) throw new Error("worker_id must use W07..W36 form");
+  const workerNumber = Number(match[1]);
+  if (workerNumber < 7 || workerNumber > 36) throw new Error("worker_id must be W07 through W36");
+  const wave = Math.floor((workerNumber - 1) / 6) + 1;
+  const slot = (workerNumber - 1) % 6;
+  const task = taskFor(wave, slot);
+  if (task.workerId !== workerId.trim().toUpperCase()) throw new Error("worker mapping mismatch");
+  return task;
+}
+
 export function v622WavePlan(wave: number): MatrixTask[] {
   return Array.from({ length: 6 }, (_, slot) => taskFor(wave, slot));
 }
@@ -98,6 +112,41 @@ function replaceExactly(text: string, oldValue: string, newValue: string, expect
   const count = text.split(oldValue).length - 1;
   if (count !== expected) throw new Error(`template contract mismatch for ${label}: expected ${expected}, found ${count}`);
   return text.split(oldValue).join(newValue);
+}
+
+function notebookCode(source: string): string {
+  let root: unknown;
+  try {
+    root = JSON.parse(source);
+  } catch {
+    throw new Error("canonical kernel is no longer a JSON notebook");
+  }
+  const notebook = asRecord(root);
+  const cells = Array.isArray(notebook.cells) ? notebook.cells : [];
+  if (cells.length !== 1) throw new Error(`canonical notebook cell-count changed: ${cells.length}`);
+  const cell = asRecord(cells[0]);
+  const rawSource = cell.source;
+  const parts = typeof rawSource === "string"
+    ? [rawSource]
+    : Array.isArray(rawSource)
+      ? rawSource.map((value) => typeof value === "string" ? value : "")
+      : [];
+  if (!parts.length) throw new Error("canonical notebook code cell has no source");
+  return parts.join("");
+}
+
+function validateTaskCode(code: string, task: MatrixTask): void {
+  if (!code.includes(EXPECTED_SOURCE_FINGERPRINT)) throw new Error("canonical source fingerprint is not embedded in notebook");
+  const checks = [
+    `'--models','${task.modelId}'`,
+    `'--image-size','${task.resolution}'`,
+    `'--run-name','${task.workerId}_${task.modelId}_r${task.resolution}'`,
+    `'worker_id':'${task.workerId}'`,
+    `'model':'${task.modelId}'`,
+    `'resolution':${task.resolution}`,
+    `PNEUMONIA_V62_2_TRAIN_${task.workerId}`,
+  ];
+  for (const check of checks) if (!code.includes(check)) throw new Error(`canonical task identity missing: ${check}`);
 }
 
 function transformNotebookSource(source: string, task: MatrixTask): string {
@@ -135,6 +184,7 @@ function transformNotebookSource(source: string, task: MatrixTask): string {
   code = replaceExactly(code, "'model':'M01'", `'model':'${task.modelId}'`, 1, "completion-model");
   code = replaceExactly(code, "'resolution':224", `'resolution':${task.resolution}`, 1, "completion-resolution");
 
+  validateTaskCode(code, task);
   const updatedCell = { ...cell, source: [code] };
   notebook.cells = [updatedCell];
   return JSON.stringify(notebook);
@@ -143,6 +193,24 @@ function transformNotebookSource(source: string, task: MatrixTask): string {
 function existingRef(kernel: unknown): string {
   const rec = asRecord(kernel);
   return typeof rec.ref === "string" ? rec.ref : "";
+}
+
+function statusValue(payload: Record<string, unknown>): string {
+  const value = payload.status;
+  return typeof value === "string" ? value.trim().toUpperCase() : "UNKNOWN";
+}
+
+async function assertPreviousWaveComplete(env: MatrixEnv, wave: number): Promise<void> {
+  if (wave === 2) return;
+  const previous = v622WavePlan(wave - 1);
+  const statuses = await Promise.all(previous.map((task) => kernelStatus(env, task.accountId, task.kernelRef)));
+  const incomplete = previous
+    .map((task, index) => ({ task, status: statusValue(statuses[index]) }))
+    .filter((item) => item.status !== "COMPLETE");
+  if (incomplete.length) {
+    const summary = incomplete.map((item) => `${item.task.workerId}:${item.status}`).join(",");
+    throw new Error(`previous wave is not complete: ${summary}`);
+  }
 }
 
 async function saveNewKernel(
@@ -188,7 +256,7 @@ async function saveNewKernel(
     headers: {
       Authorization: authorization(token, account.username),
       "Content-Type": "application/json",
-      "User-Agent": "chatgpt-kaggle-v622-matrix/0.1",
+      "User-Agent": "chatgpt-kaggle-v622-matrix/0.2",
     },
     body: JSON.stringify(request),
   });
@@ -231,6 +299,7 @@ export function projectControlAuthorized(request: Request, env: MatrixEnv): bool
 }
 
 export async function launchV622Wave(env: MatrixEnv, wave: number): Promise<Record<string, unknown>> {
+  await assertPreviousWaveComplete(env, wave);
   const plan = v622WavePlan(wave);
   const template = await getKernel(env, "master", TEMPLATE_REF);
   const results = await Promise.all(plan.map((task) => launchTask(env, task, template)));
@@ -244,5 +313,29 @@ export async function launchV622Wave(env: MatrixEnv, wave: number): Promise<Reco
     head_epochs: 3,
     finetune_epochs: 47,
     results,
+  };
+}
+
+export async function repairV622Worker(env: MatrixEnv, workerId: string): Promise<Record<string, unknown>> {
+  const task = taskForWorker(workerId);
+  const before = await kernelStatus(env, task.accountId, task.kernelRef);
+  const status = statusValue(before);
+  if (!REPAIRABLE.has(status)) throw new Error(`${task.workerId} is not repairable from status ${status}`);
+  const current = await getKernel(env, task.accountId, task.kernelRef);
+  const blob = asRecord(current.blob);
+  const source = typeof blob.source === "string" ? blob.source : "";
+  if (!source) throw new Error(`${task.workerId} GetKernel returned no source`);
+  validateTaskCode(notebookCode(source), task);
+  const result = await rerunExisting(env, task.accountId, task.kernelRef);
+  return {
+    project: "PNEUMONIA V6.2.2",
+    worker_id: task.workerId,
+    account_id: task.accountId,
+    model_id: task.modelId,
+    resolution: task.resolution,
+    kernel_ref: task.kernelRef,
+    previous_status: status,
+    action: "repair_rerun_submitted",
+    result,
   };
 }
