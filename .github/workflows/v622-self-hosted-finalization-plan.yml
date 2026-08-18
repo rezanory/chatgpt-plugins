@@ -50,3 +50,5 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           compression-level: 6
+
+# trigger: finalization-plan-20260818T2244Z
