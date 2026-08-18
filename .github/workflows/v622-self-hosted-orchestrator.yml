@@ -1,0 +1,115 @@
+name: v622-self-hosted-orchestrator
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/v622-selfhost-orchestrator.json'
+      - '.github/workflows/v622-self-hosted-orchestrator.yml'
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-self-hosted-orchestrator
+  cancel-in-progress: false
+
+jobs:
+  orchestrate:
+    runs-on: [self-hosted, windows, x64, v622]
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Execute allowlisted orchestration request
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $controlPath = '.github/v622-selfhost-orchestrator.json'
+          if (-not (Test-Path $controlPath)) { throw 'Missing orchestrator control file.' }
+
+          $request = Get-Content -Raw -LiteralPath $controlPath | ConvertFrom-Json
+          $requestId = ([string]$request.request_id).Trim()
+          $action = ([string]$request.action).Trim()
+          $workflow = ([string]$request.workflow).Trim()
+          $ref = ([string]$request.ref).Trim()
+          if (-not $ref) { $ref = 'main' }
+          if (-not $requestId) { throw 'request_id is required.' }
+
+          $allowed = @(
+            'v622-self-hosted-selection-v3.yml',
+            'v622-self-hosted-recovery36.yml',
+            'v622-self-hosted-manual.yml',
+            'v622-self-hosted-free-bridge.yml'
+          )
+
+          $gh = $null
+          $cmd = Get-Command gh.exe -ErrorAction SilentlyContinue
+          if ($cmd) { $gh = $cmd.Source }
+          if (-not $gh -and (Test-Path 'C:\Program Files\GitHub CLI\gh.exe')) { $gh = 'C:\Program Files\GitHub CLI\gh.exe' }
+          if (-not $gh -and (Test-Path 'C:\Program Files (x86)\GitHub CLI\gh.exe')) { $gh = 'C:\Program Files (x86)\GitHub CLI\gh.exe' }
+
+          $method = if ($gh) { 'github_cli' } else { 'github_rest_fallback' }
+          $result = 'capability_check_only'
+
+          if ($action -eq 'capability_check') {
+            if ($gh) {
+              & $gh --version | Select-Object -First 1 | Write-Host
+              if ($LASTEXITCODE -ne 0) { throw 'gh CLI exists but is not runnable.' }
+            }
+          }
+          elseif ($action -eq 'dispatch_workflow') {
+            if ($allowed -notcontains $workflow) { throw "Workflow is not allowlisted: $workflow" }
+            if ($ref -ne 'main') { throw 'Only main ref is allowed by the V6.2.2 orchestrator.' }
+
+            if ($gh) {
+              $env:GH_TOKEN = $env:GITHUB_TOKEN
+              & $gh workflow run $workflow --ref $ref -R $env:GITHUB_REPOSITORY
+              if ($LASTEXITCODE -ne 0) { throw "gh workflow run failed for $workflow" }
+            }
+            else {
+              $headers = @{
+                Authorization = "Bearer $env:GITHUB_TOKEN"
+                Accept = 'application/vnd.github+json'
+                'X-GitHub-Api-Version' = '2022-11-28'
+              }
+              $body = @{ ref = $ref } | ConvertTo-Json
+              Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/$workflow/dispatches" -Method Post -Headers $headers -ContentType 'application/json' -Body $body | Out-Null
+            }
+            $result = 'workflow_dispatch_requested'
+          }
+          else {
+            throw "Unsupported orchestrator action: $action"
+          }
+
+          $receipt = @{
+            project = 'PNEUMONIA V6.2.2'
+            stage = 'self_hosted_orchestration'
+            request_id = $requestId
+            action = $action
+            workflow = $workflow
+            ref = $ref
+            runner = $env:RUNNER_NAME
+            method = $method
+            result = $result
+            arbitrary_commands_allowed = $false
+            kaggle_control_allowed = $false
+          }
+          $json = $receipt | ConvertTo-Json -Depth 6
+          Write-Host $json
+
+          $comment = "## V6.2.2 self-hosted orchestrator receipt`n`n```json`n$json`n```"
+          $payload = @{ body = $comment } | ConvertTo-Json -Depth 6
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
