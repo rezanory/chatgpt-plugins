@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/v622-wave2-progress.yml'
+      - 'deploy/cloudflare-worker-free/src/recovery.ts'
 
 permissions:
   contents: read
@@ -18,17 +19,22 @@ jobs:
       - name: Read W07-W12 from live Kaggle inventory
         shell: bash
         run: |
-          url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/status'
+          status_url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/status'
+          progress_url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/shard-artifacts?shard=PROGRESS'
           found=0
-          for attempt in $(seq 1 12); do
-            code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-live.json -w '%{http_code}' "$url" || true)"
-            if [ "$code" = '200' ] && python - <<'PY'
+          for attempt in $(seq 1 40); do
+            status_code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-live.json -w '%{http_code}' "$status_url" || true)"
+            progress_code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-progress.json -w '%{http_code}' "$progress_url" || true)"
+            if [ "$status_code" = '200' ] && [ "$progress_code" = '200' ] && python - <<'PY'
           import json
           from pathlib import Path
-          value = json.loads(Path('/tmp/v622-live.json').read_text(encoding='utf-8'))
-          rows = value.get('canonical_matrix_runs') or []
+          status = json.loads(Path('/tmp/v622-live.json').read_text(encoding='utf-8'))
+          progress = json.loads(Path('/tmp/v622-progress.json').read_text(encoding='utf-8'))
+          rows = status.get('canonical_matrix_runs') or []
           by_id = {x.get('worker_id'): x for x in rows}
           assert all(f'W{i:02d}' in by_id for i in range(7, 13))
+          assert progress.get('project') == 'PNEUMONIA V6.2.2'
+          assert isinstance(progress.get('jobs'), list)
           PY
             then
               found=1
@@ -36,9 +42,9 @@ jobs:
             fi
             sleep 10
           done
-          echo "FOUND_WAVE2=$found" >> "$GITHUB_ENV"
+          test "$found" = '1'
 
-      - name: Publish refreshed Wave 2 live status
+      - name: Publish refreshed Wave 2 safe progress
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -46,20 +52,25 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          path = Path('/tmp/v622-live.json')
-          value = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+          status = json.loads(Path('/tmp/v622-live.json').read_text(encoding='utf-8'))
+          progress = json.loads(Path('/tmp/v622-progress.json').read_text(encoding='utf-8'))
           rows = [
-              x for x in (value.get('canonical_matrix_runs') or [])
+              x for x in (status.get('canonical_matrix_runs') or [])
               if 7 <= int(str(x.get('worker_id') or 'W0')[1:] or 0) <= 12
+          ]
+          progress_rows = [
+              x for x in (progress.get('jobs') or [])
+              if str(x.get('worker_id') or '') in {f'W{i:02d}' for i in range(7, 13)}
           ]
           body = {
               'wave': 2,
               'found_all_six': len(rows) == 6,
-              'canonical_matrix_summary': value.get('canonical_matrix_summary'),
+              'canonical_matrix_summary': status.get('canonical_matrix_summary'),
               'jobs': rows,
+              'safe_progress': progress_rows,
           }
           Path('/tmp/v622-wave2-live.md').write_text(
-              '## V6.2.2 Wave 2 live Kaggle status (refresh)\n\n```json\n'
+              '## V6.2.2 Wave 2 live Kaggle progress\n\n```json\n'
               + json.dumps(body, indent=2) + '\n```\n',
               encoding='utf-8',
           )
