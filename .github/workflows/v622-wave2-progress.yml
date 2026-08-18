@@ -7,7 +7,8 @@ on:
     paths:
       - '.github/v622-control.json'
       - '.github/workflows/v622-wave2-progress.yml'
-      - 'deploy/cloudflare-worker-free/src/recovery.ts'
+      - 'deploy/cloudflare-worker-free/src/wave-status.ts'
+      - 'deploy/cloudflare-worker-free/src/index.ts'
 
 permissions:
   contents: read
@@ -17,32 +18,38 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Read current wave from live Kaggle inventory
+      - name: Read all six waves with lightweight status probes
         shell: bash
         run: |
-          status_url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/status'
-          progress_url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/shard-artifacts?shard=PROGRESS'
-          ok=0
-          for attempt in $(seq 1 40); do
-            status_code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-live.json -w '%{http_code}' "$status_url" || true)"
-            progress_code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-progress.json -w '%{http_code}' "$progress_url" || true)"
-            if [ "$status_code" = '200' ] && [ "$progress_code" = '200' ] && python - <<'PY'
+          base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/wave-status'
+          for wave in $(seq 1 6); do
+            ok=0
+            for attempt in $(seq 1 24); do
+              code="$(curl --silent --show-error --max-time 120 \
+                -o "/tmp/v622-wave-${wave}.json" -w '%{http_code}' \
+                "${base}?wave=${wave}" || true)"
+              if [ "$code" = '200' ] && python - "$wave" <<'PY'
           import json
+          import sys
           from pathlib import Path
-          status = json.loads(Path('/tmp/v622-live.json').read_text(encoding='utf-8'))
-          progress = json.loads(Path('/tmp/v622-progress.json').read_text(encoding='utf-8'))
-          rows = status.get('canonical_matrix_runs') or []
-          assert rows
-          assert progress.get('project') == 'PNEUMONIA V6.2.2'
-          assert isinstance(progress.get('jobs'), list)
+          wave = int(sys.argv[1])
+          value = json.loads(Path(f'/tmp/v622-wave-{wave}.json').read_text(encoding='utf-8'))
+          assert value.get('project') == 'PNEUMONIA V6.2.2'
+          assert value.get('wave') == wave
+          assert len(value.get('tasks') or []) == 6
           PY
-            then
-              ok=1
-              break
+              then
+                ok=1
+                break
+              fi
+              sleep 5
+            done
+            if [ "$ok" != '1' ]; then
+              echo "Wave $wave status endpoint did not become ready." >&2
+              cat "/tmp/v622-wave-${wave}.json" 2>/dev/null || true
+              exit 1
             fi
-            sleep 10
           done
-          test "$ok" = '1'
 
       - name: Publish current wave safe progress
         env:
@@ -53,27 +60,56 @@ jobs:
           import json
           from pathlib import Path
 
-          status = json.loads(Path('/tmp/v622-live.json').read_text(encoding='utf-8'))
-          progress = json.loads(Path('/tmp/v622-progress.json').read_text(encoding='utf-8'))
-          all_rows = status.get('canonical_matrix_runs') or []
-          worker_numbers = [int(str(x.get('worker_id') or 'W0')[1:] or 0) for x in all_rows]
-          max_worker = max(worker_numbers)
-          wave = ((max_worker - 1) // 6) + 1
-          start = 1 + (wave - 1) * 6
-          stop = start + 5
-          ids = {f'W{i:02d}' for i in range(start, stop + 1)}
-          rows = [x for x in all_rows if str(x.get('worker_id') or '') in ids]
-          progress_rows = [x for x in (progress.get('jobs') or []) if str(x.get('worker_id') or '') in ids]
+          waves = []
+          for wave in range(1, 7):
+              value = json.loads(Path(f'/tmp/v622-wave-{wave}.json').read_text(encoding='utf-8'))
+              waves.append(value)
+
+          current_wave = 1
+          for value in waves:
+              tasks = value.get('tasks') or []
+              if any(row.get('status') != 'NOT_FOUND' for row in tasks):
+                  current_wave = int(value['wave'])
+
+          current = waves[current_wave - 1]
+          totals = {
+              'expected_total': 36,
+              'complete': 0,
+              'in_progress': 0,
+              'needs_repair': 0,
+              'missing': 0,
+              'unknown': 0,
+          }
+          created = 0
+          for value in waves:
+              tasks = value.get('tasks') or []
+              for row in tasks:
+                  status = row.get('status')
+                  lifecycle = row.get('lifecycle')
+                  if status != 'NOT_FOUND':
+                      created += 1
+                  if lifecycle == 'complete':
+                      totals['complete'] += 1
+                  elif lifecycle == 'in_progress':
+                      totals['in_progress'] += 1
+                  elif lifecycle == 'needs_repair':
+                      totals['needs_repair'] += 1
+                  elif lifecycle == 'missing':
+                      totals['missing'] += 1
+                  else:
+                      totals['unknown'] += 1
+          totals['created'] = created
+          totals['remaining_not_created'] = max(0, 36 - created)
+
           body = {
-              'wave': wave,
-              'worker_range': [f'W{start:02d}', f'W{stop:02d}'],
-              'found_all_six': len(rows) == 6,
-              'canonical_matrix_summary': status.get('canonical_matrix_summary'),
-              'jobs': rows,
-              'safe_progress': progress_rows,
+              'wave': current_wave,
+              'worker_range': [f'W{1 + (current_wave - 1) * 6:02d}', f'W{current_wave * 6:02d}'],
+              'canonical_matrix_summary': totals,
+              'counts': current.get('counts'),
+              'jobs': current.get('tasks'),
           }
           Path('/tmp/v622-current-wave.md').write_text(
-              f'## V6.2.2 Wave {wave} live Kaggle progress\n\n```json\n'
+              f'## V6.2.2 Wave {current_wave} live Kaggle progress\n\n```json\n'
               + json.dumps(body, indent=2) + '\n```\n',
               encoding='utf-8',
           )
