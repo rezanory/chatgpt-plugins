@@ -2,6 +2,10 @@ name: v622-self-hosted-validation-bundle
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-self-hosted-validation-bundle.yml'
 
 permissions:
   contents: read
