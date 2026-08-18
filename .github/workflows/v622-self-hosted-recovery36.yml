@@ -65,6 +65,7 @@ jobs:
           finally { Pop-Location }
 
       - name: Recover exact 36-run artifacts and validation evidence
+        id: recover36
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -77,13 +78,14 @@ jobs:
           import urllib.request
 
           BASE = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/shard-artifacts'
+          REQUIRED_GROUPS = ('checkpoints', 'metrics_reports', 'predictions', 'recipes_manifests')
 
           def get_json(url, attempts=8, timeout=60):
               last = None
               for _ in range(attempts):
                   try:
-                      request = urllib.request.Request(url, headers={'User-Agent': 'v622-self-hosted-recovery36'})
-                      with urllib.request.urlopen(request, timeout=timeout) as response:
+                      req = urllib.request.Request(url, headers={'User-Agent': 'v622-self-hosted-recovery36'})
+                      with urllib.request.urlopen(req, timeout=timeout) as response:
                           return json.loads(response.read().decode('utf-8'))
                   except Exception as exc:
                       last = exc
@@ -99,14 +101,11 @@ jobs:
               assert len(value.get('results') or []) == 6
               waves.append(value)
 
-          rows = []
-          for value in waves:
-              rows.extend(value.get('results') or [])
+          rows = [row for value in waves for row in (value.get('results') or [])]
           rows.sort(key=lambda row: int(str(row.get('worker_id'))[1:]))
           expected = [f'W{i:02d}' for i in range(1, 37)]
-          actual = [row.get('worker_id') for row in rows]
-          if actual != expected:
-              raise RuntimeError(f'Canonical identity mismatch: {actual}')
+          if [row.get('worker_id') for row in rows] != expected:
+              raise RuntimeError('Canonical 36-run identity mismatch')
 
           incomplete = [row.get('worker_id') for row in rows if row.get('status') != 'COMPLETE']
           missing_metrics = [row.get('worker_id') for row in rows if not isinstance(row.get('metrics'), dict)]
@@ -117,16 +116,6 @@ jobs:
               raise RuntimeError(f'Missing validation metrics: {missing_metrics}')
           if missing_artifacts:
               raise RuntimeError(f'Missing artifact recovery payload: {missing_artifacts}')
-
-          required_groups = ('checkpoints', 'metrics_reports', 'predictions', 'recipes_manifests')
-          bad_groups = []
-          for row in rows:
-              groups = (row.get('artifacts') or {}).get('groups') or {}
-              for group in required_groups:
-                  if not groups.get(group):
-                      bad_groups.append(f"{row.get('worker_id')}:{group}")
-          if bad_groups:
-              raise RuntimeError(f'Missing merge-relevant artifact groups: {bad_groups}')
 
           def flatten(value, prefix=''):
               out = {}
@@ -151,6 +140,8 @@ jobs:
               return None
 
           evidence = []
+          artifacts_compact = []
+          bad_groups = []
           for row in rows:
               mapping = flatten(row['metrics'])
               evidence.append({
@@ -159,7 +150,6 @@ jobs:
                   'resolution': row.get('resolution'),
                   'account_id': row.get('account_id'),
                   'kernel_ref': row.get('kernel_ref'),
-                  'raw_status': row.get('raw_status'),
                   'balanced_selection_score': pick(mapping, 'threshold_search.balanced_selection_score', 'balanced_selection_score'),
                   'min_class_recall': pick(mapping, 'threshold_search.min_class_recall', 'min_class_recall'),
                   'balanced_accuracy': pick(mapping, 'threshold_search.balanced_accuracy', 'balanced_accuracy'),
@@ -170,48 +160,45 @@ jobs:
                   'accuracy': pick(mapping, 'threshold_search.accuracy', 'accuracy'),
                   'threshold': pick(mapping, 'threshold_search.threshold', 'threshold'),
               })
-
-          artifact_summary = []
-          for row in rows:
               artifacts = row['artifacts']
               groups = artifacts.get('groups') or {}
-              artifact_summary.append({
+              counts = {group: len(groups.get(group) or []) for group in REQUIRED_GROUPS}
+              for group, count in counts.items():
+                  if count < 1:
+                      bad_groups.append(f"{row.get('worker_id')}:{group}")
+              artifacts_compact.append({
                   'worker_id': row.get('worker_id'),
                   'model_id': row.get('model_id'),
                   'resolution': row.get('resolution'),
                   'account_id': row.get('account_id'),
-                  'kernel_ref': row.get('kernel_ref'),
                   'enumerated_file_count': artifacts.get('enumerated_file_count'),
                   'truncated': artifacts.get('truncated'),
-                  'artifact_groups': groups,
+                  'artifact_counts': counts,
               })
-
-          artifact_body = [
-              '## V6.2.2 exact 36-run artifact recovery manifest',
-              '',
-              '> Read-only recovery. No Kaggle compute, HPO, threshold tuning, locked official test, or external cohort was used.',
-              '',
-              '```json',
-              json.dumps({
-                  'expected_total': 36,
-                  'recovered_total': len(artifact_summary),
-                  'source': '/recovery/v6-2-2/shard-artifacts?shard=RESULTS-W1..RESULTS-W6',
-                  'runs': artifact_summary,
-              }, indent=2),
-              '```',
-          ]
+          if bad_groups:
+              raise RuntimeError(f'Missing merge-relevant artifact groups: {bad_groups}')
 
           def pct(value):
               return '—' if not isinstance(value, (int, float)) else f'{100 * value:.2f}%'
           def num(value):
               return '—' if not isinstance(value, (int, float)) else f'{value:.6f}'
 
+          artifact_lines = [
+              '## V6.2.2 exact 36-run artifact recovery manifest',
+              '',
+              '> Read-only recovery. No Kaggle compute, HPO, threshold tuning, locked official test, or external cohort was used.',
+              '',
+              '```json',
+              json.dumps({'expected_total': 36, 'recovered_total': 36, 'runs': artifacts_compact}, indent=2),
+              '```',
+          ]
+
           table = []
           for row in evidence:
               table.append(
                   f"| {row['worker_id']} | {row['model_id']} | {row['resolution']} | {num(row['balanced_selection_score'])} | {pct(row['min_class_recall'])} | {pct(row['balanced_accuracy'])} | {pct(row['f1'])} | {pct(row['sensitivity'])} | {pct(row['specificity'])} | {num(row['threshold'])} |"
               )
-          validation_body = [
+          validation_lines = [
               '## V6.2.2 validation evidence — exact 36-run snapshot',
               '',
               '> Validation-only selection input. Locked official test and external cohorts remain unopened.',
@@ -220,17 +207,16 @@ jobs:
               '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
               *table,
               '',
-              '<details><summary>Selection input JSON</summary>',
-              '',
-              '```json',
-              json.dumps(evidence, indent=2),
-              '```',
-              '</details>',
+              '<details><summary>Selection input JSON</summary>', '', '```json',
+              json.dumps(evidence, indent=2), '```', '</details>',
           ]
 
-          def post(markdown):
-              payload = json.dumps({'body': '\n'.join(markdown) + '\n'}).encode('utf-8')
-              request = urllib.request.Request(
+          def post(lines):
+              body = '\n'.join(lines) + '\n'
+              if len(body.encode('utf-8')) > 60000:
+                  raise RuntimeError(f'journal body exceeds compact safety budget: {len(body.encode("utf-8"))} bytes')
+              payload = json.dumps({'body': body}).encode('utf-8')
+              req = urllib.request.Request(
                   f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/18/comments",
                   data=payload,
                   method='POST',
@@ -242,11 +228,23 @@ jobs:
                       'User-Agent': 'v622-self-hosted-recovery36',
                   },
               )
-              with urllib.request.urlopen(request, timeout=30) as response:
+              with urllib.request.urlopen(req, timeout=30) as response:
                   if response.status not in (200, 201):
                       raise RuntimeError(f'Issue publication failed HTTP {response.status}')
 
-          post(artifact_body)
-          post(validation_body)
+          post(artifact_lines)
+          post(validation_lines)
           print(json.dumps({'artifact_recovery_complete': True, 'validation_snapshot_complete': True, 'runs': 36}))
           '@ | python -
+
+      - name: Publish compact failure receipt
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $body = "## V6.2.2 recovery36 diagnostic receipt`n`n- Result: workflow failed before both canonical recovery receipts were published.`n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n- No Kaggle compute, repair, HPO, locked test, or external evaluation was launched by this workflow.`n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
