@@ -6,6 +6,7 @@ import {
   type AccountId,
   type WorkerEnv,
 } from "./kaggle";
+import { v622ValidationWaveResults } from "./metrics";
 import { v622ProjectPlan } from "./project-plan";
 
 type RunKind = "train" | "hpo" | "confirm" | "finalization";
@@ -320,8 +321,10 @@ export async function v622ShardArtifacts(env: WorkerEnv, shardId: string): Promi
   const normalized = shardId.toUpperCase();
   if (normalized === "PLAN") return v622ProjectPlan(env);
   if (normalized === "PROGRESS") return v622MatrixProgress(env);
+  const metricsMatch = normalized.match(/^RESULTS-W([1-6])$/);
+  if (metricsMatch) return v622ValidationWaveResults(env, Number(metricsMatch[1]));
   const target = RECOVERY_TARGETS.find((item) => item.kind === "train" && item.id === normalized);
-  if (!target) throw new Error("unknown V6.2.2 shard; expected PLAN, PROGRESS or W01..W06");
+  if (!target) throw new Error("unknown V6.2.2 shard; expected PLAN, PROGRESS, RESULTS-W1..RESULTS-W6 or W01..W06");
   const listing = await kernelOutputFiles(env, target.accountId, target.kernelRef, "", 2000);
   const fileNames = stringArray(listing.file_names);
   const groups = relevantArtifacts(fileNames);
