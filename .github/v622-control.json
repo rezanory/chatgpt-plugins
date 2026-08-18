@@ -1,0 +1,6 @@
+{
+  "request_id": "init-noop",
+  "action": "noop",
+  "wave": null,
+  "worker_id": null
+}
