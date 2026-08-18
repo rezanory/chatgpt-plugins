@@ -1,6 +1,6 @@
 {
-  "request_id": "launch-wave5-pipeline-20260818-0832z",
-  "action": "launch_wave",
-  "wave": 5,
+  "request_id": "wave5-pipeline-status-refresh-20260818-0845z",
+  "action": "noop",
+  "wave": null,
   "worker_id": null
 }
