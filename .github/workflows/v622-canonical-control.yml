@@ -1,0 +1,241 @@
+name: v622-canonical-control
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/v622-control.json'
+      - '.github/workflows/v622-canonical-control.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-canonical-control
+  cancel-in-progress: false
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate strict control request
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          request = json.loads(Path('.github/v622-control.json').read_text(encoding='utf-8'))
+          action = request.get('action')
+          request_id = str(request.get('request_id') or '')
+          if not re.fullmatch(r'[A-Za-z0-9._-]{1,80}', request_id):
+              raise SystemExit('invalid request_id')
+          if action not in {'noop', 'launch_wave', 'repair_worker'}:
+              raise SystemExit('invalid action')
+
+          wave = request.get('wave')
+          worker_id = request.get('worker_id')
+          if action == 'launch_wave':
+              if not isinstance(wave, int) or not 2 <= wave <= 6:
+                  raise SystemExit('launch_wave requires wave 2..6')
+              worker_id = ''
+          elif action == 'repair_worker':
+              worker_id = str(worker_id or '').upper()
+              if not re.fullmatch(r'W(?:0[7-9]|[12][0-9]|3[0-6])', worker_id):
+                  raise SystemExit('repair_worker requires W07..W36')
+              wave = ''
+          else:
+              wave = ''
+              worker_id = ''
+
+          with Path('/tmp/control-env').open('w', encoding='utf-8') as handle:
+              handle.write(f'ACTION={action}\n')
+              handle.write(f'REQUEST_ID={request_id}\n')
+              handle.write(f'WAVE={wave}\n')
+              handle.write(f'WORKER_ID={worker_id}\n')
+          PY
+          cat /tmp/control-env >> "$GITHUB_ENV"
+
+      - name: No-op request
+        if: env.ACTION == 'noop'
+        run: echo 'No control action requested.'
+
+      - name: Validate live project gate
+        if: env.ACTION != 'noop'
+        shell: bash
+        run: |
+          url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/status'
+          code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-live.json -w '%{http_code}' "$url" || true)"
+          test "$code" = '200'
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path('/tmp/v622-live.json').read_text(encoding='utf-8'))
+          rows = value.get('canonical_matrix_runs') or []
+          by_worker = {str(x.get('worker_id')): x for x in rows}
+          action = os.environ['ACTION']
+
+          if action == 'launch_wave':
+              wave = int(os.environ['WAVE'])
+              prior_start = 1 if wave == 2 else 1 + (wave - 2) * 6
+              prior = [f'W{i:02d}' for i in range(prior_start, prior_start + 6)]
+              missing = [wid for wid in prior if wid not in by_worker]
+              incomplete = [
+                  f"{wid}:{by_worker[wid].get('status')}"
+                  for wid in prior if wid in by_worker and by_worker[wid].get('status') != 'COMPLETE'
+              ]
+              if missing or incomplete:
+                  raise SystemExit(f'previous wave gate failed; missing={missing}; incomplete={incomplete}')
+          elif action == 'repair_worker':
+              wid = os.environ['WORKER_ID']
+              row = by_worker.get(wid)
+              if row is None:
+                  raise SystemExit(f'{wid} is not present in canonical inventory')
+              if row.get('lifecycle') != 'needs_repair':
+                  raise SystemExit(f"{wid} is not repairable; lifecycle={row.get('lifecycle')}")
+          PY
+
+      - name: Install Worker dependencies
+        if: env.ACTION != 'noop'
+        working-directory: deploy/cloudflare-worker-free
+        run: npm install --no-audit --no-fund
+
+      - name: Create ephemeral project capability
+        if: env.ACTION != 'noop'
+        working-directory: deploy/cloudflare-worker-free
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          account_id="$(printf '%s' "$RAW_CLOUDFLARE_ACCOUNT_ID" | tr -d '[:space:]')"
+          token="$(python - <<'PY'
+          import secrets
+          print(secrets.token_urlsafe(48))
+          PY
+          )"
+          test -n "$account_id"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          echo "::add-mask::$account_id"
+          echo "::add-mask::$token"
+          export CLOUDFLARE_ACCOUNT_ID="$account_id"
+          printf '%s' "$token" | npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN
+          echo "PROJECT_CONTROL_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "NORMALIZED_CLOUDFLARE_ACCOUNT_ID=$account_id" >> "$GITHUB_ENV"
+
+      - name: Execute strict project action
+        if: env.ACTION != 'noop'
+        shell: bash
+        run: |
+          if [ "$ACTION" = 'launch_wave' ]; then
+            endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/wave'
+            payload="{\"wave\":$WAVE}"
+          else
+            endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/repair'
+            payload="{\"worker_id\":\"$WORKER_ID\"}"
+          fi
+
+          ok=0
+          last_code='000'
+          for attempt in $(seq 1 24); do
+            last_code="$(curl --silent --show-error --max-time 180 \
+              -o /tmp/control-result.json -w '%{http_code}' \
+              -X POST \
+              -H "Authorization: Bearer $PROJECT_CONTROL_TOKEN" \
+              -H 'Content-Type: application/json' \
+              --data "$payload" \
+              "$endpoint" || true)"
+            if [ "$last_code" = '200' ] && python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/control-result.json').read_text(encoding='utf-8'))
+          assert value.get('project') == 'PNEUMONIA V6.2.2'
+          PY
+            then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ok" != '1' ]; then
+            echo "Strict control action failed; last HTTP status: $last_code" >&2
+            cat /tmp/control-result.json 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Remove ephemeral project capability
+        if: always() && env.ACTION != 'noop'
+        working-directory: deploy/cloudflare-worker-free
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.NORMALIZED_CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          printf '{"CGP_PROJECT_CONTROL_TOKEN":null}\n' > /tmp/delete-control.json
+          npx wrangler secret bulk /tmp/delete-control.json || true
+          rm -f /tmp/delete-control.json
+
+      - name: Publish safe control receipt
+        if: always() && env.ACTION != 'noop'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path('/tmp/control-result.json')
+          if path.exists():
+              try:
+                  result = json.loads(path.read_text(encoding='utf-8'))
+              except Exception:
+                  result = {'error': 'control response was not valid JSON'}
+          else:
+              result = {'error': 'control response was not produced'}
+
+          safe = {
+              'request_id': os.environ.get('REQUEST_ID'),
+              'action': os.environ.get('ACTION'),
+              'wave': os.environ.get('WAVE') or result.get('wave'),
+              'worker_id': os.environ.get('WORKER_ID') or result.get('worker_id'),
+              'source_template': result.get('source_template'),
+              'source_fingerprint': result.get('source_fingerprint'),
+              'frozen_recipe_sha256': result.get('frozen_recipe_sha256'),
+              'results': [
+                  {
+                      'worker_id': item.get('workerId'),
+                      'account_id': item.get('accountId'),
+                      'model_id': item.get('modelId'),
+                      'resolution': item.get('resolution'),
+                      'kernel_ref': item.get('kernelRef'),
+                      'action': item.get('action'),
+                  }
+                  for item in (result.get('results') or [])
+              ],
+              'repair': {
+                  'account_id': result.get('account_id'),
+                  'model_id': result.get('model_id'),
+                  'resolution': result.get('resolution'),
+                  'kernel_ref': result.get('kernel_ref'),
+                  'previous_status': result.get('previous_status'),
+                  'action': result.get('action'),
+              } if result.get('worker_id') else None,
+              'error': result.get('error'),
+          }
+          Path('/tmp/control-receipt.md').write_text(
+              '## V6.2.2 strict control receipt\n\n```json\n'
+              + json.dumps(safe, indent=2) + '\n```\n',
+              encoding='utf-8',
+          )
+          PY
+          gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/control-receipt.md
