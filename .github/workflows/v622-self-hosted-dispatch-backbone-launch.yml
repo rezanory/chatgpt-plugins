@@ -1,0 +1,34 @@
+name: v622-self-hosted-dispatch-backbone-launch
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-self-hosted-dispatch-backbone-launch.yml'
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+jobs:
+  dispatch:
+    runs-on: [self-hosted, windows, x64, v622]
+    steps:
+      - name: Dispatch exact backbone launch workflow
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $body = @{ ref = 'main' } | ConvertTo-Json
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/v622-self-hosted-backbone-launch.yml/dispatches" -Method Post -Headers $headers -ContentType 'application/json' -Body $body | Out-Null
+          $comment = "## V6.2.2 backbone launch dispatch receipt`n`n- Workflow: v622-self-hosted-backbone-launch.yml`n- Ref: main`n- Exact target only; no arbitrary inputs.`n- Dispatcher run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $payload = @{ body = $comment } | ConvertTo-Json
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
