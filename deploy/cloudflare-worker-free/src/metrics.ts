@@ -1,4 +1,4 @@
-import { kernelStatus, type AccountId, type WorkerEnv } from "./kaggle";
+import { kernelOutputFiles, kernelStatus, type AccountId, type WorkerEnv } from "./kaggle";
 
 type Resolution = 224 | 320 | 384;
 
@@ -22,6 +22,13 @@ const RESOLUTIONS: readonly Resolution[] = [224, 320, 384];
 const OUTPUT_PAGE_SIZE = 100;
 const MAX_OUTPUT_PAGES = 4;
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
+const IN_PROGRESS_STATUSES = new Set(["RUNNING", "QUEUED", "STARTING", "PENDING"]);
+const TERMINAL_ARTIFACTS = [
+  "training/matrix_execution_report.json",
+  "/final_report.json",
+  "/validation_metrics.json",
+  "/val_predictions.csv",
+] as const;
 
 const WORKER_ACCOUNTS = [
   { accountId: "kg-02" as const, ownerSlug: "radlinaradlina" },
@@ -97,6 +104,32 @@ function taskForWave(wave: number, slot: number): CanonicalTask {
   };
 }
 
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function terminalArtifactMatches(fileNames: string[]): string[] {
+  const normalized = fileNames.map((name) => name.replaceAll("\\", "/"));
+  return TERMINAL_ARTIFACTS.filter((needle) => normalized.some((name) => name.endsWith(needle)));
+}
+
+async function corroborateCompletion(
+  env: WorkerEnv,
+  task: CanonicalTask,
+): Promise<{ complete: boolean; matched: string[]; error: string | null }> {
+  try {
+    const listing = await kernelOutputFiles(env, task.accountId, task.kernelRef, "", 300);
+    const matched = terminalArtifactMatches(stringArray(listing.file_names));
+    return { complete: matched.length === TERMINAL_ARTIFACTS.length, matched, error: null };
+  } catch (error) {
+    return {
+      complete: false,
+      matched: [],
+      error: error instanceof Error ? error.message.slice(0, 500) : "unknown error",
+    };
+  }
+}
+
 function allowedOutputUrl(rawUrl: string): URL {
   const url = new URL(rawUrl);
   if (url.protocol !== "https:") throw new Error("Kaggle output URL is not HTTPS");
@@ -133,7 +166,7 @@ async function findValidationMetricsUrl(env: WorkerEnv, task: CanonicalTask): Pr
       headers: {
         Authorization: authorization(auth),
         "Content-Type": "application/json",
-        "User-Agent": "chatgpt-kaggle-v622-metrics/0.1",
+        "User-Agent": "chatgpt-kaggle-v622-metrics/0.2",
       },
       body: JSON.stringify(body),
     });
@@ -182,7 +215,25 @@ export async function v622ValidationWaveResults(env: WorkerEnv, wave: number): P
   for (const task of tasks) {
     try {
       const statusPayload = await kernelStatus(env, task.accountId, task.kernelRef);
-      const status = normalizeStatus(statusPayload);
+      const rawStatus = normalizeStatus(statusPayload);
+      let status = rawStatus;
+      let completionEvidence: Record<string, unknown> | null = null;
+      let completionProbeError: string | null = null;
+
+      if (IN_PROGRESS_STATUSES.has(rawStatus)) {
+        const corroboration = await corroborateCompletion(env, task);
+        if (corroboration.complete) {
+          status = "COMPLETE";
+          completionEvidence = {
+            source: "terminal_artifacts",
+            raw_status: rawStatus,
+            matched: corroboration.matched,
+          };
+        } else if (corroboration.error) {
+          completionProbeError = corroboration.error;
+        }
+      }
+
       if (status !== "COMPLETE") {
         results.push({
           worker_id: task.workerId,
@@ -191,10 +242,14 @@ export async function v622ValidationWaveResults(env: WorkerEnv, wave: number): P
           resolution: task.resolution,
           kernel_ref: task.kernelRef,
           status,
+          raw_status: rawStatus,
+          completion_evidence: completionEvidence,
+          completion_probe_error: completionProbeError,
           metrics: null,
         });
         continue;
       }
+
       const metrics = await readValidationMetrics(env, task);
       results.push({
         worker_id: task.workerId,
@@ -203,6 +258,9 @@ export async function v622ValidationWaveResults(env: WorkerEnv, wave: number): P
         resolution: task.resolution,
         kernel_ref: task.kernelRef,
         status,
+        raw_status: rawStatus,
+        completion_evidence: completionEvidence,
+        completion_probe_error: completionProbeError,
         metrics,
       });
     } catch (error) {
