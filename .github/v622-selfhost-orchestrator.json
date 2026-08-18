@@ -1,0 +1,6 @@
+{
+  "request_id": "orchestrator-capcheck-20260818T212800Z",
+  "action": "capability_check",
+  "workflow": "",
+  "ref": "main"
+}
