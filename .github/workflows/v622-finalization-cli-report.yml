@@ -1,0 +1,80 @@
+name: v622-finalization-cli-report
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-finalization-cli-report.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read recovered finalization contract
+        shell: bash
+        run: |
+          url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/finalization-plan'
+          code="$(curl --silent --show-error --max-time 180 -o /tmp/finalization.json -w '%{http_code}' "$url" || true)"
+          test "$code" = '200'
+
+      - name: Extract module CLI and stage signals
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          value = json.loads(Path('/tmp/finalization.json').read_text(encoding='utf-8'))
+          flag_re = re.compile(r"add_argument\(\s*['\"](--[A-Za-z0-9_-]+)")
+          script_re = re.compile(r"([A-Za-z0-9_./-]+\.py)")
+          stage_re = re.compile(
+              r'validation|selection|screen|ensemble|backbone|qualification|champion|freeze|'
+              r'locked|final.?test|external|M13|checkpoint|manifest|candidate', re.I
+          )
+          modules = []
+          for module in value.get('modules') or []:
+              flags = []
+              scripts = []
+              stage_lines = []
+              for signal in module.get('signals') or []:
+                  text = str(signal.get('text') or '')
+                  for match in flag_re.finditer(text):
+                      if match.group(1) not in flags:
+                          flags.append(match.group(1))
+                  for match in script_re.finditer(text):
+                      name = match.group(1)
+                      if name not in scripts:
+                          scripts.append(name)
+                  if stage_re.search(text):
+                      stage_lines.append({'line': signal.get('line'), 'text': text})
+              modules.append({
+                  'name': module.get('name'),
+                  'present': module.get('present'),
+                  'sha256': module.get('sha256'),
+                  'flags': flags,
+                  'referenced_scripts': scripts,
+                  'stage_signals': stage_lines[:16],
+              })
+
+          out = {
+              'policy': value.get('policy'),
+              'modules': modules,
+          }
+          Path('/tmp/finalization-cli.md').write_text(
+              '## V6.2.2 finalization CLI contract\n\n```json\n'
+              + json.dumps(out, indent=2) + '\n```\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - name: Publish finalization CLI contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/finalization-cli.md
