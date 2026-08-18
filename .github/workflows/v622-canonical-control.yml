@@ -2,6 +2,8 @@ name: v622-canonical-control
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
   push:
     branches: [main]
     paths:
@@ -22,6 +24,78 @@ jobs:
     environment: cloudflare-production
     steps:
       - uses: actions/checkout@v4
+
+      - name: Prepare scheduled per-account pipeline request
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/wave-status'
+          for wave in 5 6; do
+            ok=0
+            for attempt in $(seq 1 12); do
+              code="$(curl --silent --show-error --max-time 120 \
+                -o "/tmp/v622-auto-wave-${wave}.json" -w '%{http_code}' \
+                "${base}?wave=${wave}" || true)"
+              if [ "$code" = '200' ] && WAVE="$wave" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          wave = int(os.environ['WAVE'])
+          value = json.loads(Path(f'/tmp/v622-auto-wave-{wave}.json').read_text(encoding='utf-8'))
+          assert value.get('project') == 'PNEUMONIA V6.2.2'
+          assert value.get('wave') == wave
+          assert len(value.get('tasks') or []) == 6
+          PY
+              then
+                ok=1
+                break
+              fi
+              sleep 5
+            done
+            if [ "$ok" != '1' ]; then
+              echo "Scheduled lightweight status for Wave $wave did not become ready; using noop." >&2
+              printf '%s\n' '{"request_id":"scheduled-probe-noop","action":"noop","wave":null,"worker_id":null}' > .github/v622-control.json
+              exit 0
+            fi
+          done
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          wave5 = json.loads(Path('/tmp/v622-auto-wave-5.json').read_text(encoding='utf-8'))
+          wave6 = json.loads(Path('/tmp/v622-auto-wave-6.json').read_text(encoding='utf-8'))
+          previous = wave5.get('tasks') or []
+          target = wave6.get('tasks') or []
+          assert len(previous) == len(target) == 6
+
+          eligible = []
+          for slot, (pred, nxt) in enumerate(zip(previous, target)):
+              expected_pred = f'W{25 + slot:02d}'
+              expected_next = f'W{31 + slot:02d}'
+              if pred.get('worker_id') != expected_pred or nxt.get('worker_id') != expected_next:
+                  raise SystemExit('scheduled canonical lane identity mismatch')
+              if nxt.get('status') == 'NOT_FOUND' and pred.get('status') == 'COMPLETE':
+                  eligible.append(expected_next)
+
+          if eligible:
+              request = {
+                  'request_id': f"auto-wave6-{os.environ['GITHUB_RUN_ID']}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}",
+                  'action': 'launch_wave',
+                  'wave': 6,
+                  'worker_id': None,
+              }
+          else:
+              request = {
+                  'request_id': f"auto-noop-{os.environ['GITHUB_RUN_ID']}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}",
+                  'action': 'noop',
+                  'wave': None,
+                  'worker_id': None,
+              }
+          Path('.github/v622-control.json').write_text(json.dumps(request, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps({'eligible_wave6_lanes': eligible, 'action': request['action']}))
+          PY
 
       - name: Validate strict control request
         shell: bash
