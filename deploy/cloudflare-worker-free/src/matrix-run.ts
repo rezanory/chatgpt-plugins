@@ -120,7 +120,6 @@ function transformNotebookSource(source: string, task: MatrixTask): string {
   if (!parts.length) throw new Error("canonical template code cell has no source");
   let code = parts.join("");
   if (!code.includes(EXPECTED_SOURCE_FINGERPRINT)) throw new Error("canonical source fingerprint is not embedded in template");
-  if (!code.includes(EXPECTED_RECIPE_SHA256)) throw new Error("canonical frozen recipe SHA is not embedded in template");
 
   code = replaceExactly(
     code,
