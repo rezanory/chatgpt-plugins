@@ -1,10 +1,11 @@
-name: v622-wave2-progress
+name: v622-current-wave-progress
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
+      - '.github/v622-control.json'
       - '.github/workflows/v622-wave2-progress.yml'
       - 'deploy/cloudflare-worker-free/src/recovery.ts'
 
@@ -16,12 +17,12 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Read W07-W12 from live Kaggle inventory
+      - name: Read current wave from live Kaggle inventory
         shell: bash
         run: |
           status_url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/status'
           progress_url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/shard-artifacts?shard=PROGRESS'
-          found=0
+          ok=0
           for attempt in $(seq 1 40); do
             status_code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-live.json -w '%{http_code}' "$status_url" || true)"
             progress_code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-progress.json -w '%{http_code}' "$progress_url" || true)"
@@ -31,20 +32,19 @@ jobs:
           status = json.loads(Path('/tmp/v622-live.json').read_text(encoding='utf-8'))
           progress = json.loads(Path('/tmp/v622-progress.json').read_text(encoding='utf-8'))
           rows = status.get('canonical_matrix_runs') or []
-          by_id = {x.get('worker_id'): x for x in rows}
-          assert all(f'W{i:02d}' in by_id for i in range(7, 13))
+          assert rows
           assert progress.get('project') == 'PNEUMONIA V6.2.2'
           assert isinstance(progress.get('jobs'), list)
           PY
             then
-              found=1
+              ok=1
               break
             fi
             sleep 10
           done
-          test "$found" = '1'
+          test "$ok" = '1'
 
-      - name: Publish refreshed Wave 2 safe progress
+      - name: Publish current wave safe progress
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -52,27 +52,30 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
+
           status = json.loads(Path('/tmp/v622-live.json').read_text(encoding='utf-8'))
           progress = json.loads(Path('/tmp/v622-progress.json').read_text(encoding='utf-8'))
-          rows = [
-              x for x in (status.get('canonical_matrix_runs') or [])
-              if 7 <= int(str(x.get('worker_id') or 'W0')[1:] or 0) <= 12
-          ]
-          progress_rows = [
-              x for x in (progress.get('jobs') or [])
-              if str(x.get('worker_id') or '') in {f'W{i:02d}' for i in range(7, 13)}
-          ]
+          all_rows = status.get('canonical_matrix_runs') or []
+          worker_numbers = [int(str(x.get('worker_id') or 'W0')[1:] or 0) for x in all_rows]
+          max_worker = max(worker_numbers)
+          wave = ((max_worker - 1) // 6) + 1
+          start = 1 + (wave - 1) * 6
+          stop = start + 5
+          ids = {f'W{i:02d}' for i in range(start, stop + 1)}
+          rows = [x for x in all_rows if str(x.get('worker_id') or '') in ids]
+          progress_rows = [x for x in (progress.get('jobs') or []) if str(x.get('worker_id') or '') in ids]
           body = {
-              'wave': 2,
+              'wave': wave,
+              'worker_range': [f'W{start:02d}', f'W{stop:02d}'],
               'found_all_six': len(rows) == 6,
               'canonical_matrix_summary': status.get('canonical_matrix_summary'),
               'jobs': rows,
               'safe_progress': progress_rows,
           }
-          Path('/tmp/v622-wave2-live.md').write_text(
-              '## V6.2.2 Wave 2 live Kaggle progress\n\n```json\n'
+          Path('/tmp/v622-current-wave.md').write_text(
+              f'## V6.2.2 Wave {wave} live Kaggle progress\n\n```json\n'
               + json.dumps(body, indent=2) + '\n```\n',
               encoding='utf-8',
           )
           PY
-          gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/v622-wave2-live.md
+          gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/v622-current-wave.md
