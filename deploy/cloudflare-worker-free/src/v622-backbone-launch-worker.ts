@@ -126,6 +126,16 @@ export default {
     if (url.pathname !== "/control/v6-2-2/launch-backbone-comparison" || request.method !== "POST") return new Response("Not found", { status: 404 });
     if (!authorized(request, env)) return new Response("Forbidden", { status: 403 });
     try { return json({ project: "PNEUMONIA V6.2.2", stage: "post_ablation_backbone_comparison", ...(await launch(env)) }); }
-    catch (error) { return json({ ok: false, error: error instanceof Error ? error.message.slice(0, 1000) : "unknown error" }, 502); }
+    catch (error) {
+      return json({
+        project: "PNEUMONIA V6.2.2",
+        stage: "post_ablation_backbone_comparison",
+        action: "blocked",
+        target_kernel_ref: TARGET_REF,
+        recipe_sha256: RECIPE_SHA256,
+        error: error instanceof Error ? error.message.slice(0, 1000) : "unknown error",
+        kaggle_submit_performed: false,
+      });
+    }
   },
 } satisfies ExportedHandler<Env>;
