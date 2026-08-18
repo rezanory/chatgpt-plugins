@@ -30,7 +30,7 @@ async function kaggleCall(env: WorkerEnv, body: Record<string, unknown>): Promis
     headers: {
       Authorization: authorization(env),
       "Content-Type": "application/json",
-      "User-Agent": "chatgpt-kaggle-project-plan/0.2",
+      "User-Agent": "chatgpt-kaggle-project-plan/0.3",
     },
     body: JSON.stringify(body),
   });
@@ -168,6 +168,80 @@ function matches(text: string, regex: RegExp): string[] {
 function basename(value: string): string {
   const parts = value.split("/");
   return parts[parts.length - 1] || value;
+}
+
+function hex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Text(text: string): Promise<string> {
+  return hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+}
+
+function finalizationSignals(text: string): Array<{ line: number; text: string }> {
+  const lines = text.split(/\r?\n/);
+  const pattern = /(argparse|add_argument|subprocess|sys\.executable|selection|select_|champion|ensemble|backbone|final.?test|test_locked|locked.?test|external|freeze|qualification|M13|inventory|checkpoint|validation|candidate|recipe|output.?root|input.?root|manifest)/i;
+  const selected = new Set<number>();
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!pattern.test(lines[index])) continue;
+    for (let offset = -2; offset <= 2; offset += 1) {
+      const target = index + offset;
+      if (target >= 0 && target < lines.length) selected.add(target);
+    }
+    if (selected.size >= 220) break;
+  }
+  return [...selected]
+    .sort((a, b) => a - b)
+    .slice(0, 220)
+    .map((index) => ({ line: index + 1, text: lines[index].slice(0, 700) }));
+}
+
+export async function v622FinalizationPlan(env: WorkerEnv): Promise<Record<string, unknown>> {
+  const files = await enumerateOutputs(env);
+  const moduleNames = [
+    "inventory_m01_m12_checkpoints.py",
+    "screening_adaptive_evidence_selection.py",
+    "auto_ensemble_selection.py",
+    "backbone_ensemble_selection.py",
+    "select_champion.py",
+    "freeze_selected_recipe.py",
+    "run_backbone_comparison.py",
+    "run_m13_research_pipeline.py",
+    "run_model_qualification.py",
+    "run_qualification_model_selection.py",
+    "run_final_canonical_workflow.py",
+    "evaluate_saved_champion_test.py",
+  ] as const;
+  const modules: Array<Record<string, unknown>> = [];
+  for (const name of moduleNames) {
+    try {
+      const text = await readSmallOutput(files, `/SOURCE_PYTHON/${name}`);
+      modules.push({
+        name,
+        present: true,
+        chars: text.length,
+        sha256: await sha256Text(text),
+        signals: finalizationSignals(text),
+      });
+    } catch (error) {
+      modules.push({
+        name,
+        present: false,
+        error: error instanceof Error ? error.message.slice(0, 300) : "unknown error",
+      });
+    }
+  }
+  return {
+    project: "PNEUMONIA V6.2.2",
+    source_kernel: `${OWNER}/${KERNEL_SLUG}`,
+    policy: {
+      model_screening: "validation_only",
+      locked_test_before_champion_freeze: false,
+      final_test_confirmation_token_required: true,
+      canonical_model_definitions_mutable: false,
+    },
+    modules,
+  };
 }
 
 export async function v622ProjectPlan(env: WorkerEnv): Promise<Record<string, unknown>> {
