@@ -1,0 +1,66 @@
+name: v622-wave6-direct-probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-wave6-direct-probe.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe lightweight Wave 6 status
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/wave-status?wave=6'
+          ok=0
+          for attempt in $(seq 1 8); do
+            code="$(curl --silent --show-error --max-time 30 -o /tmp/wave6.json -w '%{http_code}' "$url" || true)"
+            if [ "$code" = '200' ] && python - <<'PY'
+          import json
+          from pathlib import Path
+          value=json.loads(Path('/tmp/wave6.json').read_text(encoding='utf-8'))
+          assert value.get('project')=='PNEUMONIA V6.2.2'
+          assert value.get('wave')==6
+          assert len(value.get('tasks') or [])==6
+          PY
+            then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ok" != '1' ]; then
+            echo 'Wave 6 lightweight endpoint did not return a valid response.' >&2
+            cat /tmp/wave6.json 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Publish W32 W35 direct probe receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value=json.loads(Path('/tmp/wave6.json').read_text(encoding='utf-8'))
+          tasks={row.get('worker_id'):row for row in (value.get('tasks') or [])}
+          picked=[tasks.get('W32'), tasks.get('W35')]
+          body={
+            'source':'/recovery/v6-2-2/wave-status?wave=6',
+            'generated_at':value.get('generated_at'),
+            'counts':value.get('counts'),
+            'workers':picked,
+          }
+          Path('/tmp/direct-probe.md').write_text(
+            '## V6.2.2 Wave 6 direct lightweight probe — W32/W35\n\n```json\n'
+            + json.dumps(body, indent=2) + '\n```\n', encoding='utf-8')
+          PY
+          gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/direct-probe.md
