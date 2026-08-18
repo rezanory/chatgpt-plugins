@@ -1,0 +1,152 @@
+name: v622-self-hosted-backbone-launch-readable
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-self-hosted-backbone-launch-readable.yml'
+      - 'deploy/cloudflare-worker-free/src/v622-backbone-launch-readable-worker.ts'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-cloudflare-production-mutation
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    runs-on: [self-hosted, windows, x64, v622]
+    environment: cloudflare-production
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve local Python
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cmd = Get-Command python.exe -ErrorAction SilentlyContinue
+          if (-not $cmd) { throw 'python.exe not found' }
+          $python = $cmd.Source
+          & $python --version
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_PYTHON=$python`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Deploy readable guarded launcher
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $accountId = ([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if ([string]::IsNullOrWhiteSpace($env:CLOUDFLARE_API_TOKEN) -or [string]::IsNullOrWhiteSpace($accountId)) { throw 'Cloudflare credentials missing' }
+          Write-Host "::add-mask::$accountId"
+          $env:CLOUDFLARE_ACCOUNT_ID = $accountId
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_CF_ACCOUNT_ID=$accountId`n", [System.Text.UTF8Encoding]::new($false))
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
+            npm run check
+            if ($LASTEXITCODE -ne 0) { throw 'Worker check failed' }
+            npx wrangler deploy src/v622-backbone-launch-readable-worker.ts --name chatgpt-kaggle-gateway
+            if ($LASTEXITCODE -ne 0) { throw 'Readable launcher deploy failed' }
+          }
+          finally { Pop-Location }
+
+      - name: Create ephemeral capability
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $token = (& $env:V622_PYTHON -c "import secrets; print(secrets.token_urlsafe(48))").Trim()
+          if (-not $token) { throw 'Token generation failed' }
+          Write-Host "::add-mask::$token"
+          $env:CLOUDFLARE_ACCOUNT_ID = $env:V622_CF_ACCOUNT_ID
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            $token | npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN
+            if ($LASTEXITCODE -ne 0) { throw 'Capability install failed' }
+          }
+          finally { Pop-Location }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_BACKBONE_LAUNCH_TOKEN=$token`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Invoke guarded launcher
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $uri = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/launch-backbone-comparison'
+          $headers = @{ Authorization = "Bearer $env:V622_BACKBONE_LAUNCH_TOKEN"; 'Content-Type' = 'application/json' }
+          $result = $null
+          for ($attempt = 1; $attempt -le 15; $attempt++) {
+            try {
+              $candidate = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body '{}'
+              if ($candidate.project -ne 'PNEUMONIA V6.2.2' -or $candidate.stage -ne 'post_ablation_backbone_comparison') { throw 'stale edge response' }
+              $result = $candidate
+              break
+            } catch {
+              Write-Host "attempt $attempt/15: $($_.Exception.Message)"
+              Start-Sleep -Seconds 3
+            }
+          }
+          if (-not $result) { throw 'Readable launcher did not converge' }
+          Write-Host ($result | ConvertTo-Json -Depth 20)
+          if ([string]$result.action -like 'blocked:*') { throw ([string]$result.action) }
+          if ($result.recipe_sha256 -ne '27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f') { throw 'Recipe SHA mismatch' }
+          if ($result.target_kernel_ref -ne 'trickermark/pneumonia-v6-2-2-backbone-m06-r224') { throw 'Target ref mismatch' }
+          if (@('submitted','existing') -notcontains [string]$result.action) { throw "Unexpected action: $($result.action)" }
+          $result | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\v622-backbone-readable-result.json"
+
+      - name: Publish success receipt
+        if: success()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $r = Get-Content -Raw "$env:RUNNER_TEMP\v622-backbone-readable-result.json" | ConvertFrom-Json
+          $launched = if ($r.action -eq 'submitted') { 'true' } else { 'false_existing_kernel' }
+          $body = "## V6.2.2 post-ablation backbone launch receipt`n`n- Action: $($r.action)`n- Kernel: $($r.target_kernel_ref)`n- Kaggle backbone-comparison compute launched now: $launched`n- Frozen recipe SHA-256: $($r.recipe_sha256)`n- Backbones: convnext_tiny, densenet121, efficientnetv2b0, resnet50v2`n- Seed: 42`n- M01-M12 rerun: false`n- HPO/confirmation repeated: false`n- Locked test used: false`n- External cohort used: false`n- GitHub run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json' }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
+
+      - name: Restore canonical Worker
+        if: always()
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if ($env:V622_CF_ACCOUNT_ID) {
+            $env:CLOUDFLARE_ACCOUNT_ID = $env:V622_CF_ACCOUNT_ID
+            Push-Location 'deploy/cloudflare-worker-free'
+            try {
+              '{"CGP_PROJECT_CONTROL_TOKEN":null}' | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\v622-delete-control.json"
+              npx wrangler secret bulk "$env:RUNNER_TEMP\v622-delete-control.json"
+              Remove-Item "$env:RUNNER_TEMP\v622-delete-control.json" -Force -ErrorAction SilentlyContinue
+              npx wrangler deploy
+            }
+            finally { Pop-Location }
+          }
+
+      - name: Publish failure receipt
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $body = "## V6.2.2 readable backbone launch diagnostic`n`n- Guarded launch did not produce a success receipt; exact safe reason is in the job log.`n- No M01-M12 rerun, HPO, locked test, or external evaluation is requested by this workflow.`n- GitHub run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json' }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
