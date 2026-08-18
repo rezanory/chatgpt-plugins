@@ -18,38 +18,87 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Read all six waves with lightweight status probes
+      - name: Resolve latest successfully launched canonical wave
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/issues/18/comments" --paginate > /tmp/v622-comments.json
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          comments = json.loads(Path('/tmp/v622-comments.json').read_text(encoding='utf-8'))
+          latest = None
+          for comment in comments:
+              body = str(comment.get('body') or '')
+              if not body.startswith('## V6.2.2 strict control receipt'):
+                  continue
+              match = re.search(r'```json\s*(\{.*?\})\s*```', body, flags=re.S)
+              if not match:
+                  continue
+              try:
+                  receipt = json.loads(match.group(1))
+              except Exception:
+                  continue
+              if receipt.get('action') != 'launch_wave':
+                  continue
+              if receipt.get('error') not in (None, ''):
+                  continue
+              results = receipt.get('results') or []
+              if len(results) != 6:
+                  continue
+              try:
+                  wave = int(receipt.get('wave'))
+              except Exception:
+                  continue
+              if not 2 <= wave <= 6:
+                  continue
+              latest = (str(comment.get('created_at') or ''), wave, str(receipt.get('request_id') or ''))
+
+          if latest is None:
+              # Wave 1 is the recovered baseline and predates strict launch receipts.
+              latest = ('', 1, 'recovered-wave1-baseline')
+
+          _, wave, request_id = latest
+          Path('/tmp/v622-current-wave.env').write_text(
+              f'CURRENT_WAVE={wave}\nCURRENT_REQUEST_ID={request_id}\n',
+              encoding='utf-8',
+          )
+          PY
+          cat /tmp/v622-current-wave.env >> "$GITHUB_ENV"
+
+      - name: Read current wave with lightweight status probe
         shell: bash
         run: |
           base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/wave-status'
-          for wave in $(seq 1 6); do
-            ok=0
-            for attempt in $(seq 1 24); do
-              code="$(curl --silent --show-error --max-time 120 \
-                -o "/tmp/v622-wave-${wave}.json" -w '%{http_code}' \
-                "${base}?wave=${wave}" || true)"
-              if [ "$code" = '200' ] && python - "$wave" <<'PY'
+          ok=0
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 120 \
+              -o /tmp/v622-current-wave.json -w '%{http_code}' \
+              "${base}?wave=${CURRENT_WAVE}" || true)"
+            if [ "$code" = '200' ] && python - <<'PY'
           import json
-          import sys
+          import os
           from pathlib import Path
-          wave = int(sys.argv[1])
-          value = json.loads(Path(f'/tmp/v622-wave-{wave}.json').read_text(encoding='utf-8'))
+          wave = int(os.environ['CURRENT_WAVE'])
+          value = json.loads(Path('/tmp/v622-current-wave.json').read_text(encoding='utf-8'))
           assert value.get('project') == 'PNEUMONIA V6.2.2'
           assert value.get('wave') == wave
           assert len(value.get('tasks') or []) == 6
           PY
-              then
-                ok=1
-                break
-              fi
-              sleep 5
-            done
-            if [ "$ok" != '1' ]; then
-              echo "Wave $wave status endpoint did not become ready." >&2
-              cat "/tmp/v622-wave-${wave}.json" 2>/dev/null || true
-              exit 1
+            then
+              ok=1
+              break
             fi
+            sleep 5
           done
+          if [ "$ok" != '1' ]; then
+            echo "Wave $CURRENT_WAVE status endpoint did not become ready." >&2
+            cat /tmp/v622-current-wave.json 2>/dev/null || true
+            exit 1
+          fi
 
       - name: Publish current wave safe progress
         env:
@@ -58,58 +107,37 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
-          waves = []
-          for wave in range(1, 7):
-              value = json.loads(Path(f'/tmp/v622-wave-{wave}.json').read_text(encoding='utf-8'))
-              waves.append(value)
-
-          current_wave = 1
-          for value in waves:
-              tasks = value.get('tasks') or []
-              if any(row.get('status') != 'NOT_FOUND' for row in tasks):
-                  current_wave = int(value['wave'])
-
-          current = waves[current_wave - 1]
+          wave = int(os.environ['CURRENT_WAVE'])
+          request_id = os.environ.get('CURRENT_REQUEST_ID') or None
+          current = json.loads(Path('/tmp/v622-current-wave.json').read_text(encoding='utf-8'))
+          tasks = current.get('tasks') or []
+          counts = current.get('counts') or {}
+          prior_complete = (wave - 1) * 6
+          created_in_current = sum(1 for row in tasks if row.get('status') != 'NOT_FOUND')
+          created = prior_complete + created_in_current
           totals = {
               'expected_total': 36,
-              'complete': 0,
-              'in_progress': 0,
-              'needs_repair': 0,
-              'missing': 0,
-              'unknown': 0,
+              'complete': prior_complete + int(counts.get('complete') or 0),
+              'in_progress': int(counts.get('in_progress') or 0),
+              'needs_repair': int(counts.get('needs_repair') or 0),
+              'missing': int(counts.get('missing') or 0),
+              'unknown': int(counts.get('unknown') or 0),
+              'created': created,
+              'remaining_not_created': max(0, 36 - created),
           }
-          created = 0
-          for value in waves:
-              tasks = value.get('tasks') or []
-              for row in tasks:
-                  status = row.get('status')
-                  lifecycle = row.get('lifecycle')
-                  if status != 'NOT_FOUND':
-                      created += 1
-                  if lifecycle == 'complete':
-                      totals['complete'] += 1
-                  elif lifecycle == 'in_progress':
-                      totals['in_progress'] += 1
-                  elif lifecycle == 'needs_repair':
-                      totals['needs_repair'] += 1
-                  elif lifecycle == 'missing':
-                      totals['missing'] += 1
-                  else:
-                      totals['unknown'] += 1
-          totals['created'] = created
-          totals['remaining_not_created'] = max(0, 36 - created)
-
           body = {
-              'wave': current_wave,
-              'worker_range': [f'W{1 + (current_wave - 1) * 6:02d}', f'W{current_wave * 6:02d}'],
+              'wave': wave,
+              'worker_range': [f'W{1 + (wave - 1) * 6:02d}', f'W{wave * 6:02d}'],
+              'launch_request_id': request_id,
               'canonical_matrix_summary': totals,
-              'counts': current.get('counts'),
-              'jobs': current.get('tasks'),
+              'counts': counts,
+              'jobs': tasks,
           }
           Path('/tmp/v622-current-wave.md').write_text(
-              f'## V6.2.2 Wave {current_wave} live Kaggle progress\n\n```json\n'
+              f'## V6.2.2 Wave {wave} live Kaggle progress\n\n```json\n'
               + json.dumps(body, indent=2) + '\n```\n',
               encoding='utf-8',
           )
