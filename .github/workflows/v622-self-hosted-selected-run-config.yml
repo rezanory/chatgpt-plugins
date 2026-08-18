@@ -148,3 +148,5 @@ jobs:
         shell: powershell
         run: |
           Remove-Item "$env:RUNNER_TEMP\v622-selected-run-config" -Recurse -Force -ErrorAction SilentlyContinue
+
+# trigger: selected-run-config-v1
