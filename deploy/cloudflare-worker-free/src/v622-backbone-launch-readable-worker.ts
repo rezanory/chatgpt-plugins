@@ -1,5 +1,6 @@
 import launchWorker from "./v622-backbone-launch-worker";
 
+// Trigger: readable guarded backbone launch.
 const delegated = launchWorker as unknown as {
   fetch(request: Request, env: unknown): Promise<Response>;
 };
