@@ -1,0 +1,102 @@
+name: v622-validation-table
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-validation-table.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read canonical metrics waves
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/shard-artifacts'
+          for wave in 1 2 3 4 5; do
+            curl --fail --silent --show-error --max-time 180 "${base}?shard=RESULTS-W${wave}" -o "/tmp/w${wave}.json"
+          done
+
+      - name: Build table
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          wanted={f'W{i:02d}' for i in range(1,25)} | {'W27','W28','W30'}
+          rows=[]
+          for wave in range(1,6):
+              value=json.loads(Path(f'/tmp/w{wave}.json').read_text())
+              rows.extend(r for r in (value.get('results') or []) if r.get('worker_id') in wanted)
+          rows.sort(key=lambda r:int(r['worker_id'][1:]))
+          assert len(rows)==27
+
+          def metric_map(obj):
+              out={}
+              def walk(x,p=''):
+                  if isinstance(x,dict):
+                      if isinstance(x.get('path'),str) and 'value' in x:
+                          out[x['path']]=x.get('value')
+                      for k,v in x.items():
+                          q=f'{p}.{k}' if p else str(k)
+                          walk(v,q)
+                  elif isinstance(x,list):
+                      for i,v in enumerate(x): walk(v,f'{p}[{i}]')
+                  else:
+                      if p: out[p]=x
+              walk(obj)
+              return out
+
+          def get(m,suffix):
+              exact=[v for k,v in m.items() if k==suffix or k.endswith('.'+suffix)]
+              return exact[0] if exact else None
+
+          def pct(x):
+              return '—' if not isinstance(x,(int,float)) else f'{100*x:.2f}%'
+          def thr(x):
+              return '—' if not isinstance(x,(int,float)) else f'{x:.6g}'
+
+          table=[]
+          compact=[]
+          for r in rows:
+              m=metric_map(r.get('metrics'))
+              vals={
+                  'accuracy':get(m,'threshold_search.accuracy'),
+                  'balanced_accuracy':get(m,'threshold_search.balanced_accuracy'),
+                  'precision':get(m,'threshold_search.precision'),
+                  'sensitivity':get(m,'threshold_search.sensitivity') if get(m,'threshold_search.sensitivity') is not None else get(m,'threshold_search.recall'),
+                  'specificity':get(m,'threshold_search.specificity'),
+                  'f1':get(m,'threshold_search.f1'),
+                  'threshold':get(m,'threshold_search.threshold'),
+              }
+              compact.append({'worker_id':r.get('worker_id'),'model_id':r.get('model_id'),'resolution':r.get('resolution'),**vals})
+              table.append(
+                  f"| {r.get('worker_id')} | {r.get('model_id')} | {r.get('resolution')} | {pct(vals['accuracy'])} | {pct(vals['balanced_accuracy'])} | {pct(vals['precision'])} | {pct(vals['sensitivity'])} | {pct(vals['specificity'])} | {pct(vals['f1'])} | {thr(vals['threshold'])} |"
+              )
+
+          body=[
+              '## V6.2.2 validation table — exact 27-run snapshot',
+              '',
+              '| Run | Model | Res | Accuracy | Balanced Acc | Precision | Sensitivity | Specificity | F1 | Threshold |',
+              '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
+              *table,
+              '',
+              '<details><summary>Compact JSON</summary>',
+              '',
+              '```json',json.dumps(compact,indent=2),'```','</details>',
+          ]
+          Path('/tmp/table.md').write_text('\n'.join(body)+'\n')
+          PY
+
+      - name: Publish table
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/table.md
