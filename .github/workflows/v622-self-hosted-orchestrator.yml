@@ -27,6 +27,7 @@ jobs:
           ref: main
 
       - name: Execute allowlisted orchestration request
+        id: orchestrate
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -39,8 +40,8 @@ jobs:
           $requestId = ([string]$request.request_id).Trim()
           $action = ([string]$request.action).Trim()
           $workflow = ([string]$request.workflow).Trim()
-          $ref = ([string]$request.ref).Trim()
-          if (-not $ref) { $ref = 'main' }
+          $refName = ([string]$request.ref).Trim()
+          if (-not $refName) { $refName = 'main' }
           if (-not $requestId) { throw 'request_id is required.' }
 
           $allowed = @(
@@ -61,17 +62,20 @@ jobs:
 
           if ($action -eq 'capability_check') {
             if ($gh) {
-              & $gh --version | Select-Object -First 1 | Write-Host
-              if ($LASTEXITCODE -ne 0) { throw 'gh CLI exists but is not runnable.' }
+              $versionOutput = & $gh --version
+              $exit = $LASTEXITCODE
+              if ($exit -ne 0) { throw 'gh CLI exists but is not runnable.' }
+              $versionLine = $versionOutput | Select-Object -First 1
+              Write-Host "GitHub CLI: $versionLine"
             }
           }
           elseif ($action -eq 'dispatch_workflow') {
             if ($allowed -notcontains $workflow) { throw "Workflow is not allowlisted: $workflow" }
-            if ($ref -ne 'main') { throw 'Only main ref is allowed by the V6.2.2 orchestrator.' }
+            if ($refName -ne 'main') { throw 'Only main ref is allowed by the V6.2.2 orchestrator.' }
 
             if ($gh) {
               $env:GH_TOKEN = $env:GITHUB_TOKEN
-              & $gh workflow run $workflow --ref $ref -R $env:GITHUB_REPOSITORY
+              & $gh workflow run $workflow --ref $refName -R $env:GITHUB_REPOSITORY
               if ($LASTEXITCODE -ne 0) { throw "gh workflow run failed for $workflow" }
             }
             else {
@@ -80,7 +84,7 @@ jobs:
                 Accept = 'application/vnd.github+json'
                 'X-GitHub-Api-Version' = '2022-11-28'
               }
-              $body = @{ ref = $ref } | ConvertTo-Json
+              $body = @{ ref = $refName } | ConvertTo-Json
               Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/$workflow/dispatches" -Method Post -Headers $headers -ContentType 'application/json' -Body $body | Out-Null
             }
             $result = 'workflow_dispatch_requested'
@@ -89,22 +93,32 @@ jobs:
             throw "Unsupported orchestrator action: $action"
           }
 
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_ORCH_REQUEST_ID=$requestId`nV622_ORCH_ACTION=$action`nV622_ORCH_WORKFLOW=$workflow`nV622_ORCH_REF=$refName`nV622_ORCH_METHOD=$method`nV622_ORCH_RESULT=$result`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Publish orchestrator receipt
+        if: always()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $status = if ('${{ steps.orchestrate.outcome }}' -eq 'success') { 'success' } else { 'failure' }
           $receipt = @{
             project = 'PNEUMONIA V6.2.2'
             stage = 'self_hosted_orchestration'
-            request_id = $requestId
-            action = $action
-            workflow = $workflow
-            ref = $ref
+            request_id = $env:V622_ORCH_REQUEST_ID
+            action = $env:V622_ORCH_ACTION
+            workflow = $env:V622_ORCH_WORKFLOW
+            ref = $env:V622_ORCH_REF
             runner = $env:RUNNER_NAME
-            method = $method
-            result = $result
+            method = $env:V622_ORCH_METHOD
+            result = $env:V622_ORCH_RESULT
+            status = $status
             arbitrary_commands_allowed = $false
             kaggle_control_allowed = $false
           }
           $json = $receipt | ConvertTo-Json -Depth 6
           Write-Host $json
-
           $comment = "## V6.2.2 self-hosted orchestrator receipt`n`n```json`n$json`n```"
           $payload = @{ body = $comment } | ConvertTo-Json -Depth 6
           $headers = @{
