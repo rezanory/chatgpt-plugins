@@ -57,7 +57,8 @@ function modelHints(log: string, fallback?: string): string[] {
   const hints = new Set<string>();
   if (fallback) hints.add(fallback);
   for (const term of ARCHITECTURE_TERMS) if (lower.includes(term)) hints.add(term);
-  for (const code of ["M01", "M02", "M03", "M04", "M05", "M06"]) {
+  for (let index = 1; index <= 12; index += 1) {
+    const code = `M${String(index).padStart(2, "0")}`;
     if (lower.includes(code.toLocaleLowerCase("en-US"))) hints.add(code);
   }
   return [...hints];
@@ -149,6 +150,78 @@ async function finalizationCandidates(env: WorkerEnv): Promise<Array<Record<stri
   );
 }
 
+interface MatrixCandidate {
+  accountId: AccountId;
+  ownerSlug: string;
+  kernelRef: string;
+  workerId: string;
+  workerNumber: number;
+  modelId: string;
+  resolution: number;
+}
+
+async function dynamicMatrixRuns(env: WorkerEnv): Promise<Array<Record<string, unknown>>> {
+  const found = new Map<string, MatrixCandidate>();
+  const inventories = await Promise.all(
+    ALL_ACCOUNTS.map(async (accountId) => {
+      try {
+        return { accountId, kernels: await listKernels(env, accountId, "pneumonia-v6-2-2-train-w", 100) };
+      } catch {
+        return { accountId, kernels: [] as unknown[] };
+      }
+    }),
+  );
+  for (const inventory of inventories) {
+    for (const kernel of inventory.kernels) {
+      const ref = kernelField(kernel, "ref");
+      const match = ref.match(/^([^/]+)\/pneumonia-v6-2-2-train-(w(\d+))-(m\d+)-r(\d+)$/i);
+      if (!match) continue;
+      found.set(ref.toLocaleLowerCase("en-US"), {
+        accountId: inventory.accountId,
+        ownerSlug: match[1],
+        kernelRef: ref,
+        workerId: match[2].toUpperCase(),
+        workerNumber: Number(match[3]),
+        modelId: match[4].toUpperCase(),
+        resolution: Number(match[5]),
+      });
+    }
+  }
+  const candidates = [...found.values()].sort((a, b) => a.workerNumber - b.workerNumber);
+  return Promise.all(
+    candidates.map(async (candidate) => {
+      try {
+        const payload = await kernelStatus(env, candidate.accountId, candidate.kernelRef);
+        const status = normalizeStatus(payload);
+        return {
+          worker_id: candidate.workerId,
+          worker_number: candidate.workerNumber,
+          account_id: candidate.accountId,
+          owner_slug: candidate.ownerSlug,
+          kernel_ref: candidate.kernelRef,
+          model_id: candidate.modelId,
+          resolution: candidate.resolution,
+          status,
+          lifecycle: lifecycle(status),
+        };
+      } catch (error) {
+        return {
+          worker_id: candidate.workerId,
+          worker_number: candidate.workerNumber,
+          account_id: candidate.accountId,
+          owner_slug: candidate.ownerSlug,
+          kernel_ref: candidate.kernelRef,
+          model_id: candidate.modelId,
+          resolution: candidate.resolution,
+          status: "PROBE_ERROR",
+          lifecycle: "needs_repair",
+          error: error instanceof Error ? error.message.slice(0, 500) : "unknown error",
+        };
+      }
+    }),
+  );
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
@@ -199,23 +272,38 @@ export async function v622ShardArtifacts(env: WorkerEnv, shardId: string): Promi
 export async function v622RecoveryStatus(env: WorkerEnv): Promise<Record<string, unknown>> {
   const runs = await Promise.all(RECOVERY_TARGETS.map((target) => targetStatus(env, target)));
   const finalization = await finalizationCandidates(env);
-  const all = [...runs, ...finalization];
-  const complete = all.filter((run) => run.lifecycle === "complete");
-  const inProgress = all.filter((run) => run.lifecycle === "in_progress");
-  const needsRepair = all.filter((run) => run.lifecycle === "needs_repair");
+  const matrixRuns = await dynamicMatrixRuns(env);
+  const matrixComplete = matrixRuns.filter((run) => run.lifecycle === "complete");
+  const matrixInProgress = matrixRuns.filter((run) => run.lifecycle === "in_progress");
+  const matrixNeedsRepair = matrixRuns.filter((run) => run.lifecycle === "needs_repair");
+  const matrixUnknown = matrixRuns.filter((run) => run.lifecycle === "unknown");
+  const historical = [...runs, ...finalization];
+  const complete = historical.filter((run) => run.lifecycle === "complete");
+  const inProgress = historical.filter((run) => run.lifecycle === "in_progress");
+  const needsRepair = historical.filter((run) => run.lifecycle === "needs_repair");
   return {
     project: "PNEUMONIA V6.2.2",
     generated_at: new Date().toISOString(),
     write_enabled: env.CGP_WRITE_ENABLED === "1",
     runs,
+    canonical_matrix_runs: matrixRuns,
+    canonical_matrix_summary: {
+      discovered: matrixRuns.length,
+      expected_total: 36,
+      complete: matrixComplete.length,
+      in_progress: matrixInProgress.length,
+      needs_repair: matrixNeedsRepair.length,
+      unknown: matrixUnknown.length,
+      remaining_not_created: Math.max(0, 36 - matrixRuns.length),
+    },
     finalization_candidates: finalization,
     summary: {
       complete: complete.length,
       in_progress: inProgress.length,
       needs_repair: needsRepair.length,
-      unknown: all.length - complete.length - inProgress.length - needsRepair.length,
+      unknown: historical.length - complete.length - inProgress.length - needsRepair.length,
     },
-    in_progress: inProgress,
-    needs_repair: needsRepair,
+    in_progress: [...matrixInProgress, ...inProgress],
+    needs_repair: [...matrixNeedsRepair, ...needsRepair],
   };
 }
