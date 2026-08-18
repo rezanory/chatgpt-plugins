@@ -1,3 +1,4 @@
+// Trigger-only touch: selection bridge semantics unchanged.
 interface SelectionEnv {
   CGP_PROJECT_CONTROL_TOKEN?: string;
   CGP_KAGGLE_KG02_TOKEN?: string;
