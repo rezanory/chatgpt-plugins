@@ -1,3 +1,4 @@
+# Trigger-only touch; diagnostic semantics unchanged.
 name: v622-self-hosted-governance-hash-diagnostic
 
 on:
