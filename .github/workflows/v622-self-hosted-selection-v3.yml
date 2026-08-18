@@ -1,3 +1,4 @@
+# Trigger-only touch; selection v3 semantics unchanged.
 name: v622-self-hosted-selection-v3
 
 on:
