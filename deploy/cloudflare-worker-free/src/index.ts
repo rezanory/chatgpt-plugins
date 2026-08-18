@@ -25,6 +25,7 @@ import {
 } from "./matrix-run";
 import { v622FinalizationPlan } from "./project-plan";
 import { v622RecoveryStatus, v622ShardArtifacts } from "./recovery";
+import { v622WaveStatus } from "./wave-status";
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -325,6 +326,15 @@ export default {
     if (url.pathname === "/recovery/v6-2-2/status" && request.method === "GET") {
       try {
         return json(await v622RecoveryStatus(env));
+      } catch (error) {
+        return errorResponse(error);
+      }
+    }
+
+    if (url.pathname === "/recovery/v6-2-2/wave-status" && request.method === "GET") {
+      try {
+        const wave = Number(url.searchParams.get("wave") ?? "2");
+        return json(await v622WaveStatus(env, wave));
       } catch (error) {
         return errorResponse(error);
       }
