@@ -130,6 +130,31 @@ async function corroborateCompletion(
   }
 }
 
+function relevantArtifactGroups(fileNames: string[]): Record<string, string[]> {
+  const normalized = fileNames.map((name) => name.replaceAll("\\", "/"));
+  const groups: Record<string, RegExp> = {
+    checkpoints: /(?:\/final_selected\.keras$|\/final_selected\.weights\.h5$|\/best_finetune\.weights\.h5$)/i,
+    metrics_reports: /(?:\/validation_metrics\.json$|\/final_report\.json$|\/training\/matrix_execution_report\.json$)/i,
+    predictions: /\/val_predictions\.csv$/i,
+    recipes_manifests: /(?:\/FROZEN_SHARED_TRAINING_RECIPE\.json$|\/config\.json$|\/effective_split_manifest\.csv$|\/effective_split_manifest\.sha256$|\/effective_split_summary\.json$|\/train_manifest\.csv$|\/val_manifest\.csv$)/i,
+  };
+  const output: Record<string, string[]> = {};
+  for (const [key, pattern] of Object.entries(groups)) {
+    output[key] = normalized.filter((name) => pattern.test(name)).slice(0, 32);
+  }
+  return output;
+}
+
+async function recoverRelevantArtifacts(env: WorkerEnv, task: CanonicalTask): Promise<Record<string, unknown>> {
+  const listing = await kernelOutputFiles(env, task.accountId, task.kernelRef, "", 300);
+  const fileNames = stringArray(listing.file_names);
+  return {
+    enumerated_file_count: listing.enumerated_file_count ?? fileNames.length,
+    truncated: listing.truncated ?? null,
+    groups: relevantArtifactGroups(fileNames),
+  };
+}
+
 function allowedOutputUrl(rawUrl: string): URL {
   const url = new URL(rawUrl);
   if (url.protocol !== "https:") throw new Error("Kaggle output URL is not HTTPS");
@@ -166,7 +191,7 @@ async function findValidationMetricsUrl(env: WorkerEnv, task: CanonicalTask): Pr
       headers: {
         Authorization: authorization(auth),
         "Content-Type": "application/json",
-        "User-Agent": "chatgpt-kaggle-v622-metrics/0.2",
+        "User-Agent": "chatgpt-kaggle-v622-metrics/0.3",
       },
       body: JSON.stringify(body),
     });
@@ -246,11 +271,15 @@ export async function v622ValidationWaveResults(env: WorkerEnv, wave: number): P
           completion_evidence: completionEvidence,
           completion_probe_error: completionProbeError,
           metrics: null,
+          artifacts: null,
         });
         continue;
       }
 
-      const metrics = await readValidationMetrics(env, task);
+      const [metrics, artifacts] = await Promise.all([
+        readValidationMetrics(env, task),
+        recoverRelevantArtifacts(env, task),
+      ]);
       results.push({
         worker_id: task.workerId,
         account_id: task.accountId,
@@ -262,6 +291,7 @@ export async function v622ValidationWaveResults(env: WorkerEnv, wave: number): P
         completion_evidence: completionEvidence,
         completion_probe_error: completionProbeError,
         metrics,
+        artifacts,
       });
     } catch (error) {
       results.push({
@@ -272,6 +302,7 @@ export async function v622ValidationWaveResults(env: WorkerEnv, wave: number): P
         kernel_ref: task.kernelRef,
         status: "READ_ERROR",
         metrics: null,
+        artifacts: null,
         error: error instanceof Error ? error.message.slice(0, 500) : "unknown error",
       });
     }
