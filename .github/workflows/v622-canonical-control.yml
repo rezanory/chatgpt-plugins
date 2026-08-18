@@ -99,18 +99,20 @@ jobs:
 
           value = json.loads(Path('/tmp/v622-wave-gate.json').read_text(encoding='utf-8'))
           assert value.get('project') == 'PNEUMONIA V6.2.2'
-          assert value.get('wave') == int(os.environ['GATE_WAVE'])
+          gate_wave = int(os.environ['GATE_WAVE'])
+          assert value.get('wave') == gate_wave
           tasks = value.get('tasks') or []
           assert len(tasks) == 6
           action = os.environ['ACTION']
 
           if action == 'launch_wave':
-              incomplete = [
-                  f"{row.get('worker_id')}:{row.get('status')}"
-                  for row in tasks if row.get('status') != 'COMPLETE'
-              ]
-              if incomplete:
-                  raise SystemExit(f'previous wave gate failed; incomplete={incomplete}')
+              # Canonical identity is fixed by wave/slot. The Worker performs the
+              # per-account predecessor gate and defers any lane whose exact
+              # predecessor is not COMPLETE. PROBE_ERROR is diagnostic only.
+              expected = [f'W{1 + (gate_wave - 1) * 6 + slot:02d}' for slot in range(6)]
+              actual = [str(row.get('worker_id') or '') for row in tasks]
+              if actual != expected:
+                  raise SystemExit(f'canonical gate identity mismatch; expected={expected} actual={actual}')
           else:
               wid = os.environ['WORKER_ID']
               row = next((item for item in tasks if item.get('worker_id') == wid), None)
@@ -239,6 +241,7 @@ jobs:
               'action': os.environ.get('ACTION'),
               'wave': os.environ.get('WAVE') or result.get('wave'),
               'worker_id': os.environ.get('WORKER_ID') or result.get('worker_id'),
+              'scheduling_policy': result.get('scheduling_policy'),
               'source_template': result.get('source_template'),
               'source_fingerprint': result.get('source_fingerprint'),
               'frozen_recipe_sha256': result.get('frozen_recipe_sha256'),
@@ -250,6 +253,8 @@ jobs:
                       'resolution': item.get('resolution'),
                       'kernel_ref': item.get('kernelRef'),
                       'action': item.get('action'),
+                      'predecessor_worker_id': item.get('predecessorWorkerId'),
+                      'predecessor_status': item.get('predecessorStatus'),
                   }
                   for item in (result.get('results') or [])
               ],
