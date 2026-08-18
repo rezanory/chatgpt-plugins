@@ -1,5 +1,6 @@
 name: v622-self-hosted-fix-backbone-launch-hash
 
+# trigger: exact JS serialization hash guard patch
 on:
   workflow_dispatch:
   push:
