@@ -147,3 +147,5 @@ jobs:
         shell: powershell
         run: |
           Remove-Item "$env:RUNNER_TEMP\v622-governance-source-bundle" -Recurse -Force -ErrorAction SilentlyContinue
+
+# trigger: governance-source-bundle-v1
