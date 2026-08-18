@@ -1,0 +1,67 @@
+name: v622-wave2-progress
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-wave2-progress.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for W07-W12 to appear in live Kaggle inventory
+        shell: bash
+        run: |
+          url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/status'
+          found=0
+          for attempt in $(seq 1 36); do
+            code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-live.json -w '%{http_code}' "$url" || true)"
+            if [ "$code" = '200' ] && python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('/tmp/v622-live.json').read_text(encoding='utf-8'))
+          rows = value.get('canonical_matrix_runs') or []
+          by_id = {x.get('worker_id'): x for x in rows}
+          assert all(f'W{i:02d}' in by_id for i in range(7, 13))
+          PY
+            then
+              found=1
+              break
+            fi
+            sleep 10
+          done
+          echo "FOUND_WAVE2=$found" >> "$GITHUB_ENV"
+
+      - name: Publish Wave 2 live status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('/tmp/v622-live.json')
+          value = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+          rows = [
+              x for x in (value.get('canonical_matrix_runs') or [])
+              if 7 <= int(str(x.get('worker_id') or 'W0')[1:] or 0) <= 12
+          ]
+          body = {
+              'wave': 2,
+              'found_all_six': len(rows) == 6,
+              'canonical_matrix_summary': value.get('canonical_matrix_summary'),
+              'jobs': rows,
+          }
+          Path('/tmp/v622-wave2-live.md').write_text(
+              '## V6.2.2 Wave 2 live Kaggle status\n\n```json\n'
+              + json.dumps(body, indent=2) + '\n```\n',
+              encoding='utf-8',
+          )
+          PY
+          gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/v622-wave2-live.md
