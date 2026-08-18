@@ -1,0 +1,45 @@
+name: v622-metrics-schema-report
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-metrics-schema-report.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read one canonical metrics payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/shard-artifacts?shard=RESULTS-W1'
+          curl --fail --silent --show-error --max-time 180 "$url" -o /tmp/w1.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          v=json.loads(Path('/tmp/w1.json').read_text())
+          row=(v.get('results') or [])[0]
+          m=row.get('metrics')
+          leaves=[]
+          def walk(x,p=''):
+              if isinstance(x,dict):
+                  for k,val in x.items(): walk(val, f'{p}.{k}' if p else str(k))
+              elif isinstance(x,list):
+                  for i,val in enumerate(x): walk(val, f'{p}[{i}]')
+              elif isinstance(x,(int,float,str,bool)) or x is None:
+                  leaves.append({'path':p,'value':x})
+          walk(m)
+          out={'worker_id':row.get('worker_id'),'model_id':row.get('model_id'),'resolution':row.get('resolution'),'metric_leaves':leaves}
+          Path('/tmp/schema.md').write_text('## V6.2.2 validation metrics schema probe\n\n```json\n'+json.dumps(out,indent=2)+'\n```\n')
+          PY
+      - name: Publish schema probe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment 18 --repo "$GITHUB_REPOSITORY" --body-file /tmp/schema.md
