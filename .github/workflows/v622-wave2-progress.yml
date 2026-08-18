@@ -15,12 +15,12 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for W07-W12 to appear in live Kaggle inventory
+      - name: Read W07-W12 from live Kaggle inventory
         shell: bash
         run: |
           url='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/status'
           found=0
-          for attempt in $(seq 1 36); do
+          for attempt in $(seq 1 12); do
             code="$(curl --silent --show-error --max-time 120 -o /tmp/v622-live.json -w '%{http_code}' "$url" || true)"
             if [ "$code" = '200' ] && python - <<'PY'
           import json
@@ -38,7 +38,7 @@ jobs:
           done
           echo "FOUND_WAVE2=$found" >> "$GITHUB_ENV"
 
-      - name: Publish Wave 2 live status
+      - name: Publish refreshed Wave 2 live status
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -59,7 +59,7 @@ jobs:
               'jobs': rows,
           }
           Path('/tmp/v622-wave2-live.md').write_text(
-              '## V6.2.2 Wave 2 live Kaggle status\n\n```json\n'
+              '## V6.2.2 Wave 2 live Kaggle status (refresh)\n\n```json\n'
               + json.dumps(body, indent=2) + '\n```\n',
               encoding='utf-8',
           )
