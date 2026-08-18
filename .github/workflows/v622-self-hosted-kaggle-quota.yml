@@ -1,3 +1,4 @@
+# Trigger read-only quota probe on self-hosted runner.
 name: v622-self-hosted-kaggle-quota
 
 on:
