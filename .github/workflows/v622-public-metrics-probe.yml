@@ -1,0 +1,36 @@
+name: v622-public-metrics-probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-public-metrics-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe public Kaggle kernel output API
+        shell: bash
+        run: |
+          set -u
+          url='https://api.kaggle.com/v1/kernels.KernelsApiService/ListKernelSessionOutput'
+          body='{"userName":"azadka","kernelSlug":"pneumonia-v6-2-2-train-w01-m01-r224","pageSize":5}'
+          code="$(curl --silent --show-error --max-time 60 -o /tmp/kaggle-probe.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data "$body" "$url" || true)"
+          echo "HTTP=$code"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/kaggle-probe.json')
+          text=p.read_text(errors='replace') if p.exists() else ''
+          print(text[:4000])
+          try:
+              v=json.loads(text)
+              print('FILES=', len(v.get('files') or []))
+          except Exception:
+              pass
+          PY
