@@ -23,6 +23,7 @@ import {
   repairV622Worker,
   v622WavePlan,
 } from "./matrix-run";
+import { v622FinalizationPlan } from "./project-plan";
 import { v622RecoveryStatus, v622ShardArtifacts } from "./recovery";
 
 const READ_ONLY = {
@@ -332,6 +333,14 @@ export default {
     if (url.pathname === "/recovery/v6-2-2/shard-artifacts" && request.method === "GET") {
       try {
         return json(await v622ShardArtifacts(env, url.searchParams.get("shard") ?? ""));
+      } catch (error) {
+        return errorResponse(error);
+      }
+    }
+
+    if (url.pathname === "/recovery/v6-2-2/finalization-plan" && request.method === "GET") {
+      try {
+        return json(await v622FinalizationPlan(env));
       } catch (error) {
         return errorResponse(error);
       }
