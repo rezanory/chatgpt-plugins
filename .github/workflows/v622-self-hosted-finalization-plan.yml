@@ -1,0 +1,52 @@
+name: v622-self-hosted-finalization-plan
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-self-hosted-finalization-plan.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-finalization-plan-readonly
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    runs-on: [self-hosted, windows, x64, v622]
+    steps:
+      - name: Fetch canonical finalization plan
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/finalization-plan'
+          $out = Join-Path $env:RUNNER_TEMP 'v622-finalization-plan.json'
+          $value = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 120
+          $json = $value | ConvertTo-Json -Depth 100
+          [System.IO.File]::WriteAllText($out, $json, [System.Text.UTF8Encoding]::new($false))
+          if ($value.project -ne 'PNEUMONIA V6.2.2') { throw 'Unexpected project in finalization plan.' }
+          $names = @('freeze_selected_recipe.py','run_backbone_comparison.py','backbone_ensemble_selection.py','evaluate_saved_champion_test.py')
+          $summary = @()
+          foreach ($name in $names) {
+            $m = $value.modules | Where-Object name -eq $name | Select-Object -First 1
+            if ($null -eq $m) { $summary += "$name:MISSING" } else { $summary += "$name:$($m.present):$($m.sha256)" }
+          }
+          $body = "## V6.2.2 finalization-plan receipt`n`n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n- Source: canonical Worker read-only finalization-plan endpoint.`n- Modules: $($summary -join '; ')`n- No Kaggle compute, training, HPO, locked test, or external evaluation launched.`n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
+
+      - name: Upload private finalization plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: v622-finalization-plan
+          path: ${{ runner.temp }}/v622-finalization-plan.json
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 6
