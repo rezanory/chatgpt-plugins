@@ -16,6 +16,7 @@ $replacements = [ordered]@{
     '& $python -c "import sys,struct; print(sys.version); raise SystemExit(0 if sys.version_info[:3] == (3,12,7) and struct.calcsize(''P'')*8 == 64 else 1)"' = '& $python -c "import sys,struct; print(sys.version); raise SystemExit(0 if sys.version_info[:3] == (3,12,7) and struct.calcsize(''P'')*8 == 64 else 1)" | Out-Host'
     '& $php -r ''echo PHP_VERSION, PHP_EOL; if (PHP_MAJOR_VERSION !== 8 || PHP_MINOR_VERSION !== 4 || PHP_INT_SIZE !== 8) { exit(1); }''' = '& $php -r ''echo PHP_VERSION, PHP_EOL; if (PHP_MAJOR_VERSION !== 8 || PHP_MINOR_VERSION !== 4 || PHP_INT_SIZE !== 8) { exit(1); }'' | Out-Host'
     '& $php $composer --version --no-ansi' = '& $php $composer --version --no-ansi | Out-Host'
+    "Run `$Git @('clone','--no-checkout','--no-hardlinks',`$Source,`$Target)" = "Run `$Git @('clone','--no-checkout','--no-hardlinks',`$Source,`$Target)`n    Run `$Git @('-C',`$Target,'config','core.autocrlf','false')`n    Run `$Git @('-C',`$Target,'config','core.eol','lf')"
 }
 
 foreach ($entry in $replacements.GetEnumerator()) {
