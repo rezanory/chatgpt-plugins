@@ -1,0 +1,190 @@
+name: Bootstrap Three Project Self-Hosted Runners
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/runner-bootstrap-trigger/three-project-runners.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  bootstrap:
+    name: Bootstrap isolated project runners
+    if: github.event_name == 'workflow_dispatch' || (github.actor == 'rezanory' && github.head_ref == 'ops/bootstrap-extra-runners-3')
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 25
+    steps:
+      - name: Register three repository-scoped runners without modifying v622
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SELF_HOSTED_RUNNER_PAT: ${{ secrets.SELF_HOSTED_RUNNER_PAT }}
+          GH_ADMIN_TOKEN: ${{ secrets.GH_ADMIN_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+
+          function Get-AdminToken {
+            foreach ($candidate in @($env:SELF_HOSTED_RUNNER_PAT,$env:GH_ADMIN_TOKEN,$env:GH_PAT,$env:PERSONAL_ACCESS_TOKEN)) {
+              if (-not [string]::IsNullOrWhiteSpace($candidate)) { return $candidate.Trim() }
+            }
+            if (Get-Command gh -ErrorAction SilentlyContinue) {
+              try {
+                $candidate = (& gh auth token 2>$null | Out-String).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($candidate)) { return $candidate }
+              } catch { }
+            }
+            if (Get-Command git -ErrorAction SilentlyContinue) {
+              try {
+                $filled = "protocol=https`nhost=github.com`n`n" | git credential fill 2>$null
+                foreach ($line in @($filled)) {
+                  if ($line -match '^password=(.+)$' -and -not [string]::IsNullOrWhiteSpace($Matches[1])) { return $Matches[1].Trim() }
+                }
+              } catch { }
+            }
+            return $null
+          }
+
+          function Invoke-GhApi([string]$Method,[string]$Uri,[string]$Token) {
+            $headers = @{
+              Authorization = "Bearer $Token"
+              Accept = 'application/vnd.github+json'
+              'X-GitHub-Api-Version' = '2022-11-28'
+              'User-Agent' = 'rezanory-three-project-runner-bootstrap'
+            }
+            return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers -TimeoutSec 60
+          }
+
+          $token = Get-AdminToken
+          if ([string]::IsNullOrWhiteSpace($token)) { throw 'BOOTSTRAP_BLOCKED_NO_REPO_ADMIN_CREDENTIAL' }
+          $identity = Invoke-GhApi GET 'https://api.github.com/user' $token
+          if ([string]$identity.login -ne 'rezanory') { throw "BOOTSTRAP_BLOCKED_UNEXPECTED_IDENTITY: $($identity.login)" }
+
+          $targets = @(
+            [ordered]@{ Repo='rezanory/chat-project'; Label='chat-project'; Suffix='chat-project-extra-01' },
+            [ordered]@{ Repo='rezanory/online-visit'; Label='online-visit'; Suffix='online-visit-extra-02' },
+            [ordered]@{ Repo='rezanory/MeydanDar'; Label='meydandar'; Suffix='meydandar-extra-03' }
+          )
+
+          foreach ($target in $targets) {
+            $repo = Invoke-GhApi GET "https://api.github.com/repos/$($target.Repo)" $token
+            if (-not [bool]$repo.permissions.admin) { throw "BOOTSTRAP_BLOCKED_REPO_ADMIN_REQUIRED: $($target.Repo)" }
+          }
+
+          # Snapshot active v622 services before any work. We never stop/reconfigure these.
+          $v622Before = @(Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'actions.runner.rezanory-chatgpt-plugins.*v622*' } | Select-Object Name,Status,StartType)
+          if ($v622Before.Count -lt 2) { throw "V622_SAFETY_GATE_FAILED: expected at least two v622 services, found $($v622Before.Count)" }
+          if (@($v622Before | Where-Object { $_.Status -ne 'Running' }).Count -gt 0) { throw 'V622_SAFETY_GATE_FAILED: a v622 service is not Running' }
+
+          $baseRoot = 'C:\actions-runners-extra'
+          New-Item -ItemType Directory -Force -Path $baseRoot | Out-Null
+
+          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/actions/runner/releases/latest' -Headers @{ 'User-Agent'='rezanory-three-project-runner-bootstrap' } -TimeoutSec 60
+          $asset = @($release.assets | Where-Object { $_.name -like 'actions-runner-win-x64-*.zip' }) | Select-Object -First 1
+          if (-not $asset) { throw 'RUNNER_RELEASE_NOT_FOUND' }
+          $archive = Join-Path $env:RUNNER_TEMP $asset.name
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archive -UseBasicParsing -TimeoutSec 180
+
+          $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          $results = @()
+
+          foreach ($target in $targets) {
+            $runnerName = "$env:COMPUTERNAME-$($target.Suffix)"
+            $root = Join-Path $baseRoot $target.Suffix
+            $localRunner = Join-Path $root '.runner'
+            $remoteList = Invoke-GhApi GET "https://api.github.com/repos/$($target.Repo)/actions/runners?per_page=100" $token
+            $remote = @($remoteList.runners | Where-Object { $_.name -eq $runnerName }) | Select-Object -First 1
+
+            if ($remote -and -not (Test-Path $localRunner)) { throw "REMOTE_NAME_COLLISION_WITHOUT_LOCAL_CONFIG: $runnerName" }
+
+            if (-not (Test-Path $localRunner)) {
+              if (Test-Path $root) {
+                $entries = @(Get-ChildItem -Force -Path $root -ErrorAction SilentlyContinue)
+                if ($entries.Count -gt 0) { throw "NONEMPTY_UNCONFIGURED_RUNNER_DIR: $root" }
+              }
+              New-Item -ItemType Directory -Force -Path $root | Out-Null
+              Expand-Archive -Path $archive -DestinationPath $root -Force
+              $registration = Invoke-GhApi POST "https://api.github.com/repos/$($target.Repo)/actions/runners/registration-token" $token
+              if ([string]::IsNullOrWhiteSpace([string]$registration.token)) { throw "REGISTRATION_TOKEN_MISSING: $($target.Repo)" }
+              Push-Location $root
+              try {
+                & .\config.cmd --unattended --url "https://github.com/$($target.Repo)" --token ([string]$registration.token) --name $runnerName --labels "$($target.Label),local-extra" --work '_work'
+                if ($LASTEXITCODE -ne 0) { throw "CONFIG_FAILED: $($target.Repo)" }
+              } finally { Pop-Location }
+            }
+
+            $persistence = 'detached'
+            $serviceFile = Join-Path $root '.service'
+            if ($isAdmin -and (Test-Path (Join-Path $root 'svc.cmd'))) {
+              Push-Location $root
+              try {
+                if (-not (Test-Path $serviceFile)) {
+                  & .\svc.cmd install
+                  if ($LASTEXITCODE -ne 0) { throw 'service-install-failed' }
+                }
+                & .\svc.cmd start
+                if ($LASTEXITCODE -ne 0) { throw 'service-start-failed' }
+                $persistence = 'windows-service'
+              } catch {
+                Write-Host "Service mode unavailable for $runnerName; using detached listener: $($_.Exception.Message)"
+              } finally { Pop-Location }
+            }
+
+            if ($persistence -ne 'windows-service') {
+              $tracking = $env:RUNNER_TRACKING_ID
+              Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue
+              try { Start-Process -FilePath (Join-Path $root 'run.cmd') -WorkingDirectory $root -WindowStyle Hidden }
+              finally { if ($null -ne $tracking) { $env:RUNNER_TRACKING_ID = $tracking } }
+              $startup = [Environment]::GetFolderPath('Startup')
+              if (-not [string]::IsNullOrWhiteSpace($startup)) {
+                $startupFile = Join-Path $startup "github-runner-$($target.Suffix).cmd"
+                Set-Content -Path $startupFile -Encoding ASCII -Value "@echo off`r`ncd /d `"$root`"`r`nstart `"`" /min cmd /c run.cmd`r`n"
+                $persistence = 'detached+user-startup'
+              }
+            }
+
+            $results += [pscustomobject]@{ repository=$target.Repo; runner=$runnerName; label=$target.Label; root=$root; persistence=$persistence; status='pending' }
+          }
+          Remove-Item -Path $archive -Force -ErrorAction SilentlyContinue
+
+          for ($attempt=1; $attempt -le 24; $attempt++) {
+            $onlineCount = 0
+            foreach ($r in $results) {
+              $list = Invoke-GhApi GET "https://api.github.com/repos/$($r.repository)/actions/runners?per_page=100" $token
+              $remote = @($list.runners | Where-Object { $_.name -eq $r.runner }) | Select-Object -First 1
+              $r.status = if ($remote) { [string]$remote.status } else { 'not-visible' }
+              if ($remote -and $remote.status -eq 'online') { $onlineCount++ }
+            }
+            if ($onlineCount -eq 3) { break }
+            Start-Sleep -Seconds 5
+          }
+
+          # Verify v622 services are still running and unchanged in count/name.
+          $v622After = @(Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'actions.runner.rezanory-chatgpt-plugins.*v622*' } | Select-Object Name,Status,StartType)
+          $beforeNames = @($v622Before.Name | Sort-Object)
+          $afterNames = @($v622After.Name | Sort-Object)
+          $v622NamesSame = (($beforeNames -join '|') -eq ($afterNames -join '|'))
+          $v622Running = (@($v622After | Where-Object { $_.Status -eq 'Running' }).Count -eq $v622Before.Count)
+
+          $safe = [ordered]@{
+            computer = $env:COMPUTERNAME
+            existing_v622_modified = (-not ($v622NamesSame -and $v622Running))
+            v622_service_names = $afterNames
+            targets = @($results)
+          }
+          $safeJson = $safe | ConvertTo-Json -Depth 8
+          Write-Host $safeJson
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Three project runners`n`n``````json`n$safeJson`n```````n"
+
+          $body = "## Three project self-hosted runner bootstrap`n`n``````json`n$safeJson`n```````n"
+          $headers = @{ Authorization="Bearer $env:GITHUB_TOKEN"; Accept='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28' }
+          Invoke-RestMethod -Method POST -Uri 'https://api.github.com/repos/rezanory/chatgpt-plugins/issues/18/comments' -Headers $headers -ContentType 'application/json' -Body (@{body=$body}|ConvertTo-Json -Depth 6) | Out-Null
+
+          if (-not ($v622NamesSame -and $v622Running)) { throw 'V622_POST_BOOTSTRAP_SAFETY_CHECK_FAILED' }
+          if (@($results | Where-Object { $_.status -eq 'online' }).Count -ne 3) { throw 'NOT_ALL_PROJECT_RUNNERS_ONLINE' }
