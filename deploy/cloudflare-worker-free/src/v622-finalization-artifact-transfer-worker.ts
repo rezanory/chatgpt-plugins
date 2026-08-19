@@ -1,0 +1,166 @@
+import { kernelStatus, type WorkerEnv } from "./kaggle";
+
+type Env = WorkerEnv & { CGP_PROJECT_CONTROL_TOKEN?: string };
+
+type Rec = Record<string, unknown>;
+const SOURCE_ACCOUNT = "kg-05";
+const SOURCE_OWNER = "trickermark";
+const SOURCE_SLUG = "pneumonia-v6-2-2-backbone-m06-r224";
+const SOURCE_REF = `${SOURCE_OWNER}/${SOURCE_SLUG}`;
+const DEST_OWNER = "azadka";
+const DATASET_SLUG = "pneumonia-v6-2-2-finalization-artifacts";
+const DATASET_REF = `${DEST_OWNER}/${DATASET_SLUG}`;
+const KERNEL_API = "https://api.kaggle.com/v1/kernels.KernelsApiService";
+const BLOB_CONNECT = "https://api.kaggle.com/v1/blobs.BlobApiService/ApiStartBlobUpload";
+const BLOB_LEGACY = "https://api.kaggle.com/api/v1/blobs/upload";
+const DATASET_API = "https://api.kaggle.com/v1/datasets.DatasetApiService";
+const PAGE_SIZE = 100;
+const MAX_PAGES = 20;
+
+const TARGETS = [
+  ["M06__convnext_tiny__config.json", "/backbone_comparison/M06__convnext_tiny__seed-42/config.json", "167cb7b1d17b3978f2b4f47f55e315a1d4fae293006d897d25d13b5074dadcea"],
+  ["M06__convnext_tiny__final_selected.keras", "/backbone_comparison/M06__convnext_tiny__seed-42/final_selected.keras", null],
+  ["M06__densenet121__config.json", "/backbone_comparison/M06__densenet121__seed-42/config.json", "c9b3107715849a633d90689902298c110bbb7c9c1bc1c8a6ac9ff1693f55386e"],
+  ["M06__densenet121__final_selected.keras", "/backbone_comparison/M06__densenet121__seed-42/final_selected.keras", null],
+  ["M06__resnet50v2__config.json", "/backbone_comparison/M06__resnet50v2__seed-42/config.json", "dce7845aa7c07ccb913cded8e9ff368e7061f3a43723ded21f8a94dba9fab697"],
+  ["M06__resnet50v2__final_selected.keras", "/backbone_comparison/M06__resnet50v2__seed-42/final_selected.keras", null],
+  ["FROZEN_BACKBONE_ENSEMBLE_POLICY.json", "/backbone_selection/FROZEN_BACKBONE_ENSEMBLE_POLICY.json", "7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861"],
+] as const;
+const ALLOWED_DEST = new Set(TARGETS.map(row => row[0]));
+
+function rec(value: unknown): Rec { return value && typeof value === "object" && !Array.isArray(value) ? value as Rec : {}; }
+function json(value: unknown, status = 200): Response { return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } }); }
+function authorized(request: Request, env: Env): boolean {
+  const token = env.CGP_PROJECT_CONTROL_TOKEN?.trim();
+  return Boolean(token && token.length >= 32 && request.headers.get("authorization") === `Bearer ${token}`);
+}
+function authHeader(username: string, token: string): string { return token.startsWith("KGAT_") ? `Bearer ${token}` : `Basic ${btoa(`${username}:${token}`)}`; }
+function normalizedStatus(raw: Rec): string {
+  const session = rec(raw.session);
+  for (const value of [raw.status, raw.statusName, raw.status_name, raw.state, raw.sessionStatus, session.status, session.statusName, session.state]) {
+    if (typeof value === "string" && value.trim()) return value.trim().toUpperCase();
+  }
+  return "UNKNOWN";
+}
+function nextPageToken(value: Rec): string {
+  if (typeof value.nextPageToken === "string") return value.nextPageToken;
+  if (typeof value.next_page_token === "string") return value.next_page_token;
+  return "";
+}
+async function parseResponse(response: Response): Promise<Rec> {
+  const text = await response.text();
+  let value: Rec = {};
+  try { value = rec(text ? JSON.parse(text) : {}); } catch { throw new Error(`Kaggle non-JSON HTTP ${response.status}`); }
+  if (!response.ok) throw new Error(String(value.message ?? value.error ?? `Kaggle HTTP ${response.status}`).slice(0, 1000));
+  return value;
+}
+async function listSourceOutput(env: Env): Promise<Array<{ fileName: string; url: string }>> {
+  const token = env.CGP_KAGGLE_KG05_TOKEN?.trim();
+  if (!token) throw new Error("kg-05 token missing");
+  const files: Array<{ fileName: string; url: string }> = [];
+  let pageToken = "";
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const body: Rec = { userName: SOURCE_OWNER, kernelSlug: SOURCE_SLUG, pageSize: PAGE_SIZE };
+    if (pageToken) body.pageToken = pageToken;
+    const response = await fetch(`${KERNEL_API}/ListKernelSessionOutput`, { method: "POST", headers: { Authorization: authHeader(SOURCE_OWNER, token), "Content-Type": "application/json", "User-Agent": "v622-kaggle-artifact-transfer/1.0" }, body: JSON.stringify(body) });
+    const value = await parseResponse(response);
+    for (const item of Array.isArray(value.files) ? value.files : []) {
+      const row = rec(item);
+      if (typeof row.fileName === "string" && typeof row.url === "string") files.push({ fileName: row.fileName.replaceAll("\\", "/"), url: row.url });
+    }
+    const next = nextPageToken(value);
+    if (!next || next === pageToken) break;
+    pageToken = next;
+  }
+  return files;
+}
+async function plan(env: Env): Promise<Rec> {
+  const status = normalizedStatus(await kernelStatus(env, SOURCE_ACCOUNT, SOURCE_REF));
+  if (status !== "COMPLETE") throw new Error(`source kernel not COMPLETE: ${status}`);
+  const files = await listSourceOutput(env);
+  const targets = TARGETS.map(([destName, suffix, expected]) => {
+    const matches = files.filter(file => file.fileName.endsWith(suffix));
+    if (matches.length !== 1) throw new Error(`${suffix} must resolve exactly once; found ${matches.length}`);
+    return { dest_name: destName, source_file_name: matches[0].fileName, source_url: matches[0].url, expected_sha256: expected };
+  });
+  return { project: "PNEUMONIA V6.2.2", stage: "KAGGLE_TO_KAGGLE_ARTIFACT_TRANSFER", source_kernel: SOURCE_REF, destination_dataset: DATASET_REF, target_count: targets.length, targets, model_compute: false, locked_test: false, external_validation: false };
+}
+async function startUpload(env: Env, body: Rec): Promise<Rec> {
+  const token = env.CGP_KAGGLE_MASTER_TOKEN?.trim();
+  if (!token) throw new Error("master token missing");
+  const name = String(body.dest_name ?? "");
+  const bytes = Number(body.bytes ?? 0);
+  if (!ALLOWED_DEST.has(name as never)) throw new Error("destination file name not allowlisted");
+  if (!Number.isSafeInteger(bytes) || bytes <= 0 || bytes > 4_000_000_000) throw new Error("invalid upload byte count");
+  const common = { name, contentLength: bytes, contentType: "application/octet-stream", lastModifiedEpochSeconds: Math.floor(Date.now() / 1000) };
+  const attempts = [
+    { url: BLOB_CONNECT, payload: { ...common, type: "DATASET" } },
+    { url: BLOB_CONNECT, payload: { ...common, type: "dataset" } },
+    { url: BLOB_LEGACY, payload: { ...common, type: "dataset" } },
+  ];
+  let last = "";
+  for (const attempt of attempts) {
+    try {
+      const response = await fetch(attempt.url, { method: "POST", headers: { Authorization: authHeader(DEST_OWNER, token), "Content-Type": "application/json", "User-Agent": "v622-kaggle-artifact-transfer/1.0" }, body: JSON.stringify(attempt.payload) });
+      const text = await response.text();
+      const value = rec(text ? JSON.parse(text) : {});
+      const uploadToken = typeof value.token === "string" ? value.token : "";
+      const createUrl = typeof value.createUrl === "string" ? value.createUrl : typeof value.create_url === "string" ? value.create_url : "";
+      if (response.ok && uploadToken && createUrl) return { dest_name: name, bytes, token: uploadToken, create_url: createUrl };
+      last = `${response.status}:${String(value.message ?? value.error ?? text).slice(0, 400)}`;
+    } catch (error) { last = error instanceof Error ? error.message : "upload init failed"; }
+  }
+  throw new Error(`could not start Kaggle blob upload: ${last}`);
+}
+async function finalizeDataset(env: Env, body: Rec): Promise<Rec> {
+  const token = env.CGP_KAGGLE_MASTER_TOKEN?.trim();
+  if (!token) throw new Error("master token missing");
+  const rawTokens = Array.isArray(body.tokens) ? body.tokens : [];
+  if (rawTokens.length !== TARGETS.length) throw new Error(`expected ${TARGETS.length} upload tokens`);
+  const files = rawTokens.map(item => {
+    const row = rec(item); const name = String(row.dest_name ?? ""); const uploadToken = String(row.token ?? "");
+    if (!ALLOWED_DEST.has(name as never) || uploadToken.length < 10) throw new Error("invalid upload token row");
+    return { token: uploadToken };
+  });
+  const headers = { Authorization: authHeader(DEST_OWNER, token), "Content-Type": "application/json", "User-Agent": "v622-kaggle-artifact-transfer/1.0" };
+  const createBody = { ownerSlug: DEST_OWNER, slug: DATASET_SLUG, title: "PNEUMONIA V6.2.2 Finalization Artifacts", licenseName: "other", isPrivate: true, description: "Private V6.2.2 finalization artifacts; not for publication. Contains frozen selected checkpoints/configs and development-only ensemble policy.", files };
+  let response = await fetch(`${DATASET_API}/CreateDataset`, { method: "POST", headers, body: JSON.stringify(createBody) });
+  let text = await response.text();
+  let value = rec(text ? JSON.parse(text) : {});
+  const conflict = response.status === 409 || /already|exists|in use|conflict/i.test(String(value.error ?? value.message ?? ""));
+  if (!response.ok && !conflict) throw new Error(`CreateDataset ${response.status}: ${String(value.error ?? value.message ?? text).slice(0, 700)}`);
+  if (conflict) {
+    const versionBody = { ownerSlug: DEST_OWNER, datasetSlug: DATASET_SLUG, body: { versionNotes: "Refresh frozen V6.2.2 finalization artifacts", files } };
+    response = await fetch(`${DATASET_API}/CreateDatasetVersion`, { method: "POST", headers, body: JSON.stringify(versionBody) });
+    text = await response.text(); value = rec(text ? JSON.parse(text) : {});
+    if (!response.ok) throw new Error(`CreateDatasetVersion ${response.status}: ${String(value.error ?? value.message ?? text).slice(0, 700)}`);
+    return { action: "versioned", dataset_ref: DATASET_REF, response: value };
+  }
+  if (value.error) throw new Error(`CreateDataset rejected: ${String(value.error).slice(0, 700)}`);
+  return { action: "created", dataset_ref: DATASET_REF, response: value };
+}
+async function datasetStatus(env: Env): Promise<Rec> {
+  const token = env.CGP_KAGGLE_MASTER_TOKEN?.trim();
+  if (!token) throw new Error("master token missing");
+  const response = await fetch(`${DATASET_API}/GetDatasetStatus`, { method: "POST", headers: { Authorization: authHeader(DEST_OWNER, token), "Content-Type": "application/json", "User-Agent": "v622-kaggle-artifact-transfer/1.0" }, body: JSON.stringify({ ownerSlug: DEST_OWNER, datasetSlug: DATASET_SLUG }) });
+  const value = await parseResponse(response);
+  return { dataset_ref: DATASET_REF, status: String(value.status ?? "UNKNOWN").toUpperCase(), raw: value };
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/healthz" && request.method === "GET") return json({ service: "v622-finalization-artifact-transfer", status: "ready", protected: true });
+    if (!authorized(request, env)) return new Response("Forbidden", { status: 403 });
+    try {
+      const body = request.method === "POST" ? rec(await request.json().catch(() => ({}))) : {};
+      if (url.pathname === "/control/v6-2-2/finalization-artifacts/plan" && request.method === "POST") return json(await plan(env));
+      if (url.pathname === "/control/v6-2-2/finalization-artifacts/start-upload" && request.method === "POST") return json(await startUpload(env, body));
+      if (url.pathname === "/control/v6-2-2/finalization-artifacts/finalize" && request.method === "POST") return json(await finalizeDataset(env, body));
+      if (url.pathname === "/control/v6-2-2/finalization-artifacts/status" && request.method === "POST") return json(await datasetStatus(env));
+      return new Response("Not found", { status: 404 });
+    } catch (error) {
+      return json({ ok: false, error_type: error instanceof Error ? error.name : "Error", error: error instanceof Error ? error.message.slice(0, 1200) : "unknown error", model_compute: false }, 502);
+    }
+  },
+} satisfies ExportedHandler<Env>;
