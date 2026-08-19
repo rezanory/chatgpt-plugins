@@ -7,7 +7,7 @@ const OWNER = "azadka";
 const TARGET_SLUG = "pneumonia-v6-2-2-finalization-master";
 const TARGET_REF = `${OWNER}/${TARGET_SLUG}`;
 const TARGET_TITLE = "PNEUMONIA V6.2.2 FINALIZATION MASTER";
-const DATASET_REF = "azadka/pneumonia-v6-2-2-finalization-artifacts";
+const DATASET_REF = "trickermark/pneumonia-v6-2-2-finalization-artifacts";
 const BACKBONE_REF = "trickermark/pneumonia-v6-2-2-backbone-m06-r224";
 const RECIPE_SHA256 = "27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f";
 const POLICY_FILE_SHA256 = "7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861";
@@ -20,7 +20,7 @@ import hashlib, json
 from pathlib import Path
 INPUT=Path('/kaggle/input')
 OUT=Path('/kaggle/working/PNEUMONIA_V62_2_FINALIZATION_MASTER'); OUT.mkdir(parents=True,exist_ok=True)
-DATASET_REF='azadka/pneumonia-v6-2-2-finalization-artifacts'
+DATASET_REF='trickermark/pneumonia-v6-2-2-finalization-artifacts'
 BACKBONE_REF='trickermark/pneumonia-v6-2-2-backbone-m06-r224'
 RECIPE_SHA='27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f'
 POLICY_FILE_SHA='7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861'
@@ -69,7 +69,7 @@ async function sha256Text(text:string):Promise<string>{const d=await crypto.subt
 async function saveKernel(env: Env): Promise<Rec> {
  const token=env.CGP_KAGGLE_MASTER_TOKEN?.trim(); if(!token) throw new Error("master Kaggle token missing");
  const request:Rec={slug:TARGET_REF,newTitle:TARGET_TITLE,text:FREEZE_SCRIPT,language:"python",kernelType:"script",kernelExecutionType:"SAVE_AND_RUN_ALL",isPrivate:true,enableGpu:false,enableTpu:false,enableInternet:false,kernelDataSources:[],datasetDataSources:[DATASET_REF],competitionDataSources:[],modelDataSources:[]};
- const response=await fetch(`${API_ROOT}/SaveKernel`,{method:"POST",headers:{Authorization:authHeader(token),"Content-Type":"application/json","User-Agent":"chatgpt-v622-finalization-freeze/2.0"},body:JSON.stringify(request)});
+ const response=await fetch(`${API_ROOT}/SaveKernel`,{method:"POST",headers:{Authorization:authHeader(token),"Content-Type":"application/json","User-Agent":"chatgpt-v622-finalization-freeze/2.1"},body:JSON.stringify(request)});
  const text=await response.text(); let value:Rec={}; try{value=rec(text?JSON.parse(text):{});}catch{throw new Error(`SaveKernel non-JSON HTTP ${response.status}`);}
  const code=typeof value.code==="number"?value.code:undefined; if(!response.ok||(code!==undefined&&code>=400)) throw new Error(String(value.message??`SaveKernel HTTP ${response.status}`).slice(0,1000));
  const badDatasets=Array.isArray(value.invalidDatasetSources)?value.invalidDatasetSources:[]; const badKernels=Array.isArray(value.invalidKernelSources)?value.invalidKernelSources:[];
@@ -78,7 +78,7 @@ async function saveKernel(env: Env): Promise<Rec> {
 }
 async function outputReceipt(env:Env):Promise<Rec|null>{
  const token=env.CGP_KAGGLE_MASTER_TOKEN?.trim(); if(!token) throw new Error("master Kaggle token missing");
- const response=await fetch(`${API_ROOT}/ListKernelSessionOutput`,{method:"POST",headers:{Authorization:authHeader(token),"Content-Type":"application/json","User-Agent":"chatgpt-v622-finalization-freeze/2.0"},body:JSON.stringify({userName:OWNER,kernelSlug:TARGET_SLUG,pageSize:100})});
+ const response=await fetch(`${API_ROOT}/ListKernelSessionOutput`,{method:"POST",headers:{Authorization:authHeader(token),"Content-Type":"application/json","User-Agent":"chatgpt-v622-finalization-freeze/2.1"},body:JSON.stringify({userName:OWNER,kernelSlug:TARGET_SLUG,pageSize:100})});
  const payload=rec(await response.json()); if(!response.ok) throw new Error(`ListKernelSessionOutput HTTP ${response.status}`); const files=Array.isArray(payload.files)?payload.files.map(rec):[];
  const mr=files.find(r=>String(r.fileName??"").endsWith("FINAL_FREEZE_MANIFEST.json")&&typeof r.url==="string"), sr=files.find(r=>String(r.fileName??"").endsWith("FINAL_FREEZE_MANIFEST.sha256")&&typeof r.url==="string"); if(!mr||!sr) return null;
  const manifestText=await(await fetch(allowedOutputUrl(String(mr.url)),{redirect:"follow"})).text(); const declared=(await(await fetch(allowedOutputUrl(String(sr.url)),{redirect:"follow"})).text()).trim().toLowerCase(); const actual=await sha256Text(manifestText); if(actual!==declared) throw new Error("FINAL_FREEZE_MANIFEST SHA mismatch");
