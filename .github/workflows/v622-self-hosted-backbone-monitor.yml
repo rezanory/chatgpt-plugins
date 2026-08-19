@@ -108,6 +108,7 @@ jobs:
               if ($terminal -contains $lastStatus) { throw }
 
               $message = [string]$_.Exception.Message
+              if ($message -match '^MONITOR_RESPONSE_INVALID:') { throw }
               $httpStatus = $null
               try {
                 if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
