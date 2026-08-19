@@ -1,0 +1,48 @@
+name: v622-kaggle-transfer-status-probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-kaggle-transfer-status-probe.yml'
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report latest transfer run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          runs="$(gh api "/repos/${REPO}/actions/runs?per_page=100")"
+          run="$(jq -c '[.workflow_runs[] | select(.name == "v622-kaggle-to-kaggle-finalization-artifact-transfer")] | sort_by(.created_at) | reverse | .[0] // empty' <<<"${runs}")"
+          if [[ -z "${run}" ]]; then
+            echo 'No transfer run found.'
+            exit 0
+          fi
+          id="$(jq -r '.id' <<<"${run}")"
+          jobs="$(gh api "/repos/${REPO}/actions/runs/${id}/jobs?per_page=100&filter=latest")"
+          current="$(jq -r '[.jobs[] as $j | ($j.steps // [])[] | select(.status == "in_progress") | ($j.name + " :: " + .name)] | .[0] // "none"' <<<"${jobs}")"
+          status="$(jq -r '.status' <<<"${run}")"
+          conclusion="$(jq -r '.conclusion // "none"' <<<"${run}")"
+          url="$(jq -r '.html_url' <<<"${run}")"
+          body="## V6.2.2 Kaggle artifact transfer live status
+
+- Run: ${url}
+- Run ID: \`${id}\`
+- Status: \`${status}\`
+- Conclusion: \`${conclusion}\`
+- Current step: \`${current}\`
+- Role: transport/status only; no model compute
+"
+          jq -n --arg body "$body" '{body:$body}' | gh api --method POST "/repos/${REPO}/issues/18/comments" --input - >/dev/null
