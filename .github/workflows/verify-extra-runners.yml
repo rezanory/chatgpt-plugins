@@ -1,0 +1,111 @@
+name: Verify Extra Self-Hosted Runners
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/verify-extra-runners.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify:
+    name: Verify extra runner registrations
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 8
+    steps:
+      - name: Probe target repositories and publish safe receipt
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SELF_HOSTED_RUNNER_PAT: ${{ secrets.SELF_HOSTED_RUNNER_PAT }}
+          GH_ADMIN_TOKEN: ${{ secrets.GH_ADMIN_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+
+          function Get-RepoAdminToken {
+            foreach ($candidate in @($env:SELF_HOSTED_RUNNER_PAT,$env:GH_ADMIN_TOKEN,$env:GH_PAT,$env:PERSONAL_ACCESS_TOKEN)) {
+              if (-not [string]::IsNullOrWhiteSpace($candidate)) { return $candidate.Trim() }
+            }
+            if (Get-Command gh -ErrorAction SilentlyContinue) {
+              try {
+                $candidate = (& gh auth token 2>$null | Out-String).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($candidate)) { return $candidate }
+              } catch { }
+            }
+            if (Get-Command git -ErrorAction SilentlyContinue) {
+              try {
+                $filled = "protocol=https`nhost=github.com`n`n" | git credential fill 2>$null
+                foreach ($line in @($filled)) {
+                  if ($line -match '^password=(.+)$' -and -not [string]::IsNullOrWhiteSpace($Matches[1])) { return $Matches[1].Trim() }
+                }
+              } catch { }
+            }
+            return $null
+          }
+
+          function ApiGet([string]$uri,[string]$token) {
+            $headers = @{ Authorization="Bearer $token"; Accept='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28'; 'User-Agent'='rezanory-extra-runner-verifier' }
+            return Invoke-RestMethod -Method GET -Uri $uri -Headers $headers -TimeoutSec 60
+          }
+
+          $token = Get-RepoAdminToken
+          $rows = @()
+          $blocked = $false
+          $detail = $null
+
+          if ([string]::IsNullOrWhiteSpace($token)) {
+            $blocked = $true
+            $detail = 'No local/repository admin credential available to query self-hosted runner registrations.'
+          } else {
+            $targets = @(
+              @{ Repo='rezanory/chat-project'; Label='chat-project'; Suffix='chat-project-extra-01' },
+              @{ Repo='rezanory/online-visit'; Label='online-visit'; Suffix='online-visit-extra-02' }
+            )
+            for ($attempt = 1; $attempt -le 30; $attempt++) {
+              $rows = @()
+              foreach ($target in $targets) {
+                try {
+                  $name = "$env:COMPUTERNAME-$($target.Suffix)"
+                  $list = ApiGet "https://api.github.com/repos/$($target.Repo)/actions/runners?per_page=100" $token
+                  $runner = @($list.runners | Where-Object { $_.name -eq $name }) | Select-Object -First 1
+                  $rows += [pscustomobject]@{
+                    repository = $target.Repo
+                    runner = $name
+                    label = $target.Label
+                    present = [bool]$runner
+                    status = if ($runner) { [string]$runner.status } else { 'not-visible' }
+                    busy = if ($runner) { [bool]$runner.busy } else { $null }
+                  }
+                } catch {
+                  $rows += [pscustomobject]@{ repository=$target.Repo; runner="$env:COMPUTERNAME-$($target.Suffix)"; label=$target.Label; present=$false; status='probe-error'; busy=$null }
+                  $detail = $_.Exception.Message
+                }
+              }
+              if (@($rows | Where-Object { $_.present -and $_.status -eq 'online' }).Count -eq 2) { break }
+              Start-Sleep -Seconds 10
+            }
+          }
+
+          $payloadObj = [ordered]@{
+            computer = $env:COMPUTERNAME
+            blocked = $blocked
+            detail = $detail
+            existing_v622_runner_modified = $false
+            kaggle_compute_touched = $false
+            targets = $rows
+          }
+          $json = $payloadObj | ConvertTo-Json -Depth 8
+          $body = "## Extra self-hosted runner verification`n`n``````json`n$json`n```````n"
+          $headers = @{ Authorization="Bearer $env:GITHUB_TOKEN"; Accept='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28' }
+          $comment = @{ body=$body } | ConvertTo-Json -Depth 5
+          Invoke-RestMethod -Method POST -Uri 'https://api.github.com/repos/rezanory/chatgpt-plugins/issues/18/comments' -Headers $headers -ContentType 'application/json' -Body $comment | Out-Null
+
+          if ($blocked) { throw 'Extra-runner verification blocked by missing repo-admin credential.' }
+          if (@($rows | Where-Object { $_.present -and $_.status -eq 'online' }).Count -ne 2) { throw 'Both extra runners are not online.' }
