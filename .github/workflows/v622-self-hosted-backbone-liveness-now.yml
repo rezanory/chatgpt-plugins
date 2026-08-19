@@ -1,5 +1,6 @@
 name: v622-self-hosted-backbone-liveness-now
 
+# trigger: active liveness verification 2026-08-19T15:19+03:00
 on:
   workflow_dispatch:
   push:
