@@ -1,6 +1,7 @@
 name: v622-self-hosted-backbone-status-now
 
 # trigger: post-repair exact status probe 2026-08-19
+# trigger: fresh liveness-only status probe 2026-08-19T15:13+03:00
 on:
   workflow_dispatch:
   push:
