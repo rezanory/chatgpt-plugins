@@ -1,6 +1,6 @@
 name: v622-self-hosted-backbone-monitor
 
-# trigger: backbone COMPLETE collector recovery 2026-08-19T16:01+03:00
+# Fail-fast monitor: hard endpoint/configuration errors must never consume multi-hour runner time.
 on:
   workflow_dispatch:
   push:
@@ -17,7 +17,7 @@ permissions:
 jobs:
   watch:
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 350
+    timeout-minutes: 100
     outputs:
       terminal_status: ${{ steps.wait.outputs.terminal_status }}
     steps:
@@ -30,22 +30,68 @@ jobs:
           $target = Join-Path $env:RUNNER_TEMP 'v622-backbone-status.json'
           $terminal = @('COMPLETE','ERROR','FAILED','CANCELLED','CANCELED','DEAD')
           $lastStatus = 'PROBE_ERROR'
+          $hardErrorCount = 0
+          $validationErrorCount = 0
+          $transientErrorCount = 0
 
-          for ($attempt = 1; $attempt -le 330; $attempt++) {
+          function Stop-Monitor([string]$status, [string]$reason, [string]$last) {
+            $diagnostic = @{
+              project = 'PNEUMONIA V6.2.2'
+              stage = 'post_ablation_backbone_comparison'
+              kernel_ref = 'trickermark/pneumonia-v6-2-2-backbone-m06-r224'
+              status = $status
+              last_status = $last
+              reason = $reason
+              probe_error = $true
+              no_kaggle_compute_launched_by_probe = $true
+              automatic_rerun_performed = $false
+              locked_test_used = $false
+              external_data_used = $false
+            }
+            [System.IO.File]::WriteAllText(
+              $target,
+              ($diagnostic | ConvertTo-Json -Depth 10),
+              [System.Text.UTF8Encoding]::new($false)
+            )
+            [System.IO.File]::AppendAllText(
+              $env:GITHUB_OUTPUT,
+              "terminal_status=$status`n",
+              [System.Text.UTF8Encoding]::new($false)
+            )
+            throw "$status`: $reason"
+          }
+
+          # Valid non-terminal states may be observed for at most 90 minutes.
+          # Broken endpoints/auth/config fail in <=2 consecutive probes; transient network/5xx
+          # failures fail after 5 consecutive probes instead of retrying for hours.
+          for ($attempt = 1; $attempt -le 90; $attempt++) {
             try {
               $value = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 30
               if ($value.project -ne 'PNEUMONIA V6.2.2' -or
                   $value.stage -ne 'post_ablation_backbone_comparison' -or
                   $value.kernel_ref -ne 'trickermark/pneumonia-v6-2-2-backbone-m06-r224') {
-                throw 'stale or unexpected backbone status response'
+                $validationErrorCount += 1
+                $hardErrorCount = 0
+                $transientErrorCount = 0
+                Write-Host "invalid status response $validationErrorCount/3"
+                if ($validationErrorCount -ge 3) {
+                  Stop-Monitor 'MONITOR_RESPONSE_INVALID' 'Three consecutive stale/unexpected status payloads.' $lastStatus
+                }
+                Start-Sleep -Seconds 30
+                continue
               }
+
+              $validationErrorCount = 0
+              $hardErrorCount = 0
+              $transientErrorCount = 0
               $lastStatus = ([string]$value.status).Trim().ToUpperInvariant()
               [System.IO.File]::WriteAllText(
                 $target,
                 ($value | ConvertTo-Json -Depth 20),
                 [System.Text.UTF8Encoding]::new($false)
               )
-              Write-Host "backbone status attempt $attempt/330: $lastStatus"
+              Write-Host "backbone status attempt $attempt/90: $lastStatus"
+
               if ($terminal -contains $lastStatus) {
                 [System.IO.File]::AppendAllText(
                   $env:GITHUB_OUTPUT,
@@ -55,34 +101,61 @@ jobs:
                 if ($lastStatus -eq 'COMPLETE') { exit 0 }
                 throw "Backbone kernel reached repairable terminal state: $lastStatus"
               }
+
+              Start-Sleep -Seconds 60
             }
             catch {
               if ($terminal -contains $lastStatus) { throw }
-              Write-Host "diagnostic-only status probe $attempt/330: $($_.Exception.Message)"
+
+              $message = [string]$_.Exception.Message
+              $httpStatus = $null
+              try {
+                if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+                  $httpStatus = [int]$_.Exception.Response.StatusCode
+                }
+              }
+              catch { $httpStatus = $null }
+
+              if ($httpStatus -in @(401,403,404)) {
+                $hardErrorCount += 1
+                $validationErrorCount = 0
+                $transientErrorCount = 0
+                Write-Host "hard endpoint/auth error $hardErrorCount/2: HTTP $httpStatus - $message"
+                if ($hardErrorCount -ge 2) {
+                  Stop-Monitor 'MONITOR_ENDPOINT_BROKEN' "Two consecutive non-retryable HTTP errors (latest HTTP $httpStatus)." $lastStatus
+                }
+                Start-Sleep -Seconds 30
+                continue
+              }
+
+              # PowerShell 5.1 does not expose Response.StatusCode for every WebException,
+              # so retain a message fallback for the same non-retryable classes.
+              if ($message -match '\(404\) Not Found' -or
+                  $message -match '\(401\) Unauthorized' -or
+                  $message -match '\(403\) Forbidden') {
+                $hardErrorCount += 1
+                $validationErrorCount = 0
+                $transientErrorCount = 0
+                Write-Host "hard endpoint/auth error $hardErrorCount/2: $message"
+                if ($hardErrorCount -ge 2) {
+                  Stop-Monitor 'MONITOR_ENDPOINT_BROKEN' 'Two consecutive non-retryable endpoint/authentication errors.' $lastStatus
+                }
+                Start-Sleep -Seconds 30
+                continue
+              }
+
+              $transientErrorCount += 1
+              $hardErrorCount = 0
+              $validationErrorCount = 0
+              Write-Host "transient status probe error $transientErrorCount/5: $message"
+              if ($transientErrorCount -ge 5) {
+                Stop-Monitor 'MONITOR_PROBE_FAILED' 'Five consecutive transient/network/server probe failures.' $lastStatus
+              }
+              Start-Sleep -Seconds 60
             }
-            Start-Sleep -Seconds 60
           }
 
-          $timeout = @{
-            project = 'PNEUMONIA V6.2.2'
-            stage = 'post_ablation_backbone_comparison'
-            kernel_ref = 'trickermark/pneumonia-v6-2-2-backbone-m06-r224'
-            status = 'MONITOR_TIMEOUT'
-            last_status = $lastStatus
-            probe_error = $true
-            no_kaggle_compute_launched_by_probe = $true
-          }
-          [System.IO.File]::WriteAllText(
-            $target,
-            ($timeout | ConvertTo-Json -Depth 10),
-            [System.Text.UTF8Encoding]::new($false)
-          )
-          [System.IO.File]::AppendAllText(
-            $env:GITHUB_OUTPUT,
-            "terminal_status=MONITOR_TIMEOUT`n",
-            [System.Text.UTF8Encoding]::new($false)
-          )
-          throw 'Backbone monitor reached its bounded timeout without a canonical terminal status.'
+          Stop-Monitor 'MONITOR_TIMEOUT' 'No canonical terminal status within the 90-minute observation budget.' $lastStatus
 
       - name: Publish terminal backbone status receipt
         if: always()
@@ -95,7 +168,8 @@ jobs:
           if (-not (Test-Path $target)) { exit 0 }
           $value = Get-Content -Raw $target | ConvertFrom-Json
           $status = [string]$value.status
-          $body = "## V6.2.2 post-ablation backbone terminal status`n`n- Kernel: ``trickermark/pneumonia-v6-2-2-backbone-m06-r224```n- Status: ``$status```n- Automatic rerun performed: ``false```n- Canonical M01-M12 rerun: ``false```n- HPO/confirmation repeated: ``false```n- Locked test used: ``false```n- External data used: ``false```n- GitHub monitor run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $reason = if ($value.reason) { [string]$value.reason } else { 'n/a' }
+          $body = "## V6.2.2 post-ablation backbone terminal status`n`n- Kernel: ``trickermark/pneumonia-v6-2-2-backbone-m06-r224```n- Status: ``$status```n- Diagnostic reason: ``$reason```n- Automatic rerun performed: ``false```n- Canonical M01-M12 rerun: ``false```n- HPO/confirmation repeated: ``false```n- Locked test used: ``false```n- External data used: ``false```n- GitHub monitor run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
           $payload = @{ body = $body } | ConvertTo-Json
           $headers = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
