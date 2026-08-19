@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 5
     steps:
-      - name: Inspect persistent transfer cache and live curl phase
+      - name: Inspect persistent transfer cache and uploader liveness
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -51,18 +51,33 @@ jobs:
               $cacheLines += "- Cache: ``$name`` | bytes: ``0`` | present: ``false``"
             }
           }
-          $rows = @()
-          $procs = Get-CimInstance Win32_Process -Filter "Name='curl.exe'" -ErrorAction SilentlyContinue
-          foreach ($p in @($procs)) {
+
+          $activity = @()
+          $curlProcs = Get-CimInstance Win32_Process -Filter "Name='curl.exe'" -ErrorAction SilentlyContinue
+          foreach ($p in @($curlProcs)) {
             $cmd = [string]$p.CommandLine
             if ($cmd -notmatch 'v622-kaggle' -and $cmd -notmatch 'final_selected\.keras') { continue }
             $phase = if ($cmd -match '--upload-file') { 'upload' } else { 'download' }
             $file = 'unknown'
             if ($cmd -match '--output\s+"?([^"\s]+)') { $file = Split-Path $matches[1] -Leaf }
-            $rows += "- Live curl: ``$phase`` | file: ``$file`` | pid: ``$($p.ProcessId)``"
+            $activity += "- Live curl: ``$phase`` | file: ``$file`` | pid: ``$($p.ProcessId)``"
           }
-          if ($rows.Count -eq 0) { $rows = @('- Live curl: `none observed`') }
-          $body = "## V6.2.2 local transfer cache probe`n`n$($cacheLines -join "`n")`n`n$($rows -join "`n")`n`n- Signed URLs/tokens: ``not exposed```n- Model compute: ``false```n"
+
+          $pythonProcs = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue | Where-Object {
+            ([string]$_.CommandLine) -match 'v622_kaggle_to_kaggle_transfer\.py'
+          }
+          foreach ($p in @($pythonProcs)) {
+            $pid = [int]$p.ProcessId
+            $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            $cpu = if ($proc) { [Math]::Round([double]$proc.CPU, 2) } else { -1 }
+            $started = if ($proc) { $proc.StartTime.ToUniversalTime().ToString('o') } else { 'unknown' }
+            $tcp = @(Get-NetTCPConnection -OwningProcess $pid -ErrorAction SilentlyContinue)
+            $states = if ($tcp.Count -gt 0) { (@($tcp | Group-Object State | ForEach-Object { "$($_.Name):$($_.Count)" }) -join ',') } else { 'none' }
+            $activity += "- Python uploader: ``alive`` | pid: ``$pid`` | cpu_s: ``$cpu`` | started_utc: ``$started`` | tcp_states: ``$states``"
+          }
+          if ($activity.Count -eq 0) { $activity = @('- Transfer process: `none observed`') }
+
+          $body = "## V6.2.2 local transfer cache probe`n`n$($cacheLines -join "`n")`n`n$($activity -join "`n")`n`n- Signed URLs/tokens: ``not exposed```n- Model compute: ``false```n"
           $payload = @{ body=$body } | ConvertTo-Json
           $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28' }
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
