@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   status:
-    # Read-only status snapshot; keep this on the free self-hosted V6.2.2 runner.
+    # Read-only status snapshot; keep this on the free self-hosted V6.2.2 runner. Refreshed after permission PASS.
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 5
     steps:
