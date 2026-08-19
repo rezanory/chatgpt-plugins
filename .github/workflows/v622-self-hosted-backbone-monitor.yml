@@ -1,0 +1,282 @@
+name: v622-self-hosted-backbone-monitor
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-self-hosted-backbone-monitor.yml'
+      - 'deploy/cloudflare-worker-free/src/v622-backbone-monitor-index.ts'
+      - 'deploy/cloudflare-worker-free/wrangler.jsonc'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 350
+    outputs:
+      terminal_status: ${{ steps.wait.outputs.terminal_status }}
+    steps:
+      - name: Wait for exact Kaggle backbone kernel terminal state
+        id: wait
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/backbone-status'
+          $target = Join-Path $env:RUNNER_TEMP 'v622-backbone-status.json'
+          $terminal = @('COMPLETE','ERROR','FAILED','CANCELLED','CANCELED','DEAD')
+          $lastStatus = 'PROBE_ERROR'
+
+          for ($attempt = 1; $attempt -le 330; $attempt++) {
+            try {
+              $value = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 30
+              if ($value.project -ne 'PNEUMONIA V6.2.2' -or
+                  $value.stage -ne 'post_ablation_backbone_comparison' -or
+                  $value.kernel_ref -ne 'trickermark/pneumonia-v6-2-2-backbone-m06-r224') {
+                throw 'stale or unexpected backbone status response'
+              }
+              $lastStatus = ([string]$value.status).Trim().ToUpperInvariant()
+              [System.IO.File]::WriteAllText(
+                $target,
+                ($value | ConvertTo-Json -Depth 20),
+                [System.Text.UTF8Encoding]::new($false)
+              )
+              Write-Host "backbone status attempt $attempt/330: $lastStatus"
+              if ($terminal -contains $lastStatus) {
+                [System.IO.File]::AppendAllText(
+                  $env:GITHUB_OUTPUT,
+                  "terminal_status=$lastStatus`n",
+                  [System.Text.UTF8Encoding]::new($false)
+                )
+                if ($lastStatus -eq 'COMPLETE') { exit 0 }
+                throw "Backbone kernel reached repairable terminal state: $lastStatus"
+              }
+            }
+            catch {
+              if ($terminal -contains $lastStatus) { throw }
+              Write-Host "diagnostic-only status probe $attempt/330: $($_.Exception.Message)"
+            }
+            Start-Sleep -Seconds 60
+          }
+
+          $timeout = @{
+            project = 'PNEUMONIA V6.2.2'
+            stage = 'post_ablation_backbone_comparison'
+            kernel_ref = 'trickermark/pneumonia-v6-2-2-backbone-m06-r224'
+            status = 'MONITOR_TIMEOUT'
+            last_status = $lastStatus
+            probe_error = $true
+            no_kaggle_compute_launched_by_probe = $true
+          }
+          [System.IO.File]::WriteAllText(
+            $target,
+            ($timeout | ConvertTo-Json -Depth 10),
+            [System.Text.UTF8Encoding]::new($false)
+          )
+          [System.IO.File]::AppendAllText(
+            $env:GITHUB_OUTPUT,
+            "terminal_status=MONITOR_TIMEOUT`n",
+            [System.Text.UTF8Encoding]::new($false)
+          )
+          throw 'Backbone monitor reached its bounded timeout without a canonical terminal status.'
+
+      - name: Publish terminal backbone status receipt
+        if: always()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $target = Join-Path $env:RUNNER_TEMP 'v622-backbone-status.json'
+          if (-not (Test-Path $target)) { exit 0 }
+          $value = Get-Content -Raw $target | ConvertFrom-Json
+          $status = [string]$value.status
+          $body = "## V6.2.2 post-ablation backbone terminal status`n`n- Kernel: ``trickermark/pneumonia-v6-2-2-backbone-m06-r224```n- Status: ``$status```n- Automatic rerun performed: ``false```n- Canonical M01-M12 rerun: ``false```n- HPO/confirmation repeated: ``false```n- Locked test used: ``false```n- External data used: ``false```n- GitHub monitor run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
+
+  collect:
+    needs: watch
+    if: needs.watch.outputs.terminal_status == 'COMPLETE'
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 30
+    environment: cloudflare-production
+    concurrency:
+      group: v622-cloudflare-production-mutation
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Deploy protected backbone artifact collector
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $accountId = ([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if ([string]::IsNullOrWhiteSpace($env:CLOUDFLARE_API_TOKEN) -or [string]::IsNullOrWhiteSpace($accountId)) {
+            throw 'Cloudflare deployment credentials are not configured.'
+          }
+          Write-Host "::add-mask::$accountId"
+          $env:CLOUDFLARE_ACCOUNT_ID = $accountId
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_CF_ACCOUNT_ID=$accountId`n", [System.Text.UTF8Encoding]::new($false))
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
+            npm run check
+            if ($LASTEXITCODE -ne 0) { throw 'Worker typecheck failed' }
+            npx wrangler deploy src/v622-backbone-artifact-worker.ts --name chatgpt-kaggle-gateway
+            if ($LASTEXITCODE -ne 0) { throw 'Backbone artifact collector deploy failed' }
+          }
+          finally { Pop-Location }
+
+      - name: Create ephemeral collector capability
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bytes = New-Object byte[] 48
+          $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+          try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+          $token = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
+          Write-Host "::add-mask::$token"
+          $env:CLOUDFLARE_ACCOUNT_ID = $env:V622_CF_ACCOUNT_ID
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            $token | npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install collector capability.' }
+          }
+          finally { Pop-Location }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_BACKBONE_COLLECT_TOKEN=$token`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Recover private backbone governance artifacts
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $uri = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/backbone-artifacts'
+          $headers = @{ Authorization = "Bearer $env:V622_BACKBONE_COLLECT_TOKEN"; 'Content-Type' = 'application/json' }
+          $result = $null
+          for ($attempt = 1; $attempt -le 30; $attempt++) {
+            try {
+              $candidate = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body '{}' -TimeoutSec 90
+              if ($candidate.project -eq 'PNEUMONIA V6.2.2' -and
+                  $candidate.stage -eq 'post_ablation_backbone_comparison_artifact_recovery' -and
+                  [int]$candidate.artifact_count -eq 7) {
+                $result = $candidate
+                break
+              }
+              throw 'stale or incomplete collector response'
+            }
+            catch {
+              Write-Host "collector attempt $attempt/30: $($_.Exception.Message)"
+              Start-Sleep -Seconds 3
+            }
+          }
+          if (-not $result) { throw 'Backbone artifact collector did not converge.' }
+
+          $root = Join-Path $env:RUNNER_TEMP 'v622-backbone-comparison-governance'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          foreach ($artifact in @($result.artifacts)) {
+            $name = [string]$artifact.artifact_name
+            if ([string]::IsNullOrWhiteSpace($name) -or $name.Contains('/') -or $name.Contains('\') -or $name.Contains('..')) {
+              throw "Unsafe artifact name: $name"
+            }
+            [System.IO.File]::WriteAllText(
+              (Join-Path $root $name),
+              [string]$artifact.content,
+              [System.Text.UTF8Encoding]::new($false)
+            )
+          }
+
+          $manifest = @{
+            project = $result.project
+            stage = $result.stage
+            account_id = $result.account_id
+            kernel_ref = $result.kernel_ref
+            status = $result.status
+            artifact_count = $result.artifact_count
+            artifacts = @($result.artifacts | ForEach-Object {
+              @{
+                artifact_name = $_.artifact_name
+                file_name = $_.file_name
+                bytes = $_.bytes
+                sha256 = $_.sha256
+              }
+            })
+            raw_predictions_publicly_exposed = $false
+            kaggle_compute_launched_by_collector = $false
+            locked_test_used = $false
+            external_data_used = $false
+          }
+          [System.IO.File]::WriteAllText(
+            (Join-Path $root 'RECOVERY_MANIFEST.json'),
+            ($manifest | ConvertTo-Json -Depth 20),
+            [System.Text.UTF8Encoding]::new($false)
+          )
+          [System.IO.File]::WriteAllText(
+            (Join-Path $env:RUNNER_TEMP 'v622-backbone-collector-result.json'),
+            ($result | ConvertTo-Json -Depth 20),
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Upload private backbone governance bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: v622-backbone-comparison-governance
+          path: ${{ runner.temp }}/v622-backbone-comparison-governance
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish backbone artifact recovery receipt
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $result = Get-Content -Raw (Join-Path $env:RUNNER_TEMP 'v622-backbone-collector-result.json') | ConvertFrom-Json
+          $policy = @($result.artifacts) | Where-Object { $_.artifact_name -eq 'FROZEN_BACKBONE_ENSEMBLE_POLICY.json' } | Select-Object -First 1
+          $body = "## V6.2.2 backbone governance artifact recovery`n`n- Kernel: ``$($result.kernel_ref)```n- Status: ``$($result.status)```n- Private GitHub artifact: ``v622-backbone-comparison-governance```n- Artifact count: ``$($result.artifact_count)```n- Frozen policy SHA-256: ``$($policy.sha256)```n- Raw OOF predictions publicly exposed: ``false```n- Kaggle compute launched by recovery: ``false```n- Locked test used: ``false```n- External data used: ``false```n- GitHub run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
+
+      - name: Remove capability and restore canonical status-enabled Worker
+        if: always()
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if (-not [string]::IsNullOrWhiteSpace($env:V622_CF_ACCOUNT_ID)) {
+            $env:CLOUDFLARE_ACCOUNT_ID = $env:V622_CF_ACCOUNT_ID
+            Push-Location 'deploy/cloudflare-worker-free'
+            try {
+              '{"CGP_PROJECT_CONTROL_TOKEN":null}' | Set-Content -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'v622-delete-control.json')
+              npx wrangler secret bulk (Join-Path $env:RUNNER_TEMP 'v622-delete-control.json')
+              npx wrangler deploy
+            }
+            finally { Pop-Location }
+          }
