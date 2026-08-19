@@ -1,6 +1,6 @@
 name: v622-self-hosted-backbone-liveness-now
 
-# trigger: active liveness verification 2026-08-19T15:19+03:00
+# trigger: active liveness verification with start receipt 2026-08-19T15:23+03:00
 on:
   workflow_dispatch:
   push:
@@ -21,6 +21,16 @@ jobs:
       group: v622-cloudflare-production-mutation
       cancel-in-progress: false
     steps:
+      - name: Publish liveness workflow start receipt
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $body = "## V6.2.2 backbone liveness workflow started`n`n- GitHub run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n- Runner: ``$env:RUNNER_NAME```n- Kaggle compute launched: ``false```n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
+
       - name: Checkout trusted main
         uses: actions/checkout@v4
         with:
@@ -31,7 +41,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Validate and deploy temporary read-only liveness route
+      - name: Deploy temporary read-only liveness route
         shell: powershell
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -39,9 +49,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $accountId = ([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
-          if ([string]::IsNullOrWhiteSpace($env:CLOUDFLARE_API_TOKEN) -or [string]::IsNullOrWhiteSpace($accountId)) {
-            throw 'Cloudflare deployment credentials are not configured.'
-          }
+          if ([string]::IsNullOrWhiteSpace($env:CLOUDFLARE_API_TOKEN) -or [string]::IsNullOrWhiteSpace($accountId)) { throw 'Cloudflare deployment credentials are not configured.' }
           Write-Host "::add-mask::$accountId"
           $env:CLOUDFLARE_ACCOUNT_ID = $accountId
           [System.IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'v622-cf-account.txt'), $accountId, [System.Text.UTF8Encoding]::new($false))
@@ -53,8 +61,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Worker typecheck failed' }
             npx wrangler deploy src/v622-backbone-liveness-worker.ts --name chatgpt-kaggle-gateway
             if ($LASTEXITCODE -ne 0) { throw 'Temporary liveness Worker deploy failed' }
-          }
-          finally { Pop-Location }
+          } finally { Pop-Location }
 
       - name: Take two read-only log-digest snapshots
         shell: powershell
@@ -65,50 +72,19 @@ jobs:
             for ($attempt = 1; $attempt -le 12; $attempt++) {
               try {
                 $v = Invoke-RestMethod -Uri $uri -Method Get -TimeoutSec 45
-                if ($v.project -eq 'PNEUMONIA V6.2.2' -and
-                    $v.kernel_ref -eq 'trickermark/pneumonia-v6-2-2-backbone-m06-r224' -and
-                    $v.stage -eq 'post_ablation_backbone_comparison_liveness') {
-                  return $v
-                }
-              }
-              catch {
-                Write-Host "liveness probe attempt $attempt failed: $($_.Exception.Message)"
-              }
+                if ($v.project -eq 'PNEUMONIA V6.2.2' -and $v.kernel_ref -eq 'trickermark/pneumonia-v6-2-2-backbone-m06-r224' -and $v.stage -eq 'post_ablation_backbone_comparison_liveness') { return $v }
+              } catch { Write-Host "liveness probe attempt $attempt failed: $($_.Exception.Message)" }
               Start-Sleep -Seconds 5
             }
             throw 'Read-only liveness route did not converge.'
           }
           $first = Read-Liveness
-          Write-Host "snapshot1 status=$($first.status) chars=$($first.log_chars) lines=$($first.log_lines) hash=$($first.log_sha256)"
           Start-Sleep -Seconds 60
           $second = Read-Liveness
-          Write-Host "snapshot2 status=$($second.status) chars=$($second.log_chars) lines=$($second.log_lines) hash=$($second.log_sha256)"
-
           $changed = ([string]$first.log_sha256 -ne [string]$second.log_sha256) -or ([int64]$first.log_chars -ne [int64]$second.log_chars)
-          $verdict = if ([string]$second.status -ne 'RUNNING') {
-            'STATUS_CHANGED_FROM_RUNNING'
-          } elseif ($changed) {
-            'ACTIVE_PROGRESS_CONFIRMED'
-          } else {
-            'RUNNING_NO_LOG_CHANGE_60S_INCONCLUSIVE'
-          }
-          $result = [ordered]@{
-            project = 'PNEUMONIA V6.2.2'
-            kernel_ref = 'trickermark/pneumonia-v6-2-2-backbone-m06-r224'
-            first = $first
-            second = $second
-            log_digest_changed = $changed
-            verdict = $verdict
-            raw_log_exposed = $false
-            kaggle_compute_launched = $false
-            locked_test_used = $false
-            external_data_used = $false
-          }
-          [System.IO.File]::WriteAllText(
-            (Join-Path $env:RUNNER_TEMP 'v622-backbone-liveness.json'),
-            ($result | ConvertTo-Json -Depth 20),
-            [System.Text.UTF8Encoding]::new($false)
-          )
+          $verdict = if ([string]$second.status -ne 'RUNNING') { 'STATUS_CHANGED_FROM_RUNNING' } elseif ($changed) { 'ACTIVE_PROGRESS_CONFIRMED' } else { 'RUNNING_NO_LOG_CHANGE_60S_INCONCLUSIVE' }
+          $result = [ordered]@{ project='PNEUMONIA V6.2.2'; kernel_ref='trickermark/pneumonia-v6-2-2-backbone-m06-r224'; first=$first; second=$second; log_digest_changed=$changed; verdict=$verdict; raw_log_exposed=$false; kaggle_compute_launched=$false; locked_test_used=$false; external_data_used=$false }
+          [System.IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'v622-backbone-liveness.json'), ($result | ConvertTo-Json -Depth 20), [System.Text.UTF8Encoding]::new($false))
 
       - name: Restore canonical status-enabled Worker
         if: always()
@@ -122,11 +98,7 @@ jobs:
           if (Test-Path $accountFile) {
             $env:CLOUDFLARE_ACCOUNT_ID = (Get-Content -Raw $accountFile).Trim()
             Push-Location 'deploy/cloudflare-worker-free'
-            try {
-              npx wrangler deploy
-              if ($LASTEXITCODE -eq 0) { $restore = 'PASS' }
-            }
-            finally { Pop-Location }
+            try { npx wrangler deploy; if ($LASTEXITCODE -eq 0) { $restore = 'PASS' } } finally { Pop-Location }
           }
           [System.IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'v622-worker-restore.txt'), $restore, [System.Text.UTF8Encoding]::new($false))
           if ($restore -ne 'PASS') { throw 'Canonical Worker restore failed.' }
@@ -137,17 +109,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = 'Continue'
           $path = Join-Path $env:RUNNER_TEMP 'v622-backbone-liveness.json'
-          $restorePath = Join-Path $env:RUNNER_TEMP 'v622-worker-restore.txt'
           if (-not (Test-Path $path)) { exit 0 }
           $v = Get-Content -Raw $path | ConvertFrom-Json
+          $restorePath = Join-Path $env:RUNNER_TEMP 'v622-worker-restore.txt'
           $restore = if (Test-Path $restorePath) { (Get-Content -Raw $restorePath).Trim() } else { 'UNKNOWN' }
           $body = "## V6.2.2 backbone active-liveness check`n`n- Kernel: ``$($v.kernel_ref)```n- Snapshot 1 status: ``$($v.first.status)```n- Snapshot 1 log chars: ``$($v.first.log_chars)```n- Snapshot 1 log SHA-256: ``$($v.first.log_sha256)```n- Snapshot 1 generated: ``$($v.first.probe_generated_at)```n- Snapshot 2 status: ``$($v.second.status)```n- Snapshot 2 log chars: ``$($v.second.log_chars)```n- Snapshot 2 log SHA-256: ``$($v.second.log_sha256)```n- Snapshot 2 generated: ``$($v.second.probe_generated_at)```n- Log digest changed: ``$($v.log_digest_changed)```n- Verdict: ``$($v.verdict)```n- Raw log exposed: ``false```n- Kaggle compute launched: ``false```n- Locked test used: ``false```n- External data used: ``false```n- Canonical Worker restored: ``$restore```n- GitHub run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
           $payload = @{ body = $body } | ConvertTo-Json
-          $headers = @{
-            Authorization = "Bearer $env:GITHUB_TOKEN"
-            Accept = 'application/vnd.github+json'
-            'X-GitHub-Api-Version' = '2022-11-28'
-          }
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
