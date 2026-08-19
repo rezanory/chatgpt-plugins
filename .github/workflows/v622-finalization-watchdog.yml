@@ -8,6 +8,10 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/v622-finalization-watchdog.yml'
+  workflow_run:
+    workflows:
+      - v622-self-hosted-selected-artifact-recovery
+    types: [requested, in_progress, completed]
 
 permissions:
   actions: read
@@ -33,6 +37,7 @@ jobs:
           set -euo pipefail
 
           now_epoch="$(date -u +%s)"
+          watchdog_start_epoch="$(date -u -d '2026-08-19T15:50:00Z' +%s)"
           runs_json="$(mktemp)"
           selected_json="$(mktemp)"
 
@@ -61,11 +66,14 @@ jobs:
             local detail="$8"
             local marker="<!-- v622-watchdog:${run_id}:${classification} -->"
 
-            if gh api --paginate \
+            comments_file="$(mktemp)"
+            gh api --paginate \
               -H 'Accept: application/vnd.github+json' \
               -H 'X-GitHub-Api-Version: 2022-11-28' \
               "/repos/${REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100" \
-              --jq '.[].body' | grep -Fq -- "${marker}"; then
+              --jq '.[].body' > "${comments_file}"
+
+            if grep -Fq -- "${marker}" "${comments_file}"; then
               echo "Alert already published: ${marker}"
               return 0
             fi
@@ -113,8 +121,9 @@ jobs:
             age_seconds="$(( now_epoch - created_epoch ))"
             age_minutes="$(( age_seconds / 60 ))"
 
-            # Ignore stale historical workflows; this is a live finalization watchdog.
-            if (( age_seconds > 172800 )); then
+            # Never backfill alerts for runs that predate watchdog installation.
+            # This prevents historical failures from flooding Issue 18.
+            if (( created_epoch < watchdog_start_epoch )); then
               continue
             fi
 
@@ -177,8 +186,12 @@ jobs:
                 if [[ -n "${step_started}" ]]; then
                   step_started_epoch="$(date -u -d "${step_started}" +%s)"
                   step_seconds="$(( now_epoch - step_started_epoch ))"
-                  if (( step_seconds >= 1800 )); then
-                    step_detail="Job \`${job_name}\`, step \`${step_name}\` has shown no step transition for $(( step_seconds / 60 )) minutes."
+                  step_limit_seconds=1800
+                  if [[ "${workflow_name}" == "v622-self-hosted-selected-artifact-recovery" ]]; then
+                    step_limit_seconds=5400
+                  fi
+                  if (( step_seconds >= step_limit_seconds )); then
+                    step_detail="Job \`${job_name}\`, step \`${step_name}\` has shown no step transition for $(( step_seconds / 60 )) minutes (limit $(( step_limit_seconds / 60 )) minutes)."
                     break
                   fi
                 fi
