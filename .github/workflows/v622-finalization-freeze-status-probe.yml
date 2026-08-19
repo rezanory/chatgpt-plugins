@@ -1,8 +1,11 @@
 name: v622-finalization-freeze-status-probe
 
 on:
-  issue_comment:
-    types: [created]
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-finalization-freeze-status-probe.yml'
 
 permissions:
   actions: read
@@ -11,11 +14,10 @@ permissions:
 
 jobs:
   probe:
-    if: ${{ github.event.issue.number == 18 && github.event.comment.body == 'V622_FINALIZE_STATUS' }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 10
     steps:
-      - name: Read newest exact finalization run
+      - name: Read newest exact active finalization run
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -23,12 +25,12 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
           $runs = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs?per_page=100" -Headers $headers -Method Get
-          $match = @($runs.workflow_runs | Where-Object { $_.name -eq 'v622-finalization-freeze-trickermark' } | Sort-Object {[DateTime]$_.created_at} -Descending | Select-Object -First 1)
-          if (-not $match) { throw 'No v622-finalization-freeze-trickermark run found.' }
+          $match = @($runs.workflow_runs | Where-Object { $_.name -eq 'v622-kaggle-finalization-freeze-bridge' } | Sort-Object {[DateTime]$_.created_at} -Descending | Select-Object -First 1)
+          if (-not $match) { throw 'No v622-kaggle-finalization-freeze-bridge run found.' }
           $r = $match[0]
           $jobs = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$($r.id)/jobs?per_page=100" -Headers $headers -Method Get
           $job = @($jobs.jobs | Select-Object -First 1)[0]
           $step = if ($job -and $job.steps) { @($job.steps | Where-Object {$_.status -eq 'in_progress'} | Select-Object -First 1).name } else { '' }
-          $body = "## V6.2.2 same-owner final-freeze live status`n`n- Run ID: ``$($r.id)```n- Status: ``$($r.status)```n- Conclusion: ``$($r.conclusion)```n- Job: ``$($job.status) / $($job.conclusion)```n- Current step: ``$step```n- Runner policy: ``self-hosted only```n- Locked test/external: ``false```n"
+          $body = "## V6.2.2 active final-freeze live status`n`n- Run: $($r.html_url)`n- Run ID: ``$($r.id)```n- Status: ``$($r.status)```n- Conclusion: ``$($r.conclusion)```n- Job: ``$($job.status) / $($job.conclusion)```n- Current step: ``$step```n- Runner policy: ``self-hosted only```n- Locked test/external: ``false```n"
           $payload = @{ body = $body } | ConvertTo-Json
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
