@@ -1,0 +1,88 @@
+name: v622-grant-artifact-dataset-to-azadka
+
+on:
+  workflow_dispatch:
+  issue_comment:
+    types: [created]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-grant-artifact-dataset-to-azadka.yml'
+      - 'deploy/cloudflare-worker-free/src/v622-dataset-permission-worker.ts'
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-cloudflare-production-mutation
+  cancel-in-progress: false
+
+jobs:
+  grant:
+    if: ${{ github.event_name != 'issue_comment' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_GRANT_AZADKA_DATASET') }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 20
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Deploy Dataset permission bridge
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $id=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim(); Write-Host "::add-mask::$id"; [IO.File]::AppendAllText($env:GITHUB_ENV,"V622_CF_ACCOUNT_ID=$id`n",[Text.UTF8Encoding]::new($false)); $env:CLOUDFLARE_ACCOUNT_ID=$id
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npm install --no-audit --no-fund
+            if($LASTEXITCODE -ne 0){throw 'npm failed'}
+            npm run check
+            if($LASTEXITCODE -ne 0){throw 'typecheck failed'}
+            npx wrangler deploy src/v622-dataset-permission-worker.ts --name chatgpt-kaggle-gateway
+            if($LASTEXITCODE -ne 0){throw 'deploy failed'}
+          } finally { Pop-Location }
+      - name: Create ephemeral permission capability
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference='Stop'; $b=New-Object byte[] 48; $r=[Security.Cryptography.RandomNumberGenerator]::Create(); try{$r.GetBytes($b)}finally{$r.Dispose()}; $t=[Convert]::ToBase64String($b).TrimEnd('=').Replace('+','-').Replace('/','_'); Write-Host "::add-mask::$t"; $env:CLOUDFLARE_ACCOUNT_ID=$env:V622_CF_ACCOUNT_ID; Push-Location deploy/cloudflare-worker-free; try{$t|npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway;if($LASTEXITCODE -ne 0){throw 'secret failed'}}finally{Pop-Location}; [IO.File]::AppendAllText($env:GITHUB_ENV,"V622_GRANT_TOKEN=$t`n",[Text.UTF8Encoding]::new($false))
+      - name: Grant azadka reader access with owner credential
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'; $h=@{Authorization="Bearer $env:V622_GRANT_TOKEN";'Content-Type'='application/json'}; $v=Invoke-RestMethod -Uri 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/dataset-permission/grant' -Method Post -Headers $h -Body '{}' -TimeoutSec 180; $v|ConvertTo-Json -Depth 50|Write-Host; if($v.ok -eq $false){throw "Dataset permission grant failed: $($v.error)"}; if($v.status -ne 'PASS' -or $v.dataset_ref -ne 'trickermark/pneumonia-v6-2-2-finalization-artifacts' -or $v.reader -ne 'azadka'){throw 'permission receipt mismatch'}
+      - name: Journal Dataset permission PASS
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $body="## V6.2.2 artifact Dataset permission ready`n`n- Result: ``PASS```n- Dataset: ``trickermark/pneumonia-v6-2-2-finalization-artifacts```n- Owner: ``trickermark```n- Reader: ``azadka```n- Dataset files were already uploaded inside Kaggle: ``true```n- GitHub checkpoint transport/storage: ``false```n- Model compute: ``false```n- Next: ``azadka/pneumonia-v6-2-2-finalization-master`` → ``FINAL_FREEZE_MANIFEST```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"; $p=@{body=$body}|ConvertTo-Json; $gh=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}; Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $gh -ContentType 'application/json' -Body $p|Out-Null
+      - name: Restore canonical Worker
+        if: always()
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference='Continue'; if($env:V622_CF_ACCOUNT_ID){$env:CLOUDFLARE_ACCOUNT_ID=$env:V622_CF_ACCOUNT_ID; Push-Location deploy/cloudflare-worker-free; try{'y'|npx wrangler secret delete CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway; npx wrangler deploy}finally{Pop-Location}}
+      - name: Dispatch azadka final freeze after permission PASS
+        if: success()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}; $p=@{ref='main'}|ConvertTo-Json; Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/v622-kaggle-finalization-freeze-bridge.yml/dispatches" -Method Post -Headers $h -ContentType 'application/json' -Body $p; Write-Host 'Dispatched azadka final-freeze bridge.'
+      - name: Journal permission failure
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $body="## V6.2.2 artifact Dataset permission diagnostic`n`n- Result: ``FAILED```n- Dataset already exists in Kaggle; no re-upload requested.`n- GitHub checkpoint transport: ``false```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"; $p=@{body=$body}|ConvertTo-Json; $gh=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}; Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $gh -ContentType 'application/json' -Body $p|Out-Null
