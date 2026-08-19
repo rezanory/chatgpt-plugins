@@ -1,0 +1,59 @@
+name: v622-resumable-recovery-event-watchdog
+
+on:
+  workflow_run:
+    workflows:
+      - v622-self-hosted-selected-artifact-recovery-resumable
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Journal resumable recovery failure immediately
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: '18'
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+          marker="<!-- v622-resumable-event-watchdog:${RUN_ID} -->"
+          if gh api --paginate "/repos/${REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100" --jq '.[].body' | grep -Fq -- "${marker}"; then
+            exit 0
+          fi
+
+          jobs="$(mktemp)"
+          gh api "/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100&filter=latest" > "${jobs}"
+          failed_job="$(jq -r '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")][0].name // "unknown"' "${jobs}")"
+          failed_step="$(jq -r '[.jobs[] | .steps[]? | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")][0].name // "unknown"' "${jobs}")"
+          detected_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          body="$(cat <<EOF
+          ${marker}
+          ## V6.2.2 resumable recovery completion alert
+
+          - Result: \`${RUN_CONCLUSION}\`
+          - GitHub run: ${RUN_URL}
+          - Failed job: \`${failed_job}\`
+          - Failed step: \`${failed_step}\`
+          - Detected at: \`${detected_at}\`
+          - Automatic rerun/cancel performed: \`false\`
+          - Kaggle compute launched: \`false\`
+          - Locked test used: \`false\`
+          - External validation launched: \`false\`
+
+          Action: inspect only this exact recovery failure before advancing Stage 1.
+          EOF
+          )"
+          jq -n --arg body "${body}" '{body:$body}' | gh api --method POST "/repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --input - >/dev/null
