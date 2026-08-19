@@ -8,7 +8,8 @@ from pathlib import Path
 PROJECT = "PNEUMONIA V6.2.2"
 KERNEL = "trickermark/pneumonia-v6-2-2-backbone-m06-r224"
 RECIPE_SHA = "27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f"
-POLICY_SHA = "7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861"
+POLICY_FILE_SHA = "7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861"
+POLICY_INTERNAL_SHA = "7f5817f3429bb86668718cac9158a7061c6e730cd14bc6137402be82baf576d7"
 IDS = ["M06__convnext_tiny", "M06__densenet121", "M06__resnet50v2"]
 EXPECTED_CONFIG_SHA = {
     "M06__convnext_tiny": "167cb7b1d17b3978f2b4f47f55e315a1d4fae293006d897d25d13b5074dadcea",
@@ -61,8 +62,8 @@ def main() -> int:
         raise SystemExit("Wrong source kernel")
     if stage1.get("recipe_sha256") != RECIPE_SHA:
         raise SystemExit("Recipe SHA mismatch")
-    if stage1.get("frozen_policy_sha256") != POLICY_SHA:
-        raise SystemExit("Frozen policy SHA mismatch")
+    if stage1.get("frozen_policy_sha256") != POLICY_FILE_SHA:
+        raise SystemExit("Frozen policy file SHA mismatch")
     if list(stage1.get("selected_candidate_ids") or []) != IDS:
         raise SystemExit("Selected candidate identity/order mismatch")
     if int(stage1.get("selected_artifact_count", -1)) != 6:
@@ -115,7 +116,9 @@ def main() -> int:
         "selection_basis": "validation-only recovered canonical backbone governance",
         "selected_candidate_ids": IDS,
         "recipe_sha256": RECIPE_SHA,
-        "frozen_policy_sha256": POLICY_SHA,
+        "frozen_policy_sha256": POLICY_FILE_SHA,
+        "frozen_policy_file_sha256": POLICY_FILE_SHA,
+        "frozen_policy_internal_sha256": POLICY_INTERNAL_SHA,
         "stage1_selected_artifact_manifest_sha256": stage1_manifest_sha,
         "used_for_selection": False,
         "qualification_performed": False,
@@ -138,7 +141,9 @@ def main() -> int:
         "stage1_recovery_run_url": args.stage1_run_url,
         "stage1_selected_artifact_manifest_sha256": stage1_manifest_sha,
         "recipe_sha256": RECIPE_SHA,
-        "frozen_policy_sha256": POLICY_SHA,
+        "frozen_policy_sha256": POLICY_FILE_SHA,
+        "frozen_policy_file_sha256": POLICY_FILE_SHA,
+        "frozen_policy_internal_sha256": POLICY_INTERNAL_SHA,
         "selection_basis": "validation-only recovered canonical backbone governance",
         "selected_candidate_ids": IDS,
         "ensemble_weights": {cid: {"numerator": 1, "denominator": 3} for cid in IDS},
