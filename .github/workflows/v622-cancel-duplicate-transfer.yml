@@ -1,0 +1,45 @@
+name: v622-cancel-duplicate-transfer
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+jobs:
+  cancel:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_CANCEL_DUPLICATE_TRANSFER') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel exact duplicate pending transfer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          id=32299021734
+          status="$(gh api "/repos/${REPO}/actions/runs/${id}" --jq '.status')"
+          if [[ "${status}" == "pending" || "${status}" == "queued" || "${status}" == "waiting" ]]; then
+            gh api --method POST "/repos/${REPO}/actions/runs/${id}/cancel" >/dev/null
+          fi
+          for i in $(seq 1 12); do
+            status="$(gh api "/repos/${REPO}/actions/runs/${id}" --jq '.status')"
+            conclusion="$(gh api "/repos/${REPO}/actions/runs/${id}" --jq '.conclusion // "none"')"
+            if [[ "${status}" == "completed" ]]; then break; fi
+            sleep 5
+          done
+          body="## V6.2.2 duplicate transfer cleanup
+
+- Duplicate run: \`${id}\`
+- Status: \`${status}\`
+- Conclusion: \`${conclusion}\`
+- Protected active transfer \`32294916570\` was not touched.
+- Model compute: \`false\`.
+"
+          jq -n --arg body "$body" '{body:$body}' | gh api --method POST "/repos/${REPO}/issues/18/comments" --input - >/dev/null
