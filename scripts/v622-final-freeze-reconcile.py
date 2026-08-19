@@ -145,8 +145,8 @@ def main() -> int:
 
     evidence = final.get("selection_evidence") or {}
     expected_evidence = {
-        "oof_balanced_accuracy": 0.9977578475,
-        "oof_mcc": 0.9913388287,
+        "oof_balanced_accuracy": 0.9977578475336323,
+        "oof_mcc": 0.9913388287238792,
         "false_positives": 0,
         "false_negatives": 2,
     }
