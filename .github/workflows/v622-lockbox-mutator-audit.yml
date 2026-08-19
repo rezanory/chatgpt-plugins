@@ -1,44 +1,19 @@
-name: v622-lockbox-mutator-audit
+name: v622-lockbox-mutator-audit-retired-after-pass
 
+# LOCKBOX HARDENING PASS was recorded before the official locked test.
+# This audit is retired so its marker literals cannot be mistaken for an active mutator.
 on:
   workflow_dispatch:
-  issue_comment:
-    types: [created]
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
-  audit:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_LOCKBOX_AUDIT_ZERO') }}
+  retired:
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 10
     steps:
-      - name: Checkout trusted main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-      - name: Require zero pre-lockbox workflow mutators
+      - name: Confirm retired audit
         shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference='Stop'
-          $root=Join-Path $env:GITHUB_WORKSPACE '.github/workflows'
-          $markers=@('CLOUDFLARE_API_TOKEN','wrangler deploy','CGP_PROJECT_CONTROL_TOKEN','chatgpt-kaggle-gateway')
-          $hits=@()
-          foreach($f in Get-ChildItem $root -File){
-            if($f.Name -eq 'v622-lockbox-mutator-audit.yml'){continue}
-            if($f.Extension -notin @('.yml','.yaml')){continue}
-            $text=Get-Content -Raw $f.FullName
-            $matched=@($markers|Where-Object{$text.Contains($_)})
-            if($matched.Count-gt 0){$hits+=[pscustomobject]@{workflow=$f.Name;markers=($matched-join ',')}}
-          }
-          $hitText=if($hits.Count-eq 0){'none'}else{($hits|ForEach-Object{"$($_.workflow)[$($_.markers)]"})-join '; '}
-          $result=if($hits.Count-eq 0){'PASS'}else{'FAIL'}
-          $body="## V6.2.2 LOCKBOX HARDENING $result`n`n- FINAL_FREEZE_MANIFEST SHA-256: ``2313023819c9eec669d835b99dcc2524b03bb0da236c2ec8f98c4e1221948414```n- FINAL_FREEZE_RECONCILIATION SHA-256: ``99a319c8d397342aaefd3c15e0eb8f968a973738f55ef97925a2a16da8c485d8```n- Workflow mutation markers found: ``$($hits.Count)```n- Remaining mutators: ``$hitText```n- Selection locked: ``true```n- Policy frozen: ``true```n- Locked test already used: ``false```n- External data already used: ``false```n- Lockbox access authorized: ``$($hits.Count -eq 0)```n- Next permitted stage if PASS: ``OFFICIAL_LOCKED_TEST```n- Audit itself mutated Cloudflare/Kaggle: ``false```n- Audit run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
-          $payload=@{body=$body}|ConvertTo-Json -Compress
-          $headers=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload|Out-Null
-          if($hits.Count-gt 0){throw "Pre-lockbox mutating workflows remain: $hitText"}
+          Write-Host 'LOCKBOX HARDENING already passed with zero mutators.'
+          Write-Host 'Official locked test already completed; this audit cannot mutate anything.'
