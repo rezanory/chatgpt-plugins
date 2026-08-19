@@ -2,6 +2,11 @@ name: ci
 
 on:
   push:
+    paths-ignore:
+      - '.github/workflows/v622-*.yml'
+      - 'scripts/v622_*'
+      - 'deploy/cloudflare-worker-free/src/v622-*'
+      - 'docs/pneumonia-v6-2-2-*'
   pull_request:
 
 permissions:
