@@ -13,6 +13,9 @@ $replacements = [ordered]@{
     "`$ComposerSha256 = '5EE7125F8A30A34D246CEFD0BC85B8A783B28F2AEC968994118512350D28027'" = "`$ComposerSha256 = '5EE7125F8A30A34D246CEFDC0BC85B8A783B28F2AEC968994118512350D28027'"
     'function Run([string]$Exe, [string[]]$Args) {' = 'function Run([string]$Exe, [string[]]$ArgumentList) {'
     '& $Exe @Args' = '& $Exe @ArgumentList'
+    '& $python -c "import sys,struct; print(sys.version); raise SystemExit(0 if sys.version_info[:3] == (3,12,7) and struct.calcsize(''P'')*8 == 64 else 1)"' = '& $python -c "import sys,struct; print(sys.version); raise SystemExit(0 if sys.version_info[:3] == (3,12,7) and struct.calcsize(''P'')*8 == 64 else 1)" | Out-Host'
+    '& $php -r ''echo PHP_VERSION, PHP_EOL; if (PHP_MAJOR_VERSION !== 8 || PHP_MINOR_VERSION !== 4 || PHP_INT_SIZE !== 8) { exit(1); }''' = '& $php -r ''echo PHP_VERSION, PHP_EOL; if (PHP_MAJOR_VERSION !== 8 || PHP_MINOR_VERSION !== 4 || PHP_INT_SIZE !== 8) { exit(1); }'' | Out-Host'
+    '& $php $composer --version --no-ansi' = '& $php $composer --version --no-ansi | Out-Host'
 }
 
 foreach ($entry in $replacements.GetEnumerator()) {
