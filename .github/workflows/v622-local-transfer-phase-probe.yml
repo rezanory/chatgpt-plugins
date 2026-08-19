@@ -1,9 +1,13 @@
 name: v622-local-transfer-phase-probe
 
 on:
+  workflow_dispatch:
   issue_comment:
     types: [created]
-  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-local-transfer-phase-probe.yml'
 
 permissions:
   contents: read
@@ -11,7 +15,7 @@ permissions:
 
 jobs:
   probe:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_LOCAL_TRANSFER_PHASE_PROBE') }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_LOCAL_TRANSFER_PHASE_PROBE') }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 5
     steps:
