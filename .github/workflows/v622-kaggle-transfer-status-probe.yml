@@ -41,3 +41,5 @@ jobs:
           $body = "## V6.2.2 Kaggle artifact transfer live status`n`n- Run: $($run.html_url)`n- Run ID: ``$($run.id)```n- Status: ``$($run.status)```n- Conclusion: ``$conclusion```n- Current step: ``$current```n- Role: transport/status only; no model compute`n"
           $payload = @{ body = $body } | ConvertTo-Json
           Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/issues/18/comments" -Headers $headers -Method Post -ContentType 'application/json' -Body $payload | Out-Null
+
+# trigger: 2026-08-19T20:04Z
