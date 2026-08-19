@@ -13,12 +13,12 @@ permissions:
 
 jobs:
   status:
-    # Read-only status snapshot for the permission-only bridge.
-    runs-on: ubuntu-latest
+    # Read-only status snapshot; keep this on the free self-hosted V6.2.2 runner.
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 5
     steps:
       - name: Report latest Dataset permission run
-        shell: pwsh
+        shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -29,6 +29,6 @@ jobs:
           $js=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$($r.id)/jobs?per_page=100" -Headers $h
           $cur='none'
           foreach($j in @($js.jobs)){foreach($s in @($j.steps)){if($s.status -eq 'in_progress'){$cur="$($j.name) :: $($s.name)"}}}
-          $body="## V6.2.2 Dataset permission live status`n`n- Run: $($r.html_url)`n- Run ID: ``$($r.id)```n- Status: ``$($r.status)```n- Conclusion: ``$($r.conclusion)```n- Current step: ``$cur```n"
+          $body="## V6.2.2 Dataset permission live status`n`n- Run: $($r.html_url)`n- Run ID: ``$($r.id)```n- Status: ``$($r.status)```n- Conclusion: ``$($r.conclusion)```n- Current step: ``$cur```n- Runner policy: ``self-hosted only```n"
           $p=@{body=$body}|ConvertTo-Json
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
