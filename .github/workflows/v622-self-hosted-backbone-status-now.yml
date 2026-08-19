@@ -2,6 +2,7 @@ name: v622-self-hosted-backbone-status-now
 
 # trigger: post-repair exact status probe 2026-08-19
 # trigger: fresh liveness-only status probe 2026-08-19T15:13+03:00
+# trigger: raw session metadata liveness probe 2026-08-19T15:16+03:00
 on:
   workflow_dispatch:
   push:
@@ -46,7 +47,8 @@ jobs:
           }
           if (-not $value) { throw "Exact backbone status route did not converge: $last" }
           $status = ([string]$value.status).Trim().ToUpperInvariant()
-          $body = "## V6.2.2 backbone current status`n`n- Kernel: ``trickermark/pneumonia-v6-2-2-backbone-m06-r224```n- Status: ``$status```n- Complete: ``$($value.complete)```n- Needs repair: ``$($value.needs_repair)```n- Probe error: ``$($value.probe_error)```n- Probe launched Kaggle compute: ``false```n- Locked test used: ``false```n- External data used: ``false```n- GitHub run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $rawJson = $value.raw_status | ConvertTo-Json -Depth 20 -Compress
+          $body = "## V6.2.2 backbone liveness metadata`n`n- Kernel: ``trickermark/pneumonia-v6-2-2-backbone-m06-r224```n- Status: ``$status```n- Complete: ``$($value.complete)```n- Needs repair: ``$($value.needs_repair)```n- Probe error: ``$($value.probe_error)```n- Probe launched Kaggle compute: ``false```n- Locked test used: ``false```n- External data used: ``false```n- GitHub run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n`n### Raw session metadata`n``````json`n$rawJson`n```````n"
           $payload = @{ body = $body } | ConvertTo-Json
           $headers = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
