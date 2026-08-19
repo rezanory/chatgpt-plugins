@@ -1,0 +1,26 @@
+name: v622-finalization-reconcile-status
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-finalization-reconcile-status.yml'
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: read
+  issues: write
+
+jobs:
+  status:
+    if: ${{ github.event_name != 'issue_comment' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_RECONCILIATION_PROBE') }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 5
+    steps:
+      - name: Report newest reconciliation run
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'};$rs=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/v622-finalization-reconcile.yml/runs?per_page=1" -Headers $h;if(-not $rs.workflow_runs){throw 'no reconciliation run'};$r=$rs.workflow_runs[0];$js=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$($r.id)/jobs?per_page=100" -Headers $h;$cur='none';foreach($j in @($js.jobs)){foreach($s in @($j.steps)){if($s.status -eq 'in_progress'){$cur="$($j.name) :: $($s.name)"}}};$body="V6.2.2 RECONCILIATION LIVE | run=$($r.id) | status=$($r.status) | conclusion=$($r.conclusion) | current=$cur | head=$($r.head_sha) | runner=self-hosted | locked_test=false | external=false";$p=@{body=$body}|ConvertTo-Json -Compress;Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
