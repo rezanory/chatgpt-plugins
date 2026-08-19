@@ -1,0 +1,71 @@
+name: v622-finalization-reconcile-v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-finalization-reconcile-v2.yml'
+      - 'deploy/cloudflare-worker-free/src/v622-finalization-reconcile-v2-worker.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-cloudflare-production-mutation
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 35
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Deploy corrected reconciliation bridge
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference='Stop';$id=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim();if(-not $id -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials missing'};Write-Host "::add-mask::$id";[IO.File]::AppendAllText($env:GITHUB_ENV,"V622_CF_ACCOUNT_ID=$id`n",[Text.UTF8Encoding]::new($false));$env:CLOUDFLARE_ACCOUNT_ID=$id;Push-Location deploy/cloudflare-worker-free;try{npm install --no-audit --no-fund;if($LASTEXITCODE-ne 0){throw 'npm failed'};npm run check;if($LASTEXITCODE-ne 0){throw 'typecheck failed'};npx wrangler deploy src/v622-finalization-reconcile-v2-worker.ts --name chatgpt-kaggle-gateway;if($LASTEXITCODE-ne 0){throw 'deploy failed'}}finally{Pop-Location}
+      - name: Create ephemeral reconciliation capability
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $b=New-Object byte[] 48;$r=[Security.Cryptography.RandomNumberGenerator]::Create();try{$r.GetBytes($b)}finally{$r.Dispose()};$t=[Convert]::ToBase64String($b).TrimEnd('=').Replace('+','-').Replace('/','_');Write-Host "::add-mask::$t";$env:CLOUDFLARE_ACCOUNT_ID=$env:V622_CF_ACCOUNT_ID;Push-Location deploy/cloudflare-worker-free;try{$t|npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway;if($LASTEXITCODE-ne 0){throw 'secret failed'}}finally{Pop-Location};[IO.File]::AppendAllText($env:GITHUB_ENV,"V622_RECON_TOKEN=$t`n",[Text.UTF8Encoding]::new($false))
+      - name: Launch or adopt canonical reconciliation
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';$base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev';$h=@{Authorization="Bearer $env:V622_RECON_TOKEN";'Content-Type'='application/json'};$v=$null;$last='not ready';for($i=1;$i-le 24;$i++){try{$x=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30;if($x.service-ne'v622-finalization-reconcile-v2'){throw 'stale bridge'};$v=Invoke-RestMethod -Uri "$base/control/v6-2-2/finalization-reconcile-v2/launch" -Method Post -Headers $h -Body '{}' -TimeoutSec 180;break}catch{$last=$_.Exception.Message;Start-Sleep 5}};if(-not $v){throw "launch did not converge: $last"};$v|ConvertTo-Json -Depth 30|Write-Host;if($v.ok-eq$false){throw $v.error};if($v.target_kernel_ref-ne'azadka/pneumonia-v6-2-2-final-freeze-reconciliation'){throw 'unexpected canonical target'}
+      - name: Monitor canonical reconciliation
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';$h=@{Authorization="Bearer $env:V622_RECON_TOKEN";'Content-Type'='application/json'};$uri='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/finalization-reconcile-v2/status';$terminal=$null;$last='';for($i=1;$i-le 80;$i++){try{$v=Invoke-RestMethod -Uri $uri -Method Post -Headers $h -Body '{}' -TimeoutSec 180;$s=([string]$v.status).ToUpperInvariant();Write-Host "canonical reconciliation $i/80: $s";if($s-eq'COMPLETE'){$terminal=$v;break};if($s-in@('ERROR','FAILED','CANCELLED','CANCELED','DEAD')){throw "terminal failure $s"}}catch{if($_.Exception.Message-match'terminal failure'){throw};$last=$_.Exception.Message;Write-Host "diagnostic $i/80: $last"};Start-Sleep 15};if(-not $terminal){throw "canonical reconciliation not COMPLETE: $last"};if(-not $terminal.receipt){throw 'COMPLETE without validated corrected receipt'};$terminal.receipt|ConvertTo-Json -Depth 30|Set-Content -Encoding utf8 "$env:RUNNER_TEMP\v622-reconciliation-v2-receipt.json"
+      - name: Publish reconciliation PASS
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $r=Get-Content -Raw "$env:RUNNER_TEMP\v622-reconciliation-v2-receipt.json"|ConvertFrom-Json;$body="## V6.2.2 FINAL_FREEZE_RECONCILIATION PASS`n`n- Canonical Kaggle kernel: ``azadka/pneumonia-v6-2-2-final-freeze-reconciliation```n- FINAL_FREEZE_MANIFEST SHA-256: ``$($r.final_freeze_manifest_sha256)```n- Reconciliation SHA-256: ``$($r.reconciliation_sha256)```n- Independently rehashed selected artifacts: ``$($r.verified_artifact_count) / 6```n- Locked test used: ``false```n- External data used: ``false```n- Lockbox authorized: ``false```n- Next gate: ``$($r.next_required_gate)```n- Repair: canonical Kaggle ref only; no training/reselection.`n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n";$p=@{body=$body}|ConvertTo-Json -Compress;$gh=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'};Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $gh -ContentType 'application/json' -Body $p|Out-Null
+      - name: Restore canonical Worker
+        if: always()
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference='Continue';if($env:V622_CF_ACCOUNT_ID){$env:CLOUDFLARE_ACCOUNT_ID=$env:V622_CF_ACCOUNT_ID;Push-Location deploy/cloudflare-worker-free;try{'y'|npx wrangler secret delete CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway;npx wrangler deploy}finally{Pop-Location}}
+      - name: Publish narrow diagnostic
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $body="## V6.2.2 canonical reconciliation repair diagnostic`n`n- Result: ``FAILED```n- Locked test/external launched: ``false```n- Training/reselection: ``false```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n";$p=@{body=$body}|ConvertTo-Json -Compress;$h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'};Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
