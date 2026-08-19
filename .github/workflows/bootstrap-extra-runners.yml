@@ -1,0 +1,213 @@
+name: Bootstrap Extra Self-Hosted Runners
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bootstrap-extra-runners.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    name: Add isolated runners for other projects
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 20
+    steps:
+      - name: Configure repository-scoped runners without touching V6.2.2 runner
+        shell: powershell
+        env:
+          SELF_HOSTED_RUNNER_PAT: ${{ secrets.SELF_HOSTED_RUNNER_PAT }}
+          GH_ADMIN_TOKEN: ${{ secrets.GH_ADMIN_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+
+          function Get-RepoAdminToken {
+            foreach ($candidate in @(
+              $env:SELF_HOSTED_RUNNER_PAT,
+              $env:GH_ADMIN_TOKEN,
+              $env:GH_PAT,
+              $env:PERSONAL_ACCESS_TOKEN
+            )) {
+              if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                return $candidate.Trim()
+              }
+            }
+
+            $gh = Get-Command gh -ErrorAction SilentlyContinue
+            if ($gh) {
+              try {
+                $candidate = (& gh auth token 2>$null | Out-String).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($candidate)) { return $candidate }
+              } catch { }
+            }
+
+            $git = Get-Command git -ErrorAction SilentlyContinue
+            if ($git) {
+              try {
+                $filled = "protocol=https`nhost=github.com`n`n" | git credential fill 2>$null
+                $password = $null
+                foreach ($line in @($filled)) {
+                  if ($line -match '^password=(.+)$') { $password = $Matches[1] }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($password)) { return $password.Trim() }
+              } catch { }
+            }
+
+            return $null
+          }
+
+          function Invoke-GitHubApi {
+            param(
+              [Parameter(Mandatory=$true)][string]$Method,
+              [Parameter(Mandatory=$true)][string]$Uri,
+              [Parameter(Mandatory=$true)][string]$Token
+            )
+            $headers = @{
+              Authorization = "Bearer $Token"
+              Accept = 'application/vnd.github+json'
+              'X-GitHub-Api-Version' = '2022-11-28'
+              'User-Agent' = 'rezanory-extra-self-hosted-runner-bootstrap'
+            }
+            return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers -TimeoutSec 60
+          }
+
+          $apiToken = Get-RepoAdminToken
+          if ([string]::IsNullOrWhiteSpace($apiToken)) {
+            throw 'BOOTSTRAP_BLOCKED_NO_REPO_ADMIN_CREDENTIAL: configure SELF_HOSTED_RUNNER_PAT/GH_ADMIN_TOKEN/GH_PAT or authenticate gh locally on the existing self-hosted runner.'
+          }
+
+          $identity = Invoke-GitHubApi -Method GET -Uri 'https://api.github.com/user' -Token $apiToken
+          if ([string]$identity.login -ne 'rezanory') {
+            throw "BOOTSTRAP_BLOCKED_UNEXPECTED_GITHUB_IDENTITY: $($identity.login)"
+          }
+
+          $targets = @(
+            [ordered]@{ Repo='rezanory/chat-project'; Label='chat-project'; Suffix='chat-project-extra-01' },
+            [ordered]@{ Repo='rezanory/online-visit'; Label='online-visit'; Suffix='online-visit-extra-02' }
+          )
+
+          foreach ($target in $targets) {
+            $repoInfo = Invoke-GitHubApi -Method GET -Uri "https://api.github.com/repos/$($target.Repo)" -Token $apiToken
+            if (-not [bool]$repoInfo.permissions.admin) {
+              throw "BOOTSTRAP_BLOCKED_REPO_ADMIN_REQUIRED: $($target.Repo)"
+            }
+          }
+
+          $baseRoot = 'C:\actions-runners-extra'
+          try {
+            New-Item -ItemType Directory -Force -Path $baseRoot | Out-Null
+          } catch {
+            if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { throw }
+            $baseRoot = Join-Path $env:LOCALAPPDATA 'GitHubActionsRunnersExtra'
+            New-Item -ItemType Directory -Force -Path $baseRoot | Out-Null
+          }
+
+          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/actions/runner/releases/latest' -Headers @{ 'User-Agent'='rezanory-extra-self-hosted-runner-bootstrap' } -TimeoutSec 60
+          $asset = @($release.assets | Where-Object { $_.name -like 'actions-runner-win-x64-*.zip' }) | Select-Object -First 1
+          if (-not $asset) { throw 'Could not resolve official actions/runner Windows x64 release asset.' }
+          $archive = Join-Path $env:RUNNER_TEMP $asset.name
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archive -UseBasicParsing -TimeoutSec 180
+
+          $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          $results = @()
+
+          foreach ($target in $targets) {
+            $runnerName = "$env:COMPUTERNAME-$($target.Suffix)"
+            $root = Join-Path $baseRoot $target.Suffix
+            $runnerList = Invoke-GitHubApi -Method GET -Uri "https://api.github.com/repos/$($target.Repo)/actions/runners?per_page=100" -Token $apiToken
+            $remote = @($runnerList.runners | Where-Object { $_.name -eq $runnerName })
+            $localConfigured = Test-Path (Join-Path $root '.runner')
+
+            if ($remote.Count -gt 0 -and -not $localConfigured) {
+              throw "BOOTSTRAP_BLOCKED_REMOTE_NAME_COLLISION: $runnerName exists for $($target.Repo) but no matching local configuration was found. Refusing --replace."
+            }
+
+            if (-not $localConfigured) {
+              New-Item -ItemType Directory -Force -Path $root | Out-Null
+              Expand-Archive -Path $archive -DestinationPath $root -Force
+              $registration = Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$($target.Repo)/actions/runners/registration-token" -Token $apiToken
+              $registrationToken = [string]$registration.token
+              if ([string]::IsNullOrWhiteSpace($registrationToken)) { throw "Registration token missing for $($target.Repo)" }
+
+              Push-Location $root
+              try {
+                & .\config.cmd --unattended --url "https://github.com/$($target.Repo)" --token $registrationToken --name $runnerName --labels "$($target.Label),local-extra" --work '_work'
+                if ($LASTEXITCODE -ne 0) { throw "config.cmd failed for $($target.Repo)" }
+              } finally {
+                Pop-Location
+              }
+            }
+
+            $persistence = 'detached'
+            if ($isAdmin -and (Test-Path (Join-Path $root 'svc.cmd'))) {
+              Push-Location $root
+              try {
+                & .\svc.cmd install
+                if ($LASTEXITCODE -ne 0) {
+                  Write-Host "Service install was not available for $runnerName; falling back to detached process."
+                } else {
+                  & .\svc.cmd start
+                  if ($LASTEXITCODE -ne 0) { throw "svc.cmd start failed for $runnerName" }
+                  $persistence = 'windows-service'
+                }
+              } catch {
+                Write-Host "Service mode unavailable for $runnerName: $($_.Exception.Message)"
+              } finally {
+                Pop-Location
+              }
+            }
+
+            if ($persistence -ne 'windows-service') {
+              $tracking = $env:RUNNER_TRACKING_ID
+              Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue
+              try {
+                Start-Process -FilePath (Join-Path $root 'run.cmd') -WorkingDirectory $root -WindowStyle Hidden
+              } finally {
+                if ($null -ne $tracking) { $env:RUNNER_TRACKING_ID = $tracking }
+              }
+
+              try {
+                $startup = [Environment]::GetFolderPath('Startup')
+                if (-not [string]::IsNullOrWhiteSpace($startup)) {
+                  $startupFile = Join-Path $startup "github-runner-$($target.Suffix).cmd"
+                  $startupText = "@echo off`r`ncd /d `"$root`"`r`nstart `"`" /min cmd /c run.cmd`r`n"
+                  Set-Content -Path $startupFile -Value $startupText -Encoding ASCII
+                  $persistence = 'detached+user-startup'
+                }
+              } catch {
+                Write-Host "Startup persistence could not be created for $runnerName: $($_.Exception.Message)"
+              }
+            }
+
+            Start-Sleep -Seconds 4
+            $runnerListAfter = Invoke-GitHubApi -Method GET -Uri "https://api.github.com/repos/$($target.Repo)/actions/runners?per_page=100" -Token $apiToken
+            $after = @($runnerListAfter.runners | Where-Object { $_.name -eq $runnerName }) | Select-Object -First 1
+            $results += [pscustomobject]@{
+              repository = $target.Repo
+              runner = $runnerName
+              label = $target.Label
+              status = if ($after) { [string]$after.status } else { 'not-visible' }
+              busy = if ($after) { [bool]$after.busy } else { $null }
+              persistence = $persistence
+              root = $root
+            }
+          }
+
+          Remove-Item -Path $archive -Force -ErrorAction SilentlyContinue
+
+          $results | Format-Table -AutoSize
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '## Extra self-hosted runner bootstrap'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ''
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '| Repository | Runner | Label | Status | Persistence |'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '|---|---|---|---|---|'
+          foreach ($r in $results) {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "| $($r.repository) | $($r.runner) | $($r.label) | $($r.status) | $($r.persistence) |"
+          }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ''
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value 'The existing V6.2.2 runner registration, service/process, labels, work directory, and Kaggle execution were not modified.'
