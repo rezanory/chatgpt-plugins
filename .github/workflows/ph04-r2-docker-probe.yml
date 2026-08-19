@@ -1,0 +1,53 @@
+name: PH04 r2 Docker access probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/ph04-r2-docker-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: PH04 r2 Docker read-only probe
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 5
+    steps:
+      - name: Gate r2 only
+        shell: powershell
+        run: |
+          Write-Host "RUNNER_NAME=$env:RUNNER_NAME"
+          if ($env:RUNNER_NAME -ne 'LAPTOP-13QINEIF-v622-r2') {
+            throw 'WRONG_RUNNER_NO_DOCKER_PROBE: expected r2'
+          }
+          Write-Host 'R2_GATE=PASS'
+
+      - name: Probe Docker engine without mutation
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidates = @(
+            'C:\Program Files\Docker\Docker\resources\bin\docker.exe',
+            'C:\Program Files\Docker\Docker\resources\bin\com.docker.cli.exe'
+          )
+          $docker = $null
+          foreach ($path in $candidates) {
+            if (Test-Path -LiteralPath $path -ErrorAction SilentlyContinue) {
+              if ([System.IO.Path]::GetFileName($path) -eq 'docker.exe') { $docker = $path; break }
+            }
+          }
+          if (-not $docker) {
+            $cmd = Get-Command docker.exe -ErrorAction SilentlyContinue
+            if ($cmd) { $docker = $cmd.Source }
+          }
+          if (-not $docker) { throw 'DOCKER_CLI_NOT_FOUND' }
+          Write-Host "DOCKER_CLI=$docker"
+          & $docker version --format 'SERVER={{.Server.Version}} CLIENT={{.Client.Version}}'
+          if ($LASTEXITCODE -ne 0) { throw 'DOCKER_ENGINE_UNAVAILABLE_TO_R2_SERVICE' }
+          Write-Host 'DOCKER_ENGINE_ACCESS=PASS'
+          & $docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}'
+          if ($LASTEXITCODE -ne 0) { throw 'DOCKER_IMAGE_LIST_FAILED' }
+          Write-Host 'DOCKER_READ_ONLY_PROBE=PASS'
