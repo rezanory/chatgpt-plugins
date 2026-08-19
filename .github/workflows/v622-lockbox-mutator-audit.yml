@@ -1,0 +1,55 @@
+name: v622-lockbox-mutator-audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-lockbox-mutator-audit.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Audit workflow mutation surface
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:GITHUB_WORKSPACE '.github/workflows'
+          $markers = @('CLOUDFLARE_API_TOKEN','wrangler deploy','CGP_PROJECT_CONTROL_TOKEN','chatgpt-kaggle-gateway')
+          $hits = @()
+          foreach ($f in Get-ChildItem $root -File -Filter '*.yml') {
+            if ($f.Name -eq 'v622-lockbox-mutator-audit.yml') { continue }
+            $text = Get-Content -Raw $f.FullName
+            $matched = @($markers | Where-Object { $text.Contains($_) })
+            if ($matched.Count -gt 0) {
+              $hits += [pscustomobject]@{ workflow=$f.Name; markers=($matched -join ',') }
+            }
+          }
+          foreach ($f in Get-ChildItem $root -File -Filter '*.yaml') {
+            $text = Get-Content -Raw $f.FullName
+            $matched = @($markers | Where-Object { $text.Contains($_) })
+            if ($matched.Count -gt 0) {
+              $hits += [pscustomobject]@{ workflow=$f.Name; markers=($matched -join ',') }
+            }
+          }
+          $activeAllowed = @('v622-finalization-reconcile.yml')
+          $obsolete = @($hits | Where-Object { $_.workflow -notin $activeAllowed })
+          $hitText = if ($hits.Count -eq 0) { 'none' } else { ($hits | ForEach-Object { "$($_.workflow)[$($_.markers)]" }) -join '; ' }
+          $obsText = if ($obsolete.Count -eq 0) { 'none' } else { ($obsolete | ForEach-Object { $_.workflow }) -join ', ' }
+          $body = "## V6.2.2 lockbox mutator audit`n`n- Workflow mutation markers found: ``$($hits.Count)```n- Current-stage allowed mutator: ``v622-finalization-reconcile.yml`` (only until reconciliation terminal)`n- Obsolete/unauthorized mutators: ``$obsText```n- All marker hits: ``$hitText```n- Audit itself mutated Cloudflare/Kaggle: ``false```n- Locked test/external launched: ``false```n- Audit run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $payload = @{body=$body} | ConvertTo-Json -Compress
+          $headers = @{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
+          if ($obsolete.Count -gt 0) { throw "Obsolete mutating workflows remain: $obsText" }
