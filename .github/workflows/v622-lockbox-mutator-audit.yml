@@ -2,10 +2,8 @@ name: v622-lockbox-mutator-audit
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/v622-lockbox-mutator-audit.yml'
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: read
@@ -13,6 +11,7 @@ permissions:
 
 jobs:
   audit:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_LOCKBOX_AUDIT_ZERO') }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 10
     steps:
