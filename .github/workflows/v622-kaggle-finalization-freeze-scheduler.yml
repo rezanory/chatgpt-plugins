@@ -1,0 +1,45 @@
+name: v622-kaggle-finalization-freeze-scheduler
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-kaggle-finalization-freeze-scheduler.yml'
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch bridge only when needed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          comments="$(gh api "/repos/${REPO}/issues/18/comments?per_page=100" --paginate --slurp)"
+          if jq -e '[.[][] | .body // "" | startswith("## V6.2.2 FINAL_FREEZE_MANIFEST")] | any' <<<"${comments}" >/dev/null; then
+            echo 'FINAL_FREEZE receipt already exists; no dispatch.'
+            exit 0
+          fi
+
+          runs="$(gh api "/repos/${REPO}/actions/runs?per_page=100")"
+          active="$(jq -r '[.workflow_runs[] | select(.name == "v622-kaggle-finalization-freeze-bridge" and (.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending"))] | length' <<<"${runs}")"
+          if [[ "${active}" -gt 0 ]]; then
+            echo "Bridge already active (${active}); no dispatch."
+            exit 0
+          fi
+
+          gh api --method POST "/repos/${REPO}/actions/workflows/v622-kaggle-finalization-freeze-bridge.yml/dispatches" \
+            -f ref=main >/dev/null
+          echo 'Dispatched Kaggle finalization freeze bridge.'
