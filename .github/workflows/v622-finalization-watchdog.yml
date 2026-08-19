@@ -187,9 +187,6 @@ jobs:
                   step_started_epoch="$(date -u -d "${step_started}" +%s)"
                   step_seconds="$(( now_epoch - step_started_epoch ))"
                   step_limit_seconds=1800
-                  if [[ "${workflow_name}" == "v622-self-hosted-selected-artifact-recovery" ]]; then
-                    step_limit_seconds=5400
-                  fi
                   if (( step_seconds >= step_limit_seconds )); then
                     step_detail="Job \`${job_name}\`, step \`${step_name}\` has shown no step transition for $(( step_seconds / 60 )) minutes (limit $(( step_limit_seconds / 60 )) minutes)."
                     break
