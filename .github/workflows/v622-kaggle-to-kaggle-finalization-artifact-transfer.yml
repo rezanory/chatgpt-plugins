@@ -8,11 +8,11 @@ permissions:
 
 jobs:
   retired:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64, v622]
     steps:
       - name: Retired transfer path
-        shell: bash
+        shell: powershell
         run: |
-          echo 'RETIRED: artifact Dataset already exists inside Kaggle.'
-          echo 'Dataset: trickermark/pneumonia-v6-2-2-finalization-artifacts'
-          echo 'azadka READER access has been verified. Do not transport checkpoints through GitHub/Cloudflare.'
+          Write-Host 'RETIRED: artifact Dataset already exists inside Kaggle.'
+          Write-Host 'Dataset: trickermark/pneumonia-v6-2-2-finalization-artifacts'
+          Write-Host 'azadka READER access has been verified. Do not transport checkpoints through GitHub/Cloudflare.'
