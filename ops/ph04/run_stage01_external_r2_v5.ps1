@@ -1,0 +1,55 @@
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+$source = Join-Path $PSScriptRoot 'stage01_external_r2_validate_v5.ps1'
+if (-not (Test-Path -LiteralPath $source)) {
+    throw "VALIDATOR_SOURCE_MISSING: $source"
+}
+
+$text = [System.IO.File]::ReadAllText($source)
+$replacements = [ordered]@{
+    'Fail "DOWNLOAD_TOO_SMALL:$Destination:$size"' = 'Fail "DOWNLOAD_TOO_SMALL:${Destination}:${size}"'
+    'Fail "DOWNLOAD_SHA256_MISMATCH:$Destination:$actual"' = 'Fail "DOWNLOAD_SHA256_MISMATCH:${Destination}:${actual}"'
+}
+
+foreach ($entry in $replacements.GetEnumerator()) {
+    $count = ([regex]::Matches($text, [regex]::Escape($entry.Key))).Count
+    Write-Host "PATCH_MATCH_COUNT=$count :: $($entry.Key)"
+    if ($count -ne 1) {
+        throw "VALIDATOR_PATCH_MATCH_COUNT_INVALID:$count"
+    }
+    $text = $text.Replace($entry.Key, $entry.Value)
+}
+
+$remaining = [regex]::Matches($text, '\$[A-Za-z_][A-Za-z0-9_]*:') |
+    ForEach-Object { $_.Value } |
+    Where-Object { $_ -notmatch '^\$env:$' } |
+    Sort-Object -Unique
+if ($remaining) {
+    $remaining | ForEach-Object { Write-Host "SUSPICIOUS_INTERPOLATION=$_" }
+    throw 'VALIDATOR_SUSPICIOUS_VARIABLE_COLON_REMAINS'
+}
+
+$temp = Join-Path $env:RUNNER_TEMP ("ph04-stage01-v5-fixed-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.ps1")
+[System.IO.File]::WriteAllText($temp, $text, [System.Text.UTF8Encoding]::new($false))
+
+$tokens = $null
+$errors = $null
+[System.Management.Automation.Language.Parser]::ParseFile($temp, [ref]$tokens, [ref]$errors) | Out-Null
+if ($errors.Count -ne 0) {
+    foreach ($error in $errors) {
+        Write-Host "PARSER_ERROR=$($error.Message) @ $($error.Extent.Text)"
+    }
+    throw "VALIDATOR_PARSER_ERRORS:$($errors.Count)"
+}
+Write-Host 'VALIDATOR_PARSE=PASS'
+
+try {
+    & $temp
+    if ($LASTEXITCODE -ne 0) {
+        throw "VALIDATOR_EXIT_CODE:$LASTEXITCODE"
+    }
+}
+finally {
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+}
