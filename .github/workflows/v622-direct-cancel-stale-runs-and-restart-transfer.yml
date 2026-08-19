@@ -1,0 +1,112 @@
+name: v622-direct-cancel-stale-runs-and-restart-transfer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-direct-cancel-stale-runs-and-restart-transfer.yml'
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+jobs:
+  clear:
+    # Intentionally outside v622-cloudflare-production-mutation so it can clear
+    # a stuck holder of that lane.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: cloudflare-production
+    steps:
+      - name: Cancel exact stale runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cancel_run() {
+            local id="$1"
+            code="$(gh api --method POST "/repos/${REPO}/actions/runs/${id}/cancel" --silent >/dev/null 2>&1; echo $?)"
+            echo "Cancel requested for ${id} (gh exit=${code})."
+          }
+          set +e
+          cancel_run 32282103394
+          cancel_run 32292044711
+          set -e
+
+          for attempt in $(seq 1 24); do
+            old_status="$(gh api "/repos/${REPO}/actions/runs/32282103394" --jq '.status')"
+            transfer_status="$(gh api "/repos/${REPO}/actions/runs/32292044711" --jq '.status')"
+            echo "poll ${attempt}/24: old=${old_status} stale_transfer=${transfer_status}"
+            if [[ "${old_status}" != "in_progress" && "${old_status}" != "queued" && "${old_status}" != "pending" && "${old_status}" != "waiting" && \
+                  "${transfer_status}" != "in_progress" && "${transfer_status}" != "queued" && "${transfer_status}" != "pending" && "${transfer_status}" != "waiting" ]]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'Stale runs did not leave active states inside cancellation budget.' >&2
+          exit 1
+
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore canonical Cloudflare Worker
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          cd deploy/cloudflare-worker-free
+          npm install --no-audit --no-fund
+          # Secret may already be absent; absence is acceptable.
+          set +e
+          printf 'y\n' | npx wrangler secret delete CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway
+          set -e
+          ok=0
+          for attempt in $(seq 1 5); do
+            if npx wrangler deploy; then ok=1; break; fi
+            sleep $((5 * attempt))
+          done
+          test "${ok}" = '1'
+
+      - name: Dispatch fresh Kaggle-to-Kaggle transfer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "/repos/${REPO}/actions/workflows/v622-kaggle-to-kaggle-finalization-artifact-transfer.yml/dispatches" -f ref=main >/dev/null
+          echo 'Fresh transfer dispatched.'
+
+      - name: Journal direct stale-run cleanup
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          body=$(cat <<EOF
+          ## V6.2.2 stale Actions lock cleared
+
+          - Obsolete recovery run `32282103394`: cancellation requested and terminal state verified.
+          - Stale pending transfer `32292044711`: cancellation requested and terminal state verified.
+          - Canonical Cloudflare Worker restored after cancellation: `PASS`.
+          - Fresh Kaggle-to-Kaggle artifact transfer dispatched after cleanup.
+          - Model compute performed by this cleanup: `false`.
+          - TRAIN/HPO/confirmation/locked-test/external validation launched: `false`.
+          - Cleanup run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          EOF
+          )
+          jq -n --arg body "$body" '{body:$body}' | gh api --method POST "/repos/${REPO}/issues/18/comments" --input - >/dev/null
