@@ -1,0 +1,39 @@
+name: v622-azadka-finalization-status-probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-azadka-finalization-status-probe.yml'
+
+permissions:
+  actions: read
+  issues: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read latest azadka finalization bridge run
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $rs=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/v622-kaggle-finalization-freeze-bridge.yml/runs?per_page=1" -Headers $h
+          if(-not $rs.workflow_runs){throw 'no finalization bridge run'}
+          $r=$rs.workflow_runs[0]
+          $js=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$($r.id)/jobs?per_page=100" -Headers $h
+          $cur='none'; $launch='unknown'
+          foreach($j in @($js.jobs)){
+            foreach($s in @($j.steps)){
+              if($s.status -eq 'in_progress'){$cur="$($j.name) :: $($s.name)"}
+              if($s.name -eq 'Launch Kaggle-native final freeze'){$launch="$($s.status)/$($s.conclusion)"}
+            }
+          }
+          $body="V6.2.2 AZADKA FINALIZATION LIVE | run=$($r.id) | status=$($r.status) | conclusion=$($r.conclusion) | launch_step=$launch | current=$cur | head=$($r.head_sha)"
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
