@@ -8,7 +8,8 @@ from pathlib import Path
 PROJECT = "PNEUMONIA V6.2.2"
 KERNEL = "trickermark/pneumonia-v6-2-2-backbone-m06-r224"
 RECIPE_SHA = "27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f"
-POLICY_SHA = "7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861"
+POLICY_FILE_SHA = "7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861"
+POLICY_INTERNAL_SHA = "7f5817f3429bb86668718cac9158a7061c6e730cd14bc6137402be82baf576d7"
 IDS = ["M06__convnext_tiny", "M06__densenet121", "M06__resnet50v2"]
 EXPECTED_CONFIG_SHA = {
     "M06__convnext_tiny": "167cb7b1d17b3978f2b4f47f55e315a1d4fae293006d897d25d13b5074dadcea",
@@ -71,8 +72,12 @@ def main() -> int:
         raise SystemExit("Final freeze identity/status mismatch")
     if final.get("source_kernel") != KERNEL:
         raise SystemExit("Final freeze kernel mismatch")
-    if final.get("recipe_sha256") != RECIPE_SHA or final.get("frozen_policy_sha256") != POLICY_SHA:
-        raise SystemExit("Final freeze recipe/policy mismatch")
+    if final.get("recipe_sha256") != RECIPE_SHA:
+        raise SystemExit("Final freeze recipe mismatch")
+    if final.get("frozen_policy_sha256") != POLICY_FILE_SHA or final.get("frozen_policy_file_sha256") != POLICY_FILE_SHA:
+        raise SystemExit("Final freeze policy file SHA mismatch")
+    if final.get("frozen_policy_internal_sha256") != POLICY_INTERNAL_SHA:
+        raise SystemExit("Final freeze policy internal SHA mismatch")
     if final.get("stage1_selected_artifact_manifest_sha256") != stage1_manifest_sha:
         raise SystemExit("Final freeze does not bind exact Stage 1 manifest")
     if list(final.get("selected_candidate_ids") or []) != IDS:
@@ -95,8 +100,12 @@ def main() -> int:
     for key in ("used_for_selection", "qualification_performed", "qualification_evidence_consumed", "locked_test_used", "external_data_used"):
         if qual.get(key) is not False:
             raise SystemExit(f"Qualification non-consumption flag mismatch: {key}")
-    if qual.get("recipe_sha256") != RECIPE_SHA or qual.get("frozen_policy_sha256") != POLICY_SHA:
-        raise SystemExit("Qualification record recipe/policy mismatch")
+    if qual.get("recipe_sha256") != RECIPE_SHA:
+        raise SystemExit("Qualification record recipe mismatch")
+    if qual.get("frozen_policy_sha256") != POLICY_FILE_SHA or qual.get("frozen_policy_file_sha256") != POLICY_FILE_SHA:
+        raise SystemExit("Qualification record policy file SHA mismatch")
+    if qual.get("frozen_policy_internal_sha256") != POLICY_INTERNAL_SHA:
+        raise SystemExit("Qualification record policy internal SHA mismatch")
     if qual.get("stage1_selected_artifact_manifest_sha256") != stage1_manifest_sha:
         raise SystemExit("Qualification record Stage 1 binding mismatch")
 
@@ -154,7 +163,9 @@ def main() -> int:
         "qualification_non_consumption_sha256": qual_sha,
         "stage1_selected_artifact_manifest_sha256": stage1_manifest_sha,
         "recipe_sha256": RECIPE_SHA,
-        "frozen_policy_sha256": POLICY_SHA,
+        "frozen_policy_sha256": POLICY_FILE_SHA,
+        "frozen_policy_file_sha256": POLICY_FILE_SHA,
+        "frozen_policy_internal_sha256": POLICY_INTERNAL_SHA,
         "selected_candidate_ids": IDS,
         "verified_artifacts": verified,
         "selection_locked": True,
