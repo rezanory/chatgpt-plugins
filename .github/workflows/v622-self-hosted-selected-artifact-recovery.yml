@@ -178,7 +178,7 @@ jobs:
                 if ($downloadAttempt -lt 4) { Start-Sleep -Seconds (5 * $downloadAttempt) }
               }
             }
-            if (-not $downloaded) { throw "Selected artifact download failed after retries for $key: $downloadLast" }
+            if (-not $downloaded) { throw "Selected artifact download failed after retries for ${key}: $downloadLast" }
 
             $sha = (Get-FileHash -Algorithm SHA256 -Path $dest).Hash.ToLowerInvariant()
             $bytes = (Get-Item $dest).Length
