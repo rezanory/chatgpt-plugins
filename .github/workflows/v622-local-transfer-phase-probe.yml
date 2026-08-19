@@ -35,7 +35,7 @@ jobs:
             'FROZEN_BACKBONE_ENSEMBLE_POLICY.json'
           )
           $cacheRoots = Get-ChildItem 'C:\actions-runners\v622-r*\_work' -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-            Join-Path $_.FullName '.v622-kaggle-transfer-cache'
+            Join-Path $_.FullName 'chatgpt-plugins\.v622-kaggle-transfer-cache'
           } | Where-Object { Test-Path $_ }
           $cacheLines = @()
           foreach ($name in $expected) {
@@ -46,7 +46,7 @@ jobs:
             }
             if ($matches.Count -gt 0) {
               $best = $matches | Sort-Object Length -Descending | Select-Object -First 1
-              $cacheLines += "- Cache: ``$name`` | bytes: ``$($best.Length)`` | present: ``true``"
+              $cacheLines += "- Cache: ``$name`` | bytes: ``$($best.Length)`` | present: ``true`` | path: ``$($best.FullName)``"
             } else {
               $cacheLines += "- Cache: ``$name`` | bytes: ``0`` | present: ``false``"
             }
@@ -57,7 +57,9 @@ jobs:
             $cmd = [string]$p.CommandLine
             if ($cmd -notmatch 'v622-kaggle' -and $cmd -notmatch 'final_selected\.keras') { continue }
             $phase = if ($cmd -match '--upload-file') { 'upload' } else { 'download' }
-            $rows += "- Live curl: ``$phase`` | pid: ``$($p.ProcessId)``"
+            $file = 'unknown'
+            if ($cmd -match '--output\s+"?([^"\s]+)') { $file = Split-Path $matches[1] -Leaf }
+            $rows += "- Live curl: ``$phase`` | file: ``$file`` | pid: ``$($p.ProcessId)``"
           }
           if ($rows.Count -eq 0) { $rows = @('- Live curl: `none observed`') }
           $body = "## V6.2.2 local transfer cache probe`n`n$($cacheLines -join "`n")`n`n$($rows -join "`n")`n`n- Signed URLs/tokens: ``not exposed```n- Model compute: ``false```n"
