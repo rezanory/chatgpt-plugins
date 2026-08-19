@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   grant:
+    # Permission-only bridge; no artifact re-upload and no model compute.
     if: ${{ github.event_name != 'issue_comment' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_GRANT_AZADKA_DATASET') }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 20
