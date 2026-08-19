@@ -1,0 +1,172 @@
+name: v622-self-hosted-backbone-error-diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-self-hosted-backbone-error-diagnostic.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-cloudflare-production-mutation
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 20
+    environment: cloudflare-production
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Worker dependencies
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
+          }
+          finally { Pop-Location }
+
+      - name: Build and deploy protected read-only diagnostic bridge
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $accountId = ([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if ([string]::IsNullOrWhiteSpace($env:CLOUDFLARE_API_TOKEN) -or [string]::IsNullOrWhiteSpace($accountId)) { throw 'Cloudflare credentials missing' }
+          Write-Host "::add-mask::$accountId"
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_CF_ACCOUNT_ID=$accountId`n", [System.Text.UTF8Encoding]::new($false))
+          $env:CLOUDFLARE_ACCOUNT_ID = $accountId
+          $source = @'
+          import { kernelLogs, kernelStatus, type WorkerEnv } from "./kaggle";
+          type Env = WorkerEnv & { CGP_PROJECT_CONTROL_TOKEN?: string };
+          const ACCOUNT_ID = "kg-05";
+          const KERNEL_REF = "trickermark/pneumonia-v6-2-2-backbone-m06-r224";
+          function json(value: unknown, status = 200): Response {
+            return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+          }
+          function authorized(request: Request, env: Env): boolean {
+            const token = env.CGP_PROJECT_CONTROL_TOKEN?.trim();
+            return Boolean(token && token.length >= 32 && request.headers.get("authorization") === `Bearer ${token}`);
+          }
+          export default {
+            async fetch(request: Request, env: Env): Promise<Response> {
+              const url = new URL(request.url);
+              if (url.pathname !== "/control/v6-2-2/backbone-diagnostic" || request.method !== "POST") return new Response("Not found", { status: 404 });
+              if (!authorized(request, env)) return new Response("Forbidden", { status: 403 });
+              try {
+                const status = await kernelStatus(env, ACCOUNT_ID, KERNEL_REF);
+                const log = await kernelLogs(env, ACCOUNT_ID, KERNEL_REF);
+                return json({ project: "PNEUMONIA V6.2.2", stage: "post_ablation_backbone_error_diagnostic", account_id: ACCOUNT_ID, kernel_ref: KERNEL_REF, status, log_tail: log.slice(-50000), kaggle_compute_launched: false, automatic_rerun_performed: false, locked_test_used: false, external_data_used: false });
+              } catch (error) {
+                return json({ project: "PNEUMONIA V6.2.2", stage: "post_ablation_backbone_error_diagnostic", kernel_ref: KERNEL_REF, diagnostic_error: error instanceof Error ? error.message.slice(0, 1000) : "unknown error", kaggle_compute_launched: false, automatic_rerun_performed: false }, 502);
+              }
+            },
+          } satisfies ExportedHandler<Env>;
+          '@
+          $tmp = 'deploy/cloudflare-worker-free/src/.v622-backbone-diagnostic-worker.ts'
+          [System.IO.File]::WriteAllText($tmp, $source, [System.Text.UTF8Encoding]::new($false))
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            npx wrangler deploy src/.v622-backbone-diagnostic-worker.ts --name chatgpt-kaggle-gateway
+            if ($LASTEXITCODE -ne 0) { throw 'Diagnostic bridge deploy failed' }
+          }
+          finally { Pop-Location }
+
+      - name: Create ephemeral diagnostic capability
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bytes = New-Object byte[] 48
+          $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+          try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+          $token = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
+          Write-Host "::add-mask::$token"
+          $env:CLOUDFLARE_ACCOUNT_ID = $env:V622_CF_ACCOUNT_ID
+          Push-Location 'deploy/cloudflare-worker-free'
+          try {
+            $token | npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN
+            if ($LASTEXITCODE -ne 0) { throw 'Capability install failed' }
+          }
+          finally { Pop-Location }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_DIAG_TOKEN=$token`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Read exact status and bounded Kaggle log tail
+        id: diagnose
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $uri = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/backbone-diagnostic'
+          $headers = @{ Authorization = "Bearer $env:V622_DIAG_TOKEN"; 'Content-Type' = 'application/json' }
+          $result = $null
+          $last = $null
+          for ($attempt = 1; $attempt -le 20; $attempt++) {
+            try {
+              $candidate = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body '{}' -TimeoutSec 60
+              if ($candidate.project -eq 'PNEUMONIA V6.2.2' -and $candidate.stage -eq 'post_ablation_backbone_error_diagnostic') { $result = $candidate; break }
+              throw 'stale diagnostic response'
+            } catch { $last = $_.Exception.Message; Start-Sleep -Seconds 3 }
+          }
+          if (-not $result) { throw "Diagnostic bridge did not converge: $last" }
+          $statusJson = $result.status | ConvertTo-Json -Depth 20 -Compress
+          Write-Host "V622_BACKBONE_STATUS_JSON=$statusJson"
+          Write-Host '--- V622_BACKBONE_LOG_TAIL_BEGIN ---'
+          Write-Host ([string]$result.log_tail)
+          Write-Host '--- V622_BACKBONE_LOG_TAIL_END ---'
+          [System.IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'v622-backbone-diagnostic.json'), ($result | ConvertTo-Json -Depth 20), [System.Text.UTF8Encoding]::new($false))
+
+      - name: Upload private diagnostic bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: v622-backbone-error-diagnostic
+          path: ${{ runner.temp }}/v622-backbone-diagnostic.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish diagnostic collection receipt
+        if: success()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $body = "## V6.2.2 backbone ERROR diagnostic collected`n`n- Kernel: ``trickermark/pneumonia-v6-2-2-backbone-m06-r224```n- Diagnostic scope: exact status + bounded Kaggle log tail only`n- Kaggle compute launched: ``false```n- Automatic rerun performed: ``false```n- Locked test used: ``false```n- External data used: ``false```n- Private artifact: ``v622-backbone-error-diagnostic```n- GitHub run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
+
+      - name: Remove capability and restore exact status wrapper
+        if: always()
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if (-not [string]::IsNullOrWhiteSpace($env:V622_CF_ACCOUNT_ID)) {
+            $env:CLOUDFLARE_ACCOUNT_ID = $env:V622_CF_ACCOUNT_ID
+            Push-Location 'deploy/cloudflare-worker-free'
+            try {
+              '{"CGP_PROJECT_CONTROL_TOKEN":null}' | Set-Content -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'v622-delete-control.json')
+              npx wrangler secret bulk (Join-Path $env:RUNNER_TEMP 'v622-delete-control.json')
+              npx wrangler deploy src/v622-backbone-monitor-index.ts --name chatgpt-kaggle-gateway
+            }
+            finally { Pop-Location }
+          }
