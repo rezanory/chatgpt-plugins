@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/ph04-stage01-external-r2-validation.yml'
       - 'ops/ph04/stage01_external_r2_validate_v5.ps1'
+      - 'ops/ph04/run_stage01_external_r2_v5.ps1'
   workflow_dispatch:
 
 permissions:
@@ -39,12 +40,12 @@ jobs:
         with:
           path: harness
 
-      - name: Run exact Stage-01 validator
+      - name: Patch-parse and run exact Stage-01 validator
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          & "$env:GITHUB_WORKSPACE\harness\ops\ph04\stage01_external_r2_validate_v5.ps1"
-          if ($LASTEXITCODE -ne 0) { throw "PH04 validator exited with code $LASTEXITCODE" }
+          & "$env:GITHUB_WORKSPACE\harness\ops\ph04\run_stage01_external_r2_v5.ps1"
+          if ($LASTEXITCODE -ne 0) { throw "PH04 validator wrapper exited with code $LASTEXITCODE" }
 
       - name: Cleanup isolated validation workspace
         if: always()
@@ -54,6 +55,9 @@ jobs:
           if (Test-Path -LiteralPath $target) {
             Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
           }
-          Get-ChildItem $env:RUNNER_TEMP -Directory -Filter 'ph04-python-3.12.7-*' -ErrorAction SilentlyContinue | ForEach-Object {
+          Get-ChildItem $env:RUNNER_TEMP -Directory -Filter 'ph04-toolchain-*' -ErrorAction SilentlyContinue | ForEach-Object {
             Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          Get-ChildItem $env:RUNNER_TEMP -File -Filter 'ph04-stage01-v5-fixed-*.ps1' -ErrorAction SilentlyContinue | ForEach-Object {
+            Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
           }
