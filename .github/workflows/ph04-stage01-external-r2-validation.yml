@@ -19,9 +19,11 @@ jobs:
       PH04_EXPECTED_SHA: 0f8ccc2fac4cf8ac767c6f4011bfd9673a69c3db
       PH04_PRIMARY_CACHE_HEAD: 361cf101dbd6f50600a3b9f59d33f3e94729a0a5
       PH04_SOURCE_CACHE: C:\p4
-      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_COUNT: '2'
       GIT_CONFIG_KEY_0: safe.directory
       GIT_CONFIG_VALUE_0: C:/p4
+      GIT_CONFIG_KEY_1: safe.directory
+      GIT_CONFIG_VALUE_1: C:/p4/.git
       DJANGO_SETTINGS_MODULE: core.settings_test
       DJANGO_ENV: test
       DEBUG: 'True'
