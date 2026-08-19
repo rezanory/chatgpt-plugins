@@ -31,9 +31,9 @@ jobs:
           }
           $repo = $env:GITHUB_REPOSITORY
           $runs = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/runs?per_page=100" -Headers $headers -Method Get
-          $run = @($runs.workflow_runs | Where-Object { $_.name -eq 'v622-self-hosted-selected-artifact-recovery-resumable' } | Sort-Object created_at -Descending | Select-Object -First 1)
-          if (-not $run -or $run.Count -eq 0) { exit 0 }
-          $r = $run[0]
+          $matches = @($runs.workflow_runs | Where-Object { $_.name -eq 'v622-self-hosted-selected-artifact-recovery-resumable' } | Sort-Object created_at -Descending)
+          if ($matches.Count -eq 0) { exit 0 }
+          $r = $matches[0]
           $jobs = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/runs/$($r.id)/jobs?per_page=100&filter=latest" -Headers $headers -Method Get
           $current = 'none'
           foreach ($job in @($jobs.jobs)) {
@@ -47,23 +47,24 @@ jobs:
           }
           $conclusion = if ([string]::IsNullOrWhiteSpace([string]$r.conclusion)) { 'none' } else { [string]$r.conclusion }
           $marker = "<!-- v622-live-probe:$($r.id):$($r.status):$conclusion -->"
-          $body = @"
-          $marker
-          ## V6.2.2 live recovery probe
-
-          - Workflow: `v622-self-hosted-selected-artifact-recovery-resumable`
-          - Run: $($r.html_url)
-          - Run ID: `$($r.id)`
-          - Status: `$($r.status)`
-          - Conclusion: `$conclusion`
-          - Current step: `$current`
-          - Created: `$($r.created_at)`
-          - Updated: `$($r.updated_at)`
-          - Probe runner: `self-hosted windows x64 v622`
-          - Kaggle compute launched by probe: `false`
-          - Locked test used by probe: `false`
-          - External data used by probe: `false`
-          - GitHub-hosted compute used by probe: `false`
-          "@
+          $lines = @(
+            $marker,
+            '## V6.2.2 live recovery probe',
+            '',
+            ('- Workflow: v622-self-hosted-selected-artifact-recovery-resumable'),
+            ('- Run: ' + [string]$r.html_url),
+            ('- Run ID: ' + [string]$r.id),
+            ('- Status: ' + [string]$r.status),
+            ('- Conclusion: ' + $conclusion),
+            ('- Current step: ' + $current),
+            ('- Created: ' + [string]$r.created_at),
+            ('- Updated: ' + [string]$r.updated_at),
+            '- Probe runner: self-hosted windows x64 v622',
+            '- Kaggle compute launched by probe: false',
+            '- Locked test used by probe: false',
+            '- External data used by probe: false',
+            '- GitHub-hosted compute used by probe: false'
+          )
+          $body = $lines -join "`n"
           $payload = @{ body = $body } | ConvertTo-Json
           Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/issues/$env:ISSUE_NUMBER/comments" -Headers $headers -Method Post -ContentType 'application/json' -Body $payload | Out-Null
