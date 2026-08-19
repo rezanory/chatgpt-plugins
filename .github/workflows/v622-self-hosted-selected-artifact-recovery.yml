@@ -19,7 +19,7 @@ concurrency:
 jobs:
   recover:
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 60
+    timeout-minutes: 180
     environment: cloudflare-production
     steps:
       - name: Checkout trusted main
@@ -76,45 +76,46 @@ jobs:
           [System.IO.File]::AppendAllText($env:GITHUB_ENV, "V622_RECOVERY_TOKEN=$token`n", [System.Text.UTF8Encoding]::new($false))
 
       - name: Recover exact six selected artifacts
+        timeout-minutes: 150
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $uri = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/selected-artifact-recovery'
           $headers = @{ Authorization = "Bearer $env:V622_RECOVERY_TOKEN"; 'Content-Type' = 'application/json' }
-          $result = $null
-          $last = $null
-          for ($attempt = 1; $attempt -le 20; $attempt++) {
-            try {
-              $candidate = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body '{}' -TimeoutSec 90
-              if ($candidate.project -eq 'PNEUMONIA V6.2.2' -and
-                  $candidate.stage -eq 'selected_backbone_checkpoint_config_recovery' -and
-                  $candidate.status -eq 'COMPLETE' -and
-                  $candidate.kernel_ref -eq 'trickermark/pneumonia-v6-2-2-backbone-m06-r224' -and
-                  [int]$candidate.target_count -eq 6) {
-                $result = $candidate
-                break
-              }
-              throw 'stale selected recovery response'
-            } catch {
-              $last = $_.Exception.Message
-              Start-Sleep -Seconds 3
-            }
-          }
-          if (-not $result) { throw "Selected recovery bridge did not converge: $last" }
-          if ($result.recipe_sha256 -ne '27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f') { throw 'Recipe hash mismatch' }
-          if ($result.frozen_policy_sha256 -ne '7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861') { throw 'Policy hash mismatch' }
-          if ($result.locked_test_used -ne $false -or $result.external_data_used -ne $false) { throw 'Locked/external data unexpectedly used' }
 
-          $root = Join-Path $env:RUNNER_TEMP 'v622-selected-backbone-checkpoints-configs'
-          New-Item -ItemType Directory -Force -Path $root | Out-Null
-          $rows = @()
+          function Get-SelectedRecoverySnapshot {
+            $last = $null
+            for ($attempt = 1; $attempt -le 12; $attempt++) {
+              try {
+                $candidate = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body '{}' -TimeoutSec 90
+                if ($candidate.project -ne 'PNEUMONIA V6.2.2' -or
+                    $candidate.stage -ne 'selected_backbone_checkpoint_config_recovery' -or
+                    $candidate.status -ne 'COMPLETE' -or
+                    $candidate.kernel_ref -ne 'trickermark/pneumonia-v6-2-2-backbone-m06-r224' -or
+                    [int]$candidate.target_count -ne 6) {
+                  throw 'stale selected recovery response'
+                }
+                if ($candidate.recipe_sha256 -ne '27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f') { throw 'Recipe hash mismatch' }
+                if ($candidate.frozen_policy_sha256 -ne '7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861') { throw 'Policy hash mismatch' }
+                if ($candidate.locked_test_used -ne $false -or $candidate.external_data_used -ne $false) { throw 'Locked/external data unexpectedly used' }
+                return $candidate
+              }
+              catch {
+                $last = $_.Exception.Message
+                if ($attempt -lt 12) { Start-Sleep -Seconds 5 }
+              }
+            }
+            throw "Selected recovery bridge did not converge: $last"
+          }
+
+          $initial = Get-SelectedRecoverySnapshot
+          $plan = @()
           $seen = @{}
-          foreach ($target in @($result.targets)) {
+          foreach ($target in @($initial.targets)) {
             $candidateId = [string]$target.candidate_id
             $role = [string]$target.role
             $basename = [string]$target.basename
             $sourceName = [string]$target.source_file_name
-            $url = [string]$target.url
             if (@('M06__convnext_tiny','M06__densenet121','M06__resnet50v2') -notcontains $candidateId) { throw "Unexpected candidate: $candidateId" }
             if (@('config','checkpoint') -notcontains $role) { throw "Unexpected artifact role: $role" }
             if ($role -eq 'config' -and $basename -ne 'config.json') { throw 'Unexpected config basename' }
@@ -122,11 +123,63 @@ jobs:
             $key = "$candidateId|$role"
             if ($seen.ContainsKey($key)) { throw "Duplicate selected artifact: $key" }
             $seen[$key] = $true
+            $plan += [pscustomobject]@{
+              candidate_id = $candidateId
+              role = $role
+              basename = $basename
+              source_file_name = $sourceName
+              expected_sha256 = if ($role -eq 'config') { [string]$target.expected_sha256 } else { $null }
+            }
+          }
+          if ($plan.Count -ne 6 -or $seen.Count -ne 6) { throw 'Selected artifact recovery cardinality mismatch' }
+
+          $root = Join-Path $env:RUNNER_TEMP 'v622-selected-backbone-checkpoints-configs'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $rows = @()
+
+          foreach ($target in $plan) {
+            $candidateId = [string]$target.candidate_id
+            $role = [string]$target.role
+            $basename = [string]$target.basename
+            $sourceName = [string]$target.source_file_name
+            $key = "$candidateId|$role"
             $dir = Join-Path $root $candidateId
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
             $dest = Join-Path $dir $basename
-            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec 900
-            if (-not (Test-Path $dest)) { throw "Download missing: $key" }
+            $downloaded = $false
+            $downloadLast = $null
+
+            for ($downloadAttempt = 1; $downloadAttempt -le 4; $downloadAttempt++) {
+              try {
+                # Kaggle output URLs can be time-limited. Refresh the exact six-link snapshot
+                # immediately before every download instead of reusing links captured at step start.
+                $fresh = Get-SelectedRecoverySnapshot
+                $matches = @($fresh.targets | Where-Object {
+                  [string]$_.candidate_id -eq $candidateId -and
+                  [string]$_.role -eq $role -and
+                  [string]$_.basename -eq $basename -and
+                  [string]$_.source_file_name -eq $sourceName
+                })
+                if ($matches.Count -ne 1) { throw "Fresh recovery target must resolve exactly once for $key; found $($matches.Count)" }
+                $downloadUrl = [string]$matches[0].url
+                if ([string]::IsNullOrWhiteSpace($downloadUrl)) { throw "Fresh recovery URL missing for $key" }
+                if (Test-Path $dest) { Remove-Item -Force $dest }
+                Write-Host "Downloading $key (attempt $downloadAttempt/4) from freshly issued output URL"
+                Invoke-WebRequest -Uri $downloadUrl -OutFile $dest -UseBasicParsing -TimeoutSec 3600
+                if (-not (Test-Path $dest)) { throw "Download missing: $key" }
+                $bytes = (Get-Item $dest).Length
+                if ($bytes -le 0) { throw "Downloaded empty artifact: $key" }
+                $downloaded = $true
+                break
+              }
+              catch {
+                $downloadLast = $_.Exception.Message
+                if (Test-Path $dest) { Remove-Item -Force $dest -ErrorAction SilentlyContinue }
+                if ($downloadAttempt -lt 4) { Start-Sleep -Seconds (5 * $downloadAttempt) }
+              }
+            }
+            if (-not $downloaded) { throw "Selected artifact download failed after retries for $key: $downloadLast" }
+
             $sha = (Get-FileHash -Algorithm SHA256 -Path $dest).Hash.ToLowerInvariant()
             $bytes = (Get-Item $dest).Length
             if ($role -eq 'config') {
@@ -143,8 +196,8 @@ jobs:
               expected_sha256 = if ($role -eq 'config') { [string]$target.expected_sha256 } else { $null }
             }
           }
-          if ($rows.Count -ne 6 -or $seen.Count -ne 6) { throw 'Selected artifact recovery cardinality mismatch' }
 
+          if ($rows.Count -ne 6) { throw 'Selected artifact recovery row count mismatch' }
           $manifest = [ordered]@{
             schema_version = 1
             project = 'PNEUMONIA V6.2.2'
@@ -207,4 +260,21 @@ jobs:
               npx wrangler deploy
             }
             finally { Pop-Location }
+          }
+
+      - name: Publish selected artifact recovery failure receipt
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $body = "## V6.2.2 selected checkpoint/config recovery diagnostic receipt`n`n- Result: ``FAILED_OR_TIMED_OUT`` `n- Scope: selected 3 configs + 3 checkpoints recovery only`n- Kaggle compute launched: ``false```n- Canonical M01-M12 rerun: ``false```n- HPO/confirmation repeated: ``false```n- Locked test used: ``false```n- External data used: ``false```n- GitHub run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n- Action: inspect the failed recovery step; do not launch training/HPO/locked-test work.`n"
+          try {
+            $payload = @{ body = $body } | ConvertTo-Json
+            $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+            Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
+          }
+          catch {
+            Write-Warning "Could not publish failure diagnostic receipt: $($_.Exception.Message)"
           }
