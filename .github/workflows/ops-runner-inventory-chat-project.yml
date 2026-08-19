@@ -1,6 +1,10 @@
 name: Ops Runner Inventory for chat-project
 
 on:
+  push:
+    branches: [ops/runner-inventory-chat-project-20260819]
+    paths:
+      - '.github/workflows/ops-runner-inventory-chat-project.yml'
   pull_request:
     branches: [main]
     paths:
