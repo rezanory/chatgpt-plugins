@@ -16,14 +16,14 @@ jobs:
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 5
     steps:
-      - name: Report latest external-validation run
+      - name: Report latest real external-validation run
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
           $runs=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs?per_page=100" -Headers $h
-          $r=@($runs.workflow_runs|Where-Object{$_.name-eq'v622-external-validation'}|Sort-Object created_at -Descending|Select-Object -First 1)
-          if(-not $r){$body='V6.2.2 EXTERNAL LIVE | no run found'}else{$run=$r[0];$jobs=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$($run.id)/jobs?filter=latest&per_page=100" -Headers $h;$current='none';$launch='not_seen';foreach($j in @($jobs.jobs)){foreach($s in @($j.steps)){if($s.name-eq'Launch external validation once'){$launch="$($s.status)/$($s.conclusion)"};if($s.status-eq'in_progress'){$current="$($j.name) :: $($s.name)"}}};$body="V6.2.2 EXTERNAL LIVE | run=$($run.id) | status=$($run.status) | conclusion=$($run.conclusion) | launch=$launch | current=$current | head=$($run.head_sha)"}
+          $r=@($runs.workflow_runs|Where-Object{$_.name-eq'v622-external-validation' -and ($_.status-in@('queued','in_progress','waiting','pending','requested') -or $_.conclusion-ne'skipped')}|Sort-Object created_at -Descending|Select-Object -First 1)
+          if(-not $r){$body='V6.2.2 EXTERNAL LIVE | no non-skipped run found'}else{$run=$r[0];$jobs=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$($run.id)/jobs?filter=latest&per_page=100" -Headers $h;$current='none';$launch='not_seen';foreach($j in @($jobs.jobs)){foreach($s in @($j.steps)){if($s.name-eq'Launch external validation once'){$launch="$($s.status)/$($s.conclusion)"};if($s.status-eq'in_progress'){$current="$($j.name) :: $($s.name)"}}};$conclusion=if([string]::IsNullOrWhiteSpace([string]$run.conclusion)){'none'}else{[string]$run.conclusion};$body="V6.2.2 EXTERNAL LIVE | run=$($run.id) | status=$($run.status) | conclusion=$conclusion | launch=$launch | current=$current | head=$($run.head_sha)"}
           $p=@{body=$body}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
