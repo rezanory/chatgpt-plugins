@@ -1,0 +1,82 @@
+name: Ops Runner GitHub Admin Access Probe for chat-project
+
+on:
+  push:
+    branches: [ops/runner-inventory-chat-project-20260819]
+    paths:
+      - '.github/workflows/ops-runner-gh-access-chat-project.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/ops-runner-gh-access-chat-project.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Read-only host gh runner API access
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 5
+    steps:
+      - name: Report executing runner
+        shell: powershell
+        run: |
+          Write-Host "CONTROL_RUNNER_NAME=$env:RUNNER_NAME"
+
+      - name: Check host GitHub CLI authentication without exposing credentials
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+            Write-Host 'HOST_GH_AVAILABLE=NO'
+            exit 0
+          }
+          Write-Host 'HOST_GH_AVAILABLE=YES'
+          gh auth status 2>&1 | ForEach-Object {
+            $line = [string]$_
+            $line = $line -replace '(?i)(token:\s*).*','$1[REDACTED]'
+            Write-Host $line
+          }
+          Write-Host "HOST_GH_AUTH_EXIT=$LASTEXITCODE"
+
+      - name: Read chat-project runner inventory through host gh auth
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+            Write-Host 'CHAT_PROJECT_RUNNER_API=GH_UNAVAILABLE'
+            exit 0
+          }
+          $out = gh api repos/rezanory/chat-project/actions/runners --jq '{total_count: .total_count, runners: [.runners[] | {id, name, status, busy, labels: [.labels[].name]}]}' 2>&1
+          $code = $LASTEXITCODE
+          if ($code -eq 0) {
+            Write-Host 'CHAT_PROJECT_RUNNER_API=PASS'
+            Write-Host $out
+          }
+          else {
+            Write-Host "CHAT_PROJECT_RUNNER_API=FAIL:$code"
+            $out | ForEach-Object { Write-Host ([string]$_ -replace '(?i)(token|secret|password)([^ ]*)','[REDACTED]') }
+          }
+
+      - name: Read current chatgpt-plugins runner inventory through host gh auth
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { exit 0 }
+          $out = gh api repos/rezanory/chatgpt-plugins/actions/runners --jq '{total_count: .total_count, runners: [.runners[] | {id, name, status, busy, labels: [.labels[].name]}]}' 2>&1
+          $code = $LASTEXITCODE
+          if ($code -eq 0) {
+            Write-Host 'CHATGPT_PLUGINS_RUNNER_API=PASS'
+            Write-Host $out
+          }
+          else {
+            Write-Host "CHATGPT_PLUGINS_RUNNER_API=FAIL:$code"
+          }
+
+      - name: Assert probe remained read-only
+        shell: powershell
+        run: |
+          Write-Host 'READ_ONLY_GH_ACCESS_PROBE=PASS'
+          Write-Host 'No runner token was generated and no runner registration, label, service, or repository setting was changed.'
