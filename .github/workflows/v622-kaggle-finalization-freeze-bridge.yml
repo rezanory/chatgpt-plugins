@@ -2,6 +2,11 @@ name: v622-kaggle-finalization-freeze-bridge
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-kaggle-finalization-freeze-bridge.yml'
+      - 'deploy/cloudflare-worker-free/src/v622-finalization-freeze-worker.ts'
 
 permissions:
   contents: read
@@ -81,6 +86,7 @@ jobs:
           $value | ConvertTo-Json -Depth 50 | Write-Host
           if ($value.ok -eq $false) { throw "Kaggle finalization launch failed: $($value.error)" }
           if ([string]$value.target_kernel_ref -ne 'azadka/pneumonia-v6-2-2-finalization-master') { throw 'Unexpected finalization target' }
+          Write-Host 'AZADKA_FINALIZATION_LAUNCH_ACCEPTED'
 
       - name: Monitor Kaggle final freeze to terminal status
         shell: powershell
@@ -95,23 +101,24 @@ jobs:
             Write-Host "Kaggle finalization status attempt $attempt/60: $status"
             if ($status -eq 'COMPLETE') { $terminal = $value; break }
             if ($status -in @('ERROR','FAILED','CANCELLED','CANCELED','DEAD')) { throw "Kaggle finalization terminated with $status" }
-            Start-Sleep -Seconds 60
+            Start-Sleep -Seconds 30
           }
           if ($null -eq $terminal) { throw 'Kaggle finalization freeze did not reach COMPLETE inside monitor budget' }
           if ($null -eq $terminal.receipt) { throw 'Kaggle finalization COMPLETE without validated freeze receipt' }
           $receiptPath = Join-Path $env:RUNNER_TEMP 'v622-finalization-freeze-receipt.json'
           [System.IO.File]::WriteAllText($receiptPath, ($terminal.receipt | ConvertTo-Json -Depth 50), [System.Text.UTF8Encoding]::new($false))
 
-      - name: Publish Kaggle-native FINAL_FREEZE receipt
+      - name: Publish Kaggle-native FINAL_FREEZE receipt best-effort
+        continue-on-error: true
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = 'Stop'
+          $ErrorActionPreference = 'Continue'
           $receipt = Get-Content -Raw (Join-Path $env:RUNNER_TEMP 'v622-finalization-freeze-receipt.json') | ConvertFrom-Json
           $ids = @($receipt.selected_candidate_ids) -join ', '
-          $body = "## V6.2.2 FINAL_FREEZE_MANIFEST`n`n- Execution environment: ``Kaggle```n- Master: ``azadka```n- Kernel: ``azadka/pneumonia-v6-2-2-finalization-master```n- Artifact dataset: ``trickermark/pneumonia-v6-2-2-finalization-artifacts`` (private; ``azadka`` reader)`n- FINAL_FREEZE_MANIFEST SHA-256: ``$($receipt.manifest_sha256)```n- Selected artifact count: ``$($receipt.selected_artifact_count)```n- Selected candidates: ``$ids```n- Frozen recipe SHA-256: ``27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f```n- Frozen policy file SHA-256: ``7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861```n- Locked test used: ``false```n- External data used: ``false```n- GitHub role: ``bridge/journal only```n- Next permitted stage: ``$($receipt.next_permitted_stage)```n- Bridge run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
-          $payload = @{ body = $body } | ConvertTo-Json
+          $body = "V6.2.2 FINAL_FREEZE_MANIFEST PASS | master=azadka | kernel=azadka/pneumonia-v6-2-2-finalization-master | dataset=trickermark/pneumonia-v6-2-2-finalization-artifacts | manifest_sha256=$($receipt.manifest_sha256) | selected=$ids | locked_test_used=false | external_data_used=false | next=$($receipt.next_permitted_stage) | run=$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $payload = @{ body = $body } | ConvertTo-Json -Compress
           $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
 
@@ -140,14 +147,14 @@ jobs:
             finally { Pop-Location }
           }
 
-      - name: Publish bridge failure receipt
+      - name: Publish bridge failure receipt best-effort
         if: failure()
+        continue-on-error: true
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = 'Continue'
-          $body = "## V6.2.2 Kaggle-native final-freeze bridge diagnostic`n`n- Result: ``FAILED_OR_TIMED_OUT```n- Intended compute environment: ``Kaggle master azadka```n- GitHub model compute performed: ``false```n- Training/HPO/confirmation launched: ``false```n- Locked test launched: ``false```n- External validation launched: ``false```n- Bridge run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
-          $payload = @{ body = $body } | ConvertTo-Json
+          $body = "V6.2.2 Kaggle-native final-freeze FAILED_OR_TIMED_OUT | intended_master=azadka | model_compute_on_github=false | training_hpo_confirmation=false | locked_test=false | external_validation=false | run=$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $payload = @{ body = $body } | ConvertTo-Json -Compress
           $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
