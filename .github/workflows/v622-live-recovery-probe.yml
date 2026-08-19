@@ -14,46 +14,56 @@ permissions:
 
 jobs:
   probe:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 5
     steps:
       - name: Report latest resumable recovery run
-        shell: bash
+        shell: powershell
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: '18'
         run: |
-          set -euo pipefail
-          run_json="$(gh api -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "/repos/${REPO}/actions/runs?per_page=100" --jq '[.workflow_runs[] | select(.name == "v622-self-hosted-selected-artifact-recovery-resumable")] | sort_by(.created_at) | reverse | .[0]')"
-          if [[ -z "${run_json}" || "${run_json}" == "null" ]]; then
-            exit 0
-          fi
-          run_id="$(jq -r '.id' <<<"${run_json}")"
-          status="$(jq -r '.status // "unknown"' <<<"${run_json}")"
-          conclusion="$(jq -r '.conclusion // ""' <<<"${run_json}")"
-          url="$(jq -r '.html_url' <<<"${run_json}")"
-          created="$(jq -r '.created_at' <<<"${run_json}")"
-          updated="$(jq -r '.updated_at' <<<"${run_json}")"
-          current="none"
-          jobs="$(gh api -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "/repos/${REPO}/actions/runs/${run_id}/jobs?per_page=100&filter=latest")"
-          current="$(jq -r '[.jobs[]? | . as $j | [.steps[]? | select(.status == "in_progress") | ($j.name + " :: " + .name)][]] | if length>0 then .[0] else "none" end' <<<"${jobs}")"
-          marker="<!-- v622-live-probe:${run_id}:${status}:${conclusion} -->"
-          body="$(cat <<EOF
-          ${marker}
+          $ErrorActionPreference = 'Stop'
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $repo = $env:GITHUB_REPOSITORY
+          $runs = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/runs?per_page=100" -Headers $headers -Method Get
+          $run = @($runs.workflow_runs | Where-Object { $_.name -eq 'v622-self-hosted-selected-artifact-recovery-resumable' } | Sort-Object created_at -Descending | Select-Object -First 1)
+          if (-not $run -or $run.Count -eq 0) { exit 0 }
+          $r = $run[0]
+          $jobs = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/runs/$($r.id)/jobs?per_page=100&filter=latest" -Headers $headers -Method Get
+          $current = 'none'
+          foreach ($job in @($jobs.jobs)) {
+            foreach ($step in @($job.steps)) {
+              if ($step.status -eq 'in_progress') {
+                $current = "$($job.name) :: $($step.name)"
+                break
+              }
+            }
+            if ($current -ne 'none') { break }
+          }
+          $conclusion = if ([string]::IsNullOrWhiteSpace([string]$r.conclusion)) { 'none' } else { [string]$r.conclusion }
+          $marker = "<!-- v622-live-probe:$($r.id):$($r.status):$conclusion -->"
+          $body = @"
+          $marker
           ## V6.2.2 live recovery probe
 
-          - Workflow: \`v622-self-hosted-selected-artifact-recovery-resumable\`
-          - Run: ${url}
-          - Run ID: \`${run_id}\`
-          - Status: \`${status}\`
-          - Conclusion: \`${conclusion:-none}\`
-          - Current step: \`${current}\`
-          - Created: \`${created}\`
-          - Updated: \`${updated}\`
-          - Kaggle compute launched by probe: \`false\`
-          - Locked test used by probe: \`false\`
-          - External data used by probe: \`false\`
-          EOF
-          )"
-          jq -n --arg body "${body}" '{body:$body}' | gh api --method POST "/repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --input - >/dev/null
+          - Workflow: `v622-self-hosted-selected-artifact-recovery-resumable`
+          - Run: $($r.html_url)
+          - Run ID: `$($r.id)`
+          - Status: `$($r.status)`
+          - Conclusion: `$conclusion`
+          - Current step: `$current`
+          - Created: `$($r.created_at)`
+          - Updated: `$($r.updated_at)`
+          - Probe runner: `self-hosted windows x64 v622`
+          - Kaggle compute launched by probe: `false`
+          - Locked test used by probe: `false`
+          - External data used by probe: `false`
+          - GitHub-hosted compute used by probe: `false`
+          "@
+          $payload = @{ body = $body } | ConvertTo-Json
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/issues/$env:ISSUE_NUMBER/comments" -Headers $headers -Method Post -ContentType 'application/json' -Body $payload | Out-Null
