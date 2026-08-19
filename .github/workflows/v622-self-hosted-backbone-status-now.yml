@@ -22,6 +22,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
+          # Read-only exact-kernel probe; never launches or reruns Kaggle compute.
           $url = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/backbone-status'
           $value = $null
           $last = $null
