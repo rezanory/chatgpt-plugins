@@ -1,183 +1,19 @@
-name: v622-official-locked-test
+name: v622-official-locked-test-retired-after-pass
 
+# Official locked test consumed exactly once and passed. This workflow is now a manual no-op.
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/v622-official-locked-test.yml'
   workflow_dispatch:
 
 permissions:
-  actions: read
   contents: read
-  issues: write
-
-concurrency:
-  group: v622-cloudflare-production-mutation
-  cancel-in-progress: false
 
 jobs:
-  locked-test:
+  retired:
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 70
-    environment: cloudflare-production
     steps:
-      - name: Checkout trusted main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Download exact recovered W16 source artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: v622-selected-kernel-source
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: 32197039097
-          path: ${{ runner.temp }}/v622-w16-source
-
-      - name: Build exact-source one-shot locked-test payload
+      - name: Confirm immutable lockbox closure
         shell: powershell
         run: |
-          $ErrorActionPreference='Stop'
-          $src = Join-Path $env:RUNNER_TEMP 'v622-w16-source'
-          $payload = Join-Path $env:GITHUB_WORKSPACE 'deploy/cloudflare-worker-free/src/v622-official-locked-test-payload.ts'
-          $meta = Join-Path $env:RUNNER_TEMP 'v622-official-locked-test-payload.json'
-          node scripts/v622_build_locked_test_payload.mjs $src scripts/v622_official_locked_test_template.py $payload $meta
-          if ($LASTEXITCODE -ne 0) { throw 'locked-test payload build failed' }
-          Copy-Item -Force scripts/v622_official_locked_test_worker_template.ts.txt deploy/cloudflare-worker-free/src/v622-official-locked-test-worker.ts
-          $m = Get-Content -Raw $meta | ConvertFrom-Json
-          if ($m.w16_notebook_sha256 -ne '5abff78b9b10a13792b6d1b6cd24df780a64d16b7ec891d2ed74628dbb0b910b') { throw 'W16 source SHA mismatch' }
-          if ($m.reconciliation_sha256 -ne '99a319c8d397342aaefd3c15e0eb8f968a973738f55ef97925a2a16da8c485d8') { throw 'reconciliation SHA mismatch in payload' }
-          [IO.File]::AppendAllText($env:GITHUB_ENV,"V622_LOCKED_SCRIPT_SHA=$($m.official_locked_test_script_sha256)`n",[Text.UTF8Encoding]::new($false))
-
-      - name: Deploy protected official locked-test bridge
-        shell: powershell
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          $ErrorActionPreference='Stop'
-          $id=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
-          if(-not $id -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials missing'}
-          Write-Host "::add-mask::$id"
-          [IO.File]::AppendAllText($env:GITHUB_ENV,"V622_CF_ACCOUNT_ID=$id`n",[Text.UTF8Encoding]::new($false))
-          $env:CLOUDFLARE_ACCOUNT_ID=$id
-          Push-Location deploy/cloudflare-worker-free
-          try {
-            npm install --no-audit --no-fund
-            if($LASTEXITCODE -ne 0){throw 'npm failed'}
-            npm run check
-            if($LASTEXITCODE -ne 0){throw 'typecheck failed'}
-            npx wrangler deploy src/v622-official-locked-test-worker.ts --name chatgpt-kaggle-gateway
-            if($LASTEXITCODE -ne 0){throw 'locked-test bridge deploy failed'}
-          } finally { Pop-Location }
-
-      - name: Create ephemeral locked-test capability
-        shell: powershell
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          $ErrorActionPreference='Stop'
-          $b=New-Object byte[] 48
-          $r=[Security.Cryptography.RandomNumberGenerator]::Create()
-          try{$r.GetBytes($b)}finally{$r.Dispose()}
-          $t=[Convert]::ToBase64String($b).TrimEnd('=').Replace('+','-').Replace('/','_')
-          Write-Host "::add-mask::$t"
-          $env:CLOUDFLARE_ACCOUNT_ID=$env:V622_CF_ACCOUNT_ID
-          Push-Location deploy/cloudflare-worker-free
-          try{$t|npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway;if($LASTEXITCODE -ne 0){throw 'capability install failed'}}finally{Pop-Location}
-          [IO.File]::AppendAllText($env:GITHUB_ENV,"V622_LOCKED_TOKEN=$t`n",[Text.UTF8Encoding]::new($false))
-
-      - name: Launch official locked test exactly once
-        shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference='Stop'
-          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
-          $h=@{Authorization="Bearer $env:V622_LOCKED_TOKEN";'Content-Type'='application/json'}
-          $v=$null;$last='bridge not ready'
-          for($i=1;$i-le 24;$i++){
-            try{
-              $x=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
-              if($x.service-ne'v622-official-locked-test' -or $x.status-ne'ready'){throw 'stale bridge'}
-              $v=Invoke-RestMethod -Uri "$base/control/v6-2-2/official-locked-test/launch" -Method Post -Headers $h -Body '{}' -TimeoutSec 180
-              break
-            }catch{$last=$_.Exception.Message;Write-Host "locked-test launch readiness $i/24: $last";Start-Sleep 5}
-          }
-          if(-not $v){throw "locked-test launch did not converge: $last"}
-          $v|ConvertTo-Json -Depth 30|Write-Host
-          if($v.ok-eq$false){throw "official locked-test launch rejected: $($v.error)"}
-          if($v.target_kernel_ref-ne'azadka/pneumonia-v6-2-2-official-locked-test'){throw 'unexpected locked-test target'}
-          $body="## V6.2.2 OFFICIAL LOCKED TEST LAUNCHED`n`n- Kaggle master: ``azadka```n- Kernel: ``azadka/pneumonia-v6-2-2-official-locked-test```n- Expected locked benchmark samples: ``624```n- Ensemble: ``M06__convnext_tiny + M06__densenet121 + M06__resnet50v2```n- Weights/calibration/threshold: ``FROZEN_DEVELOPMENT_ONLY```n- FINAL_FREEZE_MANIFEST SHA-256: ``2313023819c9eec669d835b99dcc2524b03bb0da236c2ec8f98c4e1221948414```n- Reconciliation SHA-256: ``99a319c8d397342aaefd3c15e0eb8f968a973738f55ef97925a2a16da8c485d8```n- W16 source SHA-256: ``5abff78b9b10a13792b6d1b6cd24df780a64d16b7ec891d2ed74628dbb0b910b```n- Generated locked-test script SHA-256: ``$env:V622_LOCKED_SCRIPT_SHA```n- GPU: ``true``; Internet: ``false```n- Training/HPO/confirmation/reselection: ``false```n- External data used: ``false```n- Automatic rerun after terminal failure: ``forbidden```n- Bridge run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
-          $p=@{body=$body}|ConvertTo-Json -Compress
-          $gh=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $gh -ContentType 'application/json' -Body $p|Out-Null
-
-      - name: Monitor official locked test to terminal status
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $h=@{Authorization="Bearer $env:V622_LOCKED_TOKEN";'Content-Type'='application/json'}
-          $uri='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/official-locked-test/status'
-          $terminal=$null;$last=''
-          for($i=1;$i-le 90;$i++){
-            try{
-              $v=Invoke-RestMethod -Uri $uri -Method Post -Headers $h -Body '{}' -TimeoutSec 180
-              $s=([string]$v.status).ToUpperInvariant();Write-Host "official locked test $i/90: $s"
-              if($s-eq'COMPLETE'){$terminal=$v;break}
-              if($s-in@('ERROR','FAILED','CANCELLED','CANCELED','DEAD')){throw "terminal locked-test failure $s; automatic rerun forbidden"}
-            }catch{
-              if($_.Exception.Message-match'terminal locked-test failure'){throw}
-              $last=$_.Exception.Message;Write-Host "diagnostic-only locked-test status $i/90: $last"
-            }
-            Start-Sleep 30
-          }
-          if(-not $terminal){throw "official locked test did not reach COMPLETE; last diagnostic=$last"}
-          if(-not $terminal.receipt){throw 'official locked test COMPLETE without validated immutable receipt'}
-          $terminal.receipt|ConvertTo-Json -Depth 50|Set-Content -Encoding utf8 "$env:RUNNER_TEMP\v622-official-locked-test-receipt.json"
-
-      - name: Publish official locked-test PASS
-        shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $r=Get-Content -Raw "$env:RUNNER_TEMP\v622-official-locked-test-receipt.json"|ConvertFrom-Json
-          $m=$r.metrics
-          $body="## V6.2.2 OFFICIAL LOCKED TEST PASS`n`n- Kernel: ``azadka/pneumonia-v6-2-2-official-locked-test```n- Locked benchmark samples: ``$($r.n_samples)```n- Balanced accuracy: ``$($m.balanced_accuracy)```n- MCC: ``$($m.mcc)```n- Recall pneumonia: ``$($m.recall_pneumonia)```n- Recall normal: ``$($m.recall_normal)```n- Frozen threshold: ``$($m.threshold)```n- Reselection after results allowed: ``false```n- External data used: ``false```n- Authorization record SHA-256: ``$($r.authorization_record_sha256)```n- Evaluation manifest SHA-256: ``$($r.evaluation_manifest_sha256)```n- Completion SHA-256: ``$($r.completion_sha256)```n- Next permitted stage: ``EXTERNAL_VALIDATION```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
-          $p=@{body=$body}|ConvertTo-Json -Compress
-          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
-
-      - name: Remove capability and restore canonical Worker
-        if: always()
-        shell: powershell
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          $ErrorActionPreference='Continue'
-          if($env:V622_CF_ACCOUNT_ID){
-            $env:CLOUDFLARE_ACCOUNT_ID=$env:V622_CF_ACCOUNT_ID
-            Push-Location deploy/cloudflare-worker-free
-            try{
-              for($i=1;$i-le 3;$i++){'y'|npx wrangler secret delete CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway;if($LASTEXITCODE-eq 0){break};Start-Sleep 5}
-              for($i=1;$i-le 3;$i++){npx wrangler deploy;if($LASTEXITCODE-eq 0){break};Start-Sleep 5}
-            }finally{Pop-Location}
-          }
-
-      - name: Publish locked-test diagnostic on failure
-        if: failure()
-        shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $body="## V6.2.2 OFFICIAL LOCKED TEST DIAGNOSTIC`n`n- Result: ``FAILED_OR_TIMED_OUT```n- Automatic rerun: ``FORBIDDEN```n- Training/HPO/confirmation/reselection: ``false```n- External validation launched: ``false```n- Locked-test target: ``azadka/pneumonia-v6-2-2-official-locked-test```n- Manual incident review is required before any retry if lockbox access began.`n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
-          $p=@{body=$body}|ConvertTo-Json -Compress
-          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
+          Write-Host 'OFFICIAL_LOCKED_TEST already completed on azadka.'
+          Write-Host 'Automatic relaunch is permanently disabled.'
+          Write-Host 'No Kaggle/Cloudflare/model mutation is performed.'
