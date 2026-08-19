@@ -1,0 +1,59 @@
+name: v622-live-recovery-probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-live-recovery-probe.yml'
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report latest resumable recovery run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: '18'
+        run: |
+          set -euo pipefail
+          run_json="$(gh api -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "/repos/${REPO}/actions/runs?per_page=100" --jq '[.workflow_runs[] | select(.name == "v622-self-hosted-selected-artifact-recovery-resumable")] | sort_by(.created_at) | reverse | .[0]')"
+          if [[ -z "${run_json}" || "${run_json}" == "null" ]]; then
+            exit 0
+          fi
+          run_id="$(jq -r '.id' <<<"${run_json}")"
+          status="$(jq -r '.status // "unknown"' <<<"${run_json}")"
+          conclusion="$(jq -r '.conclusion // ""' <<<"${run_json}")"
+          url="$(jq -r '.html_url' <<<"${run_json}")"
+          created="$(jq -r '.created_at' <<<"${run_json}")"
+          updated="$(jq -r '.updated_at' <<<"${run_json}")"
+          current="none"
+          jobs="$(gh api -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "/repos/${REPO}/actions/runs/${run_id}/jobs?per_page=100&filter=latest")"
+          current="$(jq -r '[.jobs[]? | . as $j | [.steps[]? | select(.status == "in_progress") | ($j.name + " :: " + .name)][]] | if length>0 then .[0] else "none" end' <<<"${jobs}")"
+          marker="<!-- v622-live-probe:${run_id}:${status}:${conclusion} -->"
+          body="$(cat <<EOF
+          ${marker}
+          ## V6.2.2 live recovery probe
+
+          - Workflow: \`v622-self-hosted-selected-artifact-recovery-resumable\`
+          - Run: ${url}
+          - Run ID: \`${run_id}\`
+          - Status: \`${status}\`
+          - Conclusion: \`${conclusion:-none}\`
+          - Current step: \`${current}\`
+          - Created: \`${created}\`
+          - Updated: \`${updated}\`
+          - Kaggle compute launched by probe: \`false\`
+          - Locked test used by probe: \`false\`
+          - External data used by probe: \`false\`
+          EOF
+          )"
+          jq -n --arg body "${body}" '{body:$body}' | gh api --method POST "/repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --input - >/dev/null
