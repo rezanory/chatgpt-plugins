@@ -76,9 +76,72 @@ jobs:
           & $gitExe --version
           if ($LASTEXITCODE -ne 0) { throw 'Located Git executable is not usable' }
           "PH04_GIT=$gitExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          (Split-Path -Parent $gitExe) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           Write-Host "PH04_GIT=$gitExe"
           Write-Host 'GIT_DISCOVERY=PASS'
+
+      - name: Locate pinned PH04 toolchain without installing system software
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $python = 'C:\PH4-Tools\venvs\ph04-m3-stage01-361cf101\Scripts\python.exe'
+          if (-not (Test-Path -LiteralPath $python)) { throw "PINNED_PYTHON_MISSING: $python" }
+          & $python -c "import sys,site; print(sys.executable); print(sys.version); print('user_site_enabled=' + str(site.ENABLE_USER_SITE)); raise SystemExit(0 if sys.version_info[:3] == (3,12,7) and site.ENABLE_USER_SITE is False else 1)"
+          if ($LASTEXITCODE -ne 0) { throw 'PINNED_PYTHON_VALIDATION_FAILED' }
+
+          $phpCandidates = New-Object System.Collections.Generic.List[string]
+          Get-ChildItem 'C:\PH4-Tools' -Filter 'php.exe' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName | ForEach-Object { $phpCandidates.Add($_.FullName) }
+          foreach ($path in @('C:\php\php.exe','C:\Program Files\PHP\php.exe')) {
+            if ((Test-Path -LiteralPath $path) -and -not $phpCandidates.Contains($path)) { $phpCandidates.Add($path) }
+          }
+          $php = $null
+          foreach ($candidate in $phpCandidates) {
+            $version = (& $candidate -r "echo PHP_VERSION;" 2>$null)
+            if ($LASTEXITCODE -eq 0 -and ([string]$version).StartsWith('8.4.')) { $php = $candidate; break }
+          }
+          if (-not $php) { throw 'PINNED_PHP_84_NOT_FOUND' }
+
+          $nodeCandidates = New-Object System.Collections.Generic.List[string]
+          foreach ($path in @('C:\Program Files\nodejs\node.exe','C:\Program Files (x86)\nodejs\node.exe')) {
+            if (Test-Path -LiteralPath $path) { $nodeCandidates.Add($path) }
+          }
+          Get-ChildItem 'C:\PH4-Tools' -Filter 'node.exe' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName | ForEach-Object {
+            if (-not $nodeCandidates.Contains($_.FullName)) { $nodeCandidates.Add($_.FullName) }
+          }
+          $node = $null
+          foreach ($candidate in $nodeCandidates) {
+            $version = (& $candidate --version 2>$null)
+            if ($LASTEXITCODE -eq 0 -and ([string]$version).StartsWith('v22.')) { $node = $candidate; break }
+          }
+          if (-not $node) { throw 'PINNED_NODE_22_NOT_FOUND' }
+
+          $composerCandidates = @(Get-ChildItem 'C:\PH4-Tools' -Filter 'composer.phar' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName)
+          $composer = $null
+          foreach ($candidate in $composerCandidates) {
+            & $php $candidate.FullName --version --no-ansi *> $null
+            if ($LASTEXITCODE -eq 0) { $composer = $candidate.FullName; break }
+          }
+          if (-not $composer) { throw 'PINNED_COMPOSER_PHAR_NOT_FOUND' }
+
+          & $python -m pip check
+          if ($LASTEXITCODE -ne 0) { throw 'PINNED_PYTHON_PIP_CHECK_FAILED' }
+          $phpVersion = (& $php -r "echo PHP_VERSION;")
+          $nodeVersion = (& $node --version)
+          $composerVersion = (& $php $composer --version --no-ansi)
+          $composerHash = (Get-FileHash -LiteralPath $composer -Algorithm SHA256).Hash
+
+          "PH04_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PH04_PHP=$php" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PH04_NODE=$node" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PH04_COMPOSER=$composer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          Write-Host "PINNED_PYTHON=$python"
+          Write-Host "PINNED_PHP=$php ($phpVersion)"
+          Write-Host "PINNED_NODE=$node ($nodeVersion)"
+          Write-Host "PINNED_COMPOSER=$composer"
+          Write-Host "PINNED_COMPOSER_VERSION=$composerVersion"
+          Write-Host "PINNED_COMPOSER_SHA256=$composerHash"
+          Write-Host 'PINNED_TOOLCHAIN_DISCOVERY=PASS'
 
       - name: Verify read-only local chat-project source cache
         shell: powershell
@@ -135,48 +198,15 @@ jobs:
           }
           Write-Host 'SOURCE_CACHE_UNTOUCHED_AFTER_CLONE=PASS'
 
-      - name: Setup Python 3.12
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.12'
-
-      - name: Setup PHP 8.4 and Composer
-        uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45 # v2
-        with:
-          php-version: '8.4'
-          tools: composer
-
-      - name: Setup Node 22
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22'
-
-      - name: Create isolated backend environment and install locked dependencies
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $venv = Join-Path $env:RUNNER_TEMP "ph04-stage01-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-          if (Test-Path -LiteralPath $venv) { Remove-Item -LiteralPath $venv -Recurse -Force }
-          python -m venv $venv
-          if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }
-          $py = Join-Path $venv 'Scripts\python.exe'
-          & $py -m pip install --disable-pip-version-check --require-hashes -r (Join-Path $env:GITHUB_WORKSPACE 'target\aiChatProjectPyback\requirements-dev.txt')
-          if ($LASTEXITCODE -ne 0) { throw 'locked dependency install failed' }
-          "PH04_PYTHON=$py" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          $backend = Join-Path $env:GITHUB_WORKSPACE 'target\aiChatProjectPyback'
-          $root = Join-Path $env:GITHUB_WORKSPACE 'target'
-          "PYTHONPATH=$backend;$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          & $py --version
-          php --version
-          composer --version
-          node --version
-
-      - name: Validate UTF-8 and immutable dependency supply chain
+      - name: Validate pinned backend environment and immutable dependency supply chain
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $root = Join-Path $env:GITHUB_WORKSPACE 'target'
           $backend = Join-Path $root 'aiChatProjectPyback'
+          "PYTHONPATH=$backend;$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & $env:PH04_PYTHON -m pip check
+          if ($LASTEXITCODE -ne 0) { throw 'pip check failed' }
           Push-Location $root
           try {
             & $env:PH04_PYTHON scripts/scan_text_encoding.py .
@@ -270,9 +300,9 @@ jobs:
           $plugin = Join-Path $env:GITHUB_WORKSPACE 'target\aichat-WPplugin'
           Push-Location $plugin
           try {
-            composer install --prefer-dist --no-progress --no-interaction --no-plugins --no-scripts
+            & $env:PH04_PHP $env:PH04_COMPOSER install --prefer-dist --no-progress --no-interaction --no-plugins --no-scripts
             if ($LASTEXITCODE -ne 0) { throw 'composer install failed' }
-            composer validate --strict
+            & $env:PH04_PHP $env:PH04_COMPOSER validate --strict --no-ansi
             if ($LASTEXITCODE -ne 0) { throw 'composer validate failed' }
           } finally { Pop-Location }
 
@@ -284,7 +314,7 @@ jobs:
           $files = Get-ChildItem -LiteralPath $plugin -Recurse -File -Filter '*.php' | Where-Object { $_.FullName -notmatch '[\\/]vendor[\\/]' }
           Write-Host "PHP_LINT_FILE_COUNT=$($files.Count)"
           foreach ($file in $files) {
-            php -l $file.FullName | Out-Host
+            & $env:PH04_PHP -l $file.FullName | Out-Host
             if ($LASTEXITCODE -ne 0) { throw "PHP lint failed: $($file.FullName)" }
           }
 
@@ -295,9 +325,9 @@ jobs:
           $plugin = Join-Path $env:GITHUB_WORKSPACE 'target\aichat-WPplugin'
           Push-Location $plugin
           try {
-            composer test -- --no-coverage
+            & $env:PH04_PHP $env:PH04_COMPOSER test -- --no-coverage
             if ($LASTEXITCODE -ne 0) { throw 'plugin tests failed' }
-            php vendor/bin/phpunit tests/Unit/BackendPluginSharedContractFixturesTest.php
+            & $env:PH04_PHP vendor/bin/phpunit tests/Unit/BackendPluginSharedContractFixturesTest.php
             if ($LASTEXITCODE -ne 0) { throw 'plugin shared contract fixture failed' }
           } finally { Pop-Location }
 
@@ -310,7 +340,7 @@ jobs:
           Write-Host "JS_TEST_FILE_COUNT=$($tests.Count)"
           foreach ($test in $tests) {
             Write-Host "JS_TEST=$($test.Name)"
-            node $test.FullName
+            & $env:PH04_NODE $test.FullName
             if ($LASTEXITCODE -ne 0) { throw "JavaScript test failed: $($test.Name)" }
           }
 
@@ -341,12 +371,6 @@ jobs:
         if: always()
         shell: powershell
         run: |
-          if ($env:PH04_PYTHON) {
-            $venv = Split-Path -Parent (Split-Path -Parent $env:PH04_PYTHON)
-            if ($venv -and (Test-Path -LiteralPath $venv)) {
-              Remove-Item -LiteralPath $venv -Recurse -Force -ErrorAction SilentlyContinue
-            }
-          }
           $target = Join-Path $env:GITHUB_WORKSPACE 'target'
           if (Test-Path -LiteralPath $target) {
             Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
