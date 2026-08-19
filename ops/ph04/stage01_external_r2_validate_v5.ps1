@@ -7,11 +7,16 @@ $ExpectedSourceHead = '361cf101dbd6f50600a3b9f59d33f3e94729a0a5'
 $Source = 'C:\p4'
 $PinnedSitePackages = 'C:\PH4-Tools\venvs\ph04-m3-stage01-361cf101\Lib\site-packages'
 $Target = Join-Path $env:GITHUB_WORKSPACE 'target'
-$PortableRoot = Join-Path $env:RUNNER_TEMP ("ph04-python-3.12.7-" + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
-$NuGetPackage = Join-Path $PortableRoot 'python.3.12.7.nupkg'
-$NuGetZip = Join-Path $PortableRoot 'python.3.12.7.zip'
-$NuGetExtract = Join-Path $PortableRoot 'pkg'
-$NuGetUrl = 'https://api.nuget.org/v3-flatcontainer/python/3.12.7/python.3.12.7.nupkg'
+$PortableRoot = Join-Path $env:RUNNER_TEMP ("ph04-toolchain-" + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+
+$PythonUrl = 'https://api.nuget.org/v3-flatcontainer/python/3.12.7/python.3.12.7.nupkg'
+$PythonSha256 = '149DD298E0B7A82250CA019471770FFF079874088A4E8501CA20922D7DF3A6AC'
+$PhpUrl = 'https://downloads.php.net/~windows/releases/archives/php-8.4.24-nts-Win32-vs17-x64.zip'
+$PhpSha256 = '86470A30CBBAEAFB259E727DFA5CD336F2F3F0A462CD6F8E3EAC00FDBDED13CB'
+$ComposerUrl = 'https://getcomposer.org/download/2.10.2/composer.phar'
+$ComposerSha256 = '5EE7125F8A30A34D246CEFD0BC85B8A783B28F2AEC968994118512350D28027'
+$NodeUrl = 'https://nodejs.org/dist/v22.16.0/node-v22.16.0-win-x64.zip'
+$NodeSha256 = '21C2D9735C80B8F86DAB19305AA6A9F6F59BBC808F68DE3EEF09D5832E3BF BBD'.Replace(' ','')
 
 function Fail([string]$Message) { throw $Message }
 function Step([string]$Name, [scriptblock]$Body) {
@@ -34,90 +39,93 @@ function Find-Git {
     }
     Fail 'INFRA_GIT_NOT_FOUND'
 }
-function Find-PHP84 {
-    $candidates = New-Object System.Collections.Generic.List[string]
-    Get-ChildItem 'C:\PH4-Tools' -Filter 'php.exe' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName | ForEach-Object { $candidates.Add($_.FullName) }
-    foreach ($path in @('C:\php\php.exe','C:\Program Files\PHP\php.exe')) { if (-not $candidates.Contains($path)) { $candidates.Add($path) } }
-    foreach ($candidate in $candidates) {
-        try {
-            if (-not (Test-Path -LiteralPath $candidate -ErrorAction Stop)) { continue }
-            $old = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            $version = & $candidate -r 'echo PHP_VERSION;' 2>$null
-            $code = $LASTEXITCODE
-            $ErrorActionPreference = $old
-            if ($code -eq 0 -and ([string]$version).StartsWith('8.4.')) { return $candidate }
-        } catch { continue }
-    }
-    Fail 'PINNED_PHP_84_NOT_FOUND'
+function Download-Verified([string]$Url, [string]$Destination, [string]$ExpectedSha256, [int64]$MinimumBytes) {
+    Write-Host "DOWNLOAD_URL=$Url"
+    Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -TimeoutSec 180
+    if (-not (Test-Path -LiteralPath $Destination)) { Fail "DOWNLOAD_MISSING:$Destination" }
+    $size = (Get-Item -LiteralPath $Destination).Length
+    if ($size -lt $MinimumBytes) { Fail "DOWNLOAD_TOO_SMALL:$Destination:$size" }
+    $actual = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToUpperInvariant()
+    Write-Host "DOWNLOAD_SIZE=$size"
+    Write-Host "DOWNLOAD_SHA256=$actual"
+    if ($actual -ne $ExpectedSha256.ToUpperInvariant()) { Fail "DOWNLOAD_SHA256_MISMATCH:$Destination:$actual" }
 }
-function Find-Node22 {
-    $candidates = New-Object System.Collections.Generic.List[string]
-    foreach ($path in @('C:\Program Files\nodejs\node.exe','C:\Program Files (x86)\nodejs\node.exe')) { $candidates.Add($path) }
-    Get-ChildItem 'C:\PH4-Tools' -Filter 'node.exe' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName | ForEach-Object { if (-not $candidates.Contains($_.FullName)) { $candidates.Add($_.FullName) } }
-    foreach ($candidate in $candidates) {
-        try {
-            if (-not (Test-Path -LiteralPath $candidate -ErrorAction Stop)) { continue }
-            $old = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            $version = & $candidate --version 2>$null
-            $code = $LASTEXITCODE
-            $ErrorActionPreference = $old
-            if ($code -eq 0 -and ([string]$version).StartsWith('v22.')) { return $candidate }
-        } catch { continue }
-    }
-    Fail 'PINNED_NODE_22_NOT_FOUND'
+function Expand-Zip([string]$Archive, [string]$Destination) {
+    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    Expand-Archive -LiteralPath $Archive -DestinationPath $Destination -Force
 }
-function Find-Composer([string]$Php) {
-    $candidates = @(Get-ChildItem 'C:\PH4-Tools' -Filter 'composer.phar' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName)
-    foreach ($candidate in $candidates) {
-        try {
-            $old = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            & $Php $candidate.FullName --version --no-ansi *> $null
-            $code = $LASTEXITCODE
-            $ErrorActionPreference = $old
-            if ($code -eq 0) { return $candidate.FullName }
-        } catch { continue }
-    }
-    Fail 'PINNED_COMPOSER_PHAR_NOT_FOUND'
-}
-function Provision-PortablePython3127 {
+function Provision-Toolchain {
     if (Test-Path -LiteralPath $PortableRoot) { Remove-Item -LiteralPath $PortableRoot -Recurse -Force }
     New-Item -ItemType Directory -Path $PortableRoot -Force | Out-Null
-    Write-Host "PYTHON_NUGET_URL=$NuGetUrl"
-    Invoke-WebRequest -Uri $NuGetUrl -OutFile $NuGetPackage -UseBasicParsing -TimeoutSec 120
-    if (-not (Test-Path -LiteralPath $NuGetPackage)) { Fail 'PYTHON_NUGET_DOWNLOAD_MISSING' }
-    $size = (Get-Item -LiteralPath $NuGetPackage).Length
-    if ($size -lt 10000000) { Fail "PYTHON_NUGET_DOWNLOAD_TOO_SMALL:$size" }
-    $sha = (Get-FileHash -LiteralPath $NuGetPackage -Algorithm SHA256).Hash
-    Write-Host "PYTHON_NUGET_SIZE=$size"
-    Write-Host "PYTHON_NUGET_SHA256=$sha"
-    Copy-Item -LiteralPath $NuGetPackage -Destination $NuGetZip -Force
-    Expand-Archive -LiteralPath $NuGetZip -DestinationPath $NuGetExtract -Force
-    $python = Join-Path $NuGetExtract 'tools\python.exe'
-    if (-not (Test-Path -LiteralPath $python)) { Fail "NUGET_PYTHON_EXE_MISSING:$python" }
-    & $python -c "import sys,struct; print(sys.version); print(struct.calcsize('P')*8); raise SystemExit(0 if sys.version_info[:3] == (3,12,7) and struct.calcsize('P')*8 == 64 else 1)"
-    if ($LASTEXITCODE -ne 0) { Fail 'NUGET_PYTHON_IDENTITY_MISMATCH' }
-    return $python
+
+    $pyNupkg = Join-Path $PortableRoot 'python.3.12.7.nupkg'
+    $pyZip = Join-Path $PortableRoot 'python.3.12.7.zip'
+    $pyExtract = Join-Path $PortableRoot 'python'
+    Download-Verified $PythonUrl $pyNupkg $PythonSha256 10000000
+    Copy-Item -LiteralPath $pyNupkg -Destination $pyZip -Force
+    Expand-Zip $pyZip $pyExtract
+    $python = Join-Path $pyExtract 'tools\python.exe'
+    if (-not (Test-Path -LiteralPath $python)) { Fail 'PORTABLE_PYTHON_EXE_MISSING' }
+    & $python -c "import sys,struct; print(sys.version); raise SystemExit(0 if sys.version_info[:3] == (3,12,7) and struct.calcsize('P')*8 == 64 else 1)"
+    if ($LASTEXITCODE -ne 0) { Fail 'PORTABLE_PYTHON_IDENTITY_MISMATCH' }
+
+    $phpZip = Join-Path $PortableRoot 'php-8.4.24-nts-win-x64.zip'
+    $phpExtract = Join-Path $PortableRoot 'php'
+    Download-Verified $PhpUrl $phpZip $PhpSha256 30000000
+    Expand-Zip $phpZip $phpExtract
+    $php = Join-Path $phpExtract 'php.exe'
+    if (-not (Test-Path -LiteralPath $php)) { Fail 'PORTABLE_PHP_EXE_MISSING' }
+    $phpIni = Join-Path $phpExtract 'php.ini'
+    @(
+        '[PHP]',
+        'extension_dir="ext"',
+        'date.timezone="UTC"',
+        'memory_limit=512M'
+    ) | Set-Content -LiteralPath $phpIni -Encoding ASCII
+    foreach ($ext in @('mbstring','curl','openssl','zip','fileinfo','intl')) {
+        $dll = Join-Path $phpExtract ("ext\php_" + $ext + '.dll')
+        if (Test-Path -LiteralPath $dll) { Add-Content -LiteralPath $phpIni -Value ("extension=" + $ext) -Encoding ASCII }
+    }
+    $env:PHPRC = $phpExtract
+    & $php -r 'echo PHP_VERSION, PHP_EOL; if (PHP_MAJOR_VERSION !== 8 || PHP_MINOR_VERSION !== 4 || PHP_INT_SIZE !== 8) { exit(1); }'
+    if ($LASTEXITCODE -ne 0) { Fail 'PORTABLE_PHP_IDENTITY_MISMATCH' }
+    & $php -m | Out-Host
+    if ($LASTEXITCODE -ne 0) { Fail 'PORTABLE_PHP_MODULE_LIST_FAILED' }
+
+    $composer = Join-Path $PortableRoot 'composer.phar'
+    Download-Verified $ComposerUrl $composer $ComposerSha256 1000000
+    & $php $composer --version --no-ansi
+    if ($LASTEXITCODE -ne 0) { Fail 'PORTABLE_COMPOSER_IDENTITY_FAILED' }
+
+    $nodeZip = Join-Path $PortableRoot 'node-v22.16.0-win-x64.zip'
+    $nodeExtract = Join-Path $PortableRoot 'node'
+    Download-Verified $NodeUrl $nodeZip $NodeSha256 20000000
+    Expand-Zip $nodeZip $nodeExtract
+    $node = Join-Path $nodeExtract 'node-v22.16.0-win-x64\node.exe'
+    if (-not (Test-Path -LiteralPath $node)) { Fail 'PORTABLE_NODE_EXE_MISSING' }
+    $nodeVersion = & $node --version
+    if ($LASTEXITCODE -ne 0 -or ([string]$nodeVersion).Trim() -ne 'v22.16.0') { Fail "PORTABLE_NODE_IDENTITY_MISMATCH:$nodeVersion" }
+
+    return @($python,$php,$composer,$node)
 }
 
 if ($env:RUNNER_NAME -ne $ExpectedRunner) { Fail "WRONG_RUNNER_NO_PROJECT_WORK_EXECUTED:$env:RUNNER_NAME" }
 Write-Host 'DEDICATED_R2_GATE=PASS'
 
 $Git = Find-Git
-$Python = Provision-PortablePython3127
-$Php = Find-PHP84
-$Node = Find-Node22
-$Composer = Find-Composer $Php
+$toolchain = Provision-Toolchain
+$Python = $toolchain[0]
+$Php = $toolchain[1]
+$Composer = $toolchain[2]
+$Node = $toolchain[3]
 
 Step 'Toolchain identity' {
     Run $Git @('--version')
     Run $Python @('-c', "import sys; print(sys.version); assert sys.version_info[:3] == (3,12,7)")
     Run $Php @('-r','echo PHP_VERSION, PHP_EOL;')
-    Run $Node @('--version')
     Run $Php @($Composer,'--version','--no-ansi')
-    Write-Host "COMPOSER_SHA256=$((Get-FileHash -LiteralPath $Composer -Algorithm SHA256).Hash)"
+    Run $Node @('--version')
     if (-not (Test-Path -LiteralPath $PinnedSitePackages)) { Fail "PINNED_SITE_PACKAGES_MISSING:$PinnedSitePackages" }
     Write-Host "PINNED_SITE_PACKAGES=$PinnedSitePackages"
 }
@@ -236,7 +244,9 @@ Step 'Composer install + metadata validation' {
             if (-not (Test-Path -LiteralPath (Join-Path $sourceVendor 'autoload.php'))) { Fail 'COMPOSER_INSTALL_FAILED_AND_NO_SOURCE_VENDOR_FALLBACK' }
             if ((Get-FileHash $sourceLock -Algorithm SHA256).Hash -ne (Get-FileHash $targetLock -Algorithm SHA256).Hash) { Fail 'SOURCE_VENDOR_FALLBACK_LOCK_MISMATCH' }
             Write-Host 'COMPOSER_NETWORK_INSTALL_FAILED; USING READ_ONLY SAME-LOCK SOURCE VENDOR COPY'
-            Copy-Item -LiteralPath $sourceVendor -Destination (Join-Path $Plugin 'vendor') -Recurse -Force
+            $targetVendor = Join-Path $Plugin 'vendor'
+            if (Test-Path -LiteralPath $targetVendor) { Remove-Item -LiteralPath $targetVendor -Recurse -Force }
+            Copy-Item -LiteralPath $sourceVendor -Destination $targetVendor -Recurse -Force
         }
         Run $Php @($Composer,'validate','--strict','--no-ansi')
     } finally { Pop-Location }
