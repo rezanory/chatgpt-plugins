@@ -2,10 +2,8 @@ name: v622-kaggle-transfer-status-probe
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/v622-kaggle-transfer-status-probe.yml'
+  issue_comment:
+    types: [created]
 
 permissions:
   actions: read
@@ -14,6 +12,7 @@ permissions:
 
 jobs:
   probe:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_TRANSFER_PROBE') }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 5
     steps:
@@ -41,5 +40,3 @@ jobs:
           $body = "## V6.2.2 Kaggle artifact transfer live status`n`n- Run: $($run.html_url)`n- Run ID: ``$($run.id)```n- Status: ``$($run.status)```n- Conclusion: ``$conclusion```n- Current step: ``$current```n- Role: transport/status only; no model compute`n"
           $payload = @{ body = $body } | ConvertTo-Json
           Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/issues/18/comments" -Headers $headers -Method Post -ContentType 'application/json' -Body $payload | Out-Null
-
-# trigger: 2026-08-19T20:04Z
