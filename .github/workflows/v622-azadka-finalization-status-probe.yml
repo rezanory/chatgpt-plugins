@@ -16,11 +16,11 @@ permissions:
 jobs:
   probe:
     if: ${{ github.event_name != 'issue_comment' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_AZADKA_FINALIZATION_PROBE') }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 5
     steps:
       - name: Read latest azadka finalization bridge run
-        shell: pwsh
+        shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -34,9 +34,9 @@ jobs:
           foreach($j in @($js.jobs)){
             foreach($s in @($j.steps)){
               if($s.status -eq 'in_progress'){$cur="$($j.name) :: $($s.name)"}
-              if($s.name -eq 'Launch Kaggle-native final freeze'){$launch="$($s.status)/$($s.conclusion)"}
+              if($s.name -like 'Launch Kaggle-native final freeze*'){$launch="$($s.status)/$($s.conclusion)"}
             }
           }
-          $body="V6.2.2 AZADKA FINALIZATION LIVE | run=$($r.id) | status=$($r.status) | conclusion=$($r.conclusion) | launch_step=$launch | current=$cur | head=$($r.head_sha)"
+          $body="V6.2.2 AZADKA FINALIZATION LIVE | run=$($r.id) | status=$($r.status) | conclusion=$($r.conclusion) | launch_step=$launch | current=$cur | head=$($r.head_sha) | runner=self-hosted"
           $p=@{body=$body}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
