@@ -8,7 +8,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: v622-kaggle-finalization-freeze-bridge
+  group: v622-cloudflare-production-mutation
   cancel-in-progress: false
 
 jobs:
@@ -110,7 +110,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $receipt = Get-Content -Raw (Join-Path $env:RUNNER_TEMP 'v622-finalization-freeze-receipt.json') | ConvertFrom-Json
           $ids = @($receipt.selected_candidate_ids) -join ', '
-          $body = "## V6.2.2 FINAL_FREEZE_MANIFEST`n`n- Execution environment: ``Kaggle```n- Master: ``azadka```n- Kernel: ``azadka/pneumonia-v6-2-2-finalization-master```n- Artifact dataset: ``azadka/pneumonia-v6-2-2-finalization-artifacts```n- FINAL_FREEZE_MANIFEST SHA-256: ``$($receipt.manifest_sha256)```n- Selected artifact count: ``$($receipt.selected_artifact_count)```n- Selected candidates: ``$ids```n- Frozen recipe SHA-256: ``27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f```n- Frozen policy file SHA-256: ``7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861```n- Locked test used: ``false```n- External data used: ``false```n- GitHub role: ``bridge/journal only```n- Next permitted stage: ``$($receipt.next_permitted_stage)```n- Bridge run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $body = "## V6.2.2 FINAL_FREEZE_MANIFEST`n`n- Execution environment: ``Kaggle```n- Master: ``azadka```n- Kernel: ``azadka/pneumonia-v6-2-2-finalization-master```n- Artifact dataset: ``trickermark/pneumonia-v6-2-2-finalization-artifacts`` (private; ``azadka`` reader)`n- FINAL_FREEZE_MANIFEST SHA-256: ``$($receipt.manifest_sha256)```n- Selected artifact count: ``$($receipt.selected_artifact_count)```n- Selected candidates: ``$ids```n- Frozen recipe SHA-256: ``27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f```n- Frozen policy file SHA-256: ``7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861```n- Locked test used: ``false```n- External data used: ``false```n- GitHub role: ``bridge/journal only```n- Next permitted stage: ``$($receipt.next_permitted_stage)```n- Bridge run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
           $payload = @{ body = $body } | ConvertTo-Json
           $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
