@@ -1,0 +1,302 @@
+name: PH04 Stage-01 External Validation on r2 v2
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/ph04-stage01-external-r2-validation-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage01:
+    name: PH04 Stage-01 exact SHA canonical CI v2
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 60
+    env:
+      PH04_EXPECTED_SHA: 0f8ccc2fac4cf8ac767c6f4011bfd9673a69c3db
+      DJANGO_SETTINGS_MODULE: core.settings_test
+      DJANGO_ENV: test
+      DEBUG: 'True'
+      TESTING: 'True'
+      SECRET_KEY: ci-test-secret-key
+      WS_TOKEN_SECRET: ci-test-ws-token-secret
+      ADMIN_WS_SECRET: ci-test-admin-ws-secret
+      CHANNEL_ENCRYPTION_KEY: m7MQ4AiQFrXx5cYh3h7cZkzW1g9KJcJkt6dQX8JX7jM=
+      WS_ALLOWED_ORIGINS: http://localhost
+      DATABASE_URL: sqlite:///test_db.sqlite3
+      USE_REDIS: 'false'
+      OPENAI_API_KEY: ci-openai-key
+      CLAUDE_API_KEY: ci-claude-key
+      DEEPSEEK_API_KEY: ci-deepseek-key
+      ADMIN_API_SIGNING_SECRET: ci-admin-signing-secret
+      PYTHONNOUSERSITE: '1'
+    steps:
+      - name: Gate dedicated r2 only
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "RUNNER_NAME=$env:RUNNER_NAME"
+          Write-Host "RUNNER_OS=$env:RUNNER_OS"
+          Write-Host "RUNNER_ARCH=$env:RUNNER_ARCH"
+          if ($env:RUNNER_NAME -ne 'LAPTOP-13QINEIF-v622-r2') {
+            throw 'WRONG_RUNNER_NO_PROJECT_WORK_EXECUTED: expected LAPTOP-13QINEIF-v622-r2'
+          }
+          Write-Host 'DEDICATED_R2_GATE=PASS'
+
+      - name: Locate existing Git installation for runner service
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidates = New-Object System.Collections.Generic.List[string]
+          foreach ($path in @(
+            'C:\Program Files\Git\cmd\git.exe',
+            'C:\Program Files\Git\bin\git.exe',
+            'C:\Program Files (x86)\Git\cmd\git.exe'
+          )) {
+            if (Test-Path -LiteralPath $path) { $candidates.Add($path) }
+          }
+          Get-ChildItem 'C:\Users\*\AppData\Local\Programs\Git\cmd\git.exe' -File -ErrorAction SilentlyContinue | ForEach-Object {
+            if (-not $candidates.Contains($_.FullName)) { $candidates.Add($_.FullName) }
+          }
+          Get-ChildItem 'C:\Users\*\AppData\Local\GitHubDesktop\app-*\resources\app\git\cmd\git.exe' -File -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object {
+            if (-not $candidates.Contains($_.FullName)) { $candidates.Add($_.FullName) }
+          }
+          if ($candidates.Count -lt 1) {
+            throw 'INFRA_GIT_NOT_FOUND: existing Git installation was not found in bounded standard locations'
+          }
+          $gitExe = $candidates[0]
+          Write-Host "PH04_GIT=$gitExe"
+          & $gitExe --version
+          if ($LASTEXITCODE -ne 0) { throw 'Located Git executable is not usable' }
+          "PH04_GIT=$gitExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          (Split-Path -Parent $gitExe) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host 'GIT_DISCOVERY=PASS'
+
+      - name: Clone exact chat-project Stage-01 candidate
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:GITHUB_WORKSPACE 'target'
+          if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+          & $env:PH04_GIT clone --no-checkout --filter=blob:none https://github.com/rezanory/chat-project.git $target
+          if ($LASTEXITCODE -ne 0) { throw 'chat-project clone failed' }
+          & $env:PH04_GIT -C $target fetch origin $env:PH04_EXPECTED_SHA --depth=1
+          if ($LASTEXITCODE -ne 0) { throw 'exact Stage-01 SHA fetch failed' }
+          & $env:PH04_GIT -C $target checkout --detach $env:PH04_EXPECTED_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'exact Stage-01 checkout failed' }
+          $actual = (& $env:PH04_GIT -C $target rev-parse HEAD).Trim()
+          Write-Host "TARGET_HEAD=$actual"
+          if ($actual -ne $env:PH04_EXPECTED_SHA) { throw "Stage-01 SHA mismatch: $actual" }
+          $status = & $env:PH04_GIT -C $target status --short
+          if ($status) { throw "Fresh target checkout unexpectedly dirty: $status" }
+          Write-Host 'EXACT_STAGE01_CHECKOUT=PASS'
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup PHP 8.4 and Composer
+        uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45 # v2
+        with:
+          php-version: '8.4'
+          tools: composer
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Create isolated backend environment and install locked dependencies
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $venv = Join-Path $env:RUNNER_TEMP "ph04-stage01-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          if (Test-Path -LiteralPath $venv) { Remove-Item -LiteralPath $venv -Recurse -Force }
+          python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }
+          $py = Join-Path $venv 'Scripts\python.exe'
+          & $py -m pip install --disable-pip-version-check --require-hashes -r (Join-Path $env:GITHUB_WORKSPACE 'target\aiChatProjectPyback\requirements-dev.txt')
+          if ($LASTEXITCODE -ne 0) { throw 'locked dependency install failed' }
+          "PH04_PYTHON=$py" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $backend = Join-Path $env:GITHUB_WORKSPACE 'target\aiChatProjectPyback'
+          $root = Join-Path $env:GITHUB_WORKSPACE 'target'
+          "PYTHONPATH=$backend;$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & $py --version
+          php --version
+          composer --version
+          node --version
+
+      - name: Validate UTF-8 and immutable dependency supply chain
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:GITHUB_WORKSPACE 'target'
+          $backend = Join-Path $root 'aiChatProjectPyback'
+          Push-Location $root
+          try {
+            & $env:PH04_PYTHON scripts/scan_text_encoding.py .
+            if ($LASTEXITCODE -ne 0) { throw 'UTF-8/mojibake validation failed' }
+          } finally { Pop-Location }
+          Push-Location $backend
+          try {
+            & $env:PH04_PYTHON ..\scripts\validate_dependency_supply_chain.py
+            if ($LASTEXITCODE -ne 0) { throw 'dependency supply-chain validation failed' }
+          } finally { Pop-Location }
+
+      - name: Compile backend and validate architecture boundaries
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $backend = Join-Path $env:GITHUB_WORKSPACE 'target\aiChatProjectPyback'
+          Push-Location $backend
+          try {
+            & $env:PH04_PYTHON -m compileall -q .
+            if ($LASTEXITCODE -ne 0) { throw 'compileall failed' }
+            & $env:PH04_PYTHON commerce/validate_source_layout.py --require-reserved-paths
+            if ($LASTEXITCODE -ne 0) { throw 'source layout gate failed' }
+            & $env:PH04_PYTHON commerce/validate_migration_contracts.py
+            if ($LASTEXITCODE -ne 0) { throw 'migration contract gate failed' }
+            & $env:PH04_PYTHON commerce/validate_architecture_boundaries.py
+            if ($LASTEXITCODE -ne 0) { throw 'architecture boundary gate failed' }
+            & $env:PH04_PYTHON commerce/compose_registry.py --check
+            if ($LASTEXITCODE -ne 0) { throw 'composition gate failed' }
+          } finally { Pop-Location }
+
+      - name: Validate lane/source manifests and backend-plugin contract registry
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:GITHUB_WORKSPACE 'target'
+          $backend = Join-Path $root 'aiChatProjectPyback'
+          Push-Location $root
+          try {
+            & $env:PH04_PYTHON parallel_delivery/validate_lane_merge.py
+            if ($LASTEXITCODE -ne 0) { throw 'lane/source manifest validation failed' }
+            & $env:PH04_PYTHON -m pytest -q parallel_delivery/tests/test_lane_merge.py
+            if ($LASTEXITCODE -ne 0) { throw 'lane merge tests failed' }
+            & $env:PH04_PYTHON contracts/backend_plugin/v1/validate_contracts.py
+            if ($LASTEXITCODE -ne 0) { throw 'backend-plugin contract registry failed' }
+          } finally { Pop-Location }
+          Push-Location $backend
+          try {
+            & $env:PH04_PYTHON -m pytest -q chat/tests/test_backend_plugin_contract_fixtures.py
+            if ($LASTEXITCODE -ne 0) { throw 'backend-plugin fixture tests failed' }
+          } finally { Pop-Location }
+
+      - name: Django check and migration drift
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $backend = Join-Path $env:GITHUB_WORKSPACE 'target\aiChatProjectPyback'
+          Push-Location $backend
+          try {
+            & $env:PH04_PYTHON manage.py check
+            if ($LASTEXITCODE -ne 0) { throw 'Django check failed' }
+            & $env:PH04_PYTHON manage.py makemigrations --check --dry-run
+            if ($LASTEXITCODE -ne 0) { throw 'migration drift check failed' }
+          } finally { Pop-Location }
+
+      - name: Run full backend tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $backend = Join-Path $env:GITHUB_WORKSPACE 'target\aiChatProjectPyback'
+          Push-Location $backend
+          try {
+            & $env:PH04_PYTHON -m pytest -q
+            if ($LASTEXITCODE -ne 0) { throw 'full backend pytest failed' }
+          } finally { Pop-Location }
+
+      - name: Validate release and deployment tooling
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:GITHUB_WORKSPACE 'target'
+          Push-Location $root
+          try {
+            & $env:PH04_PYTHON -m pytest -q scripts/tests/test_build_release_artifacts.py scripts/tests/test_verify_release_attestation.py scripts/tests/test_validate_dependency_supply_chain.py scripts/tests/test_mansec_cluster_i_deployment.py
+            if ($LASTEXITCODE -ne 0) { throw 'release/deployment tests failed' }
+          } finally { Pop-Location }
+
+      - name: Install and validate plugin dependencies
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $plugin = Join-Path $env:GITHUB_WORKSPACE 'target\aichat-WPplugin'
+          Push-Location $plugin
+          try {
+            composer install --prefer-dist --no-progress --no-interaction --no-plugins --no-scripts
+            if ($LASTEXITCODE -ne 0) { throw 'composer install failed' }
+            composer validate --strict
+            if ($LASTEXITCODE -ne 0) { throw 'composer validate failed' }
+          } finally { Pop-Location }
+
+      - name: Lint plugin PHP
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $plugin = Join-Path $env:GITHUB_WORKSPACE 'target\aichat-WPplugin'
+          $files = Get-ChildItem -LiteralPath $plugin -Recurse -File -Filter '*.php' | Where-Object { $_.FullName -notmatch '[\\/]vendor[\\/]' }
+          Write-Host "PHP_LINT_FILE_COUNT=$($files.Count)"
+          foreach ($file in $files) {
+            php -l $file.FullName | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "PHP lint failed: $($file.FullName)" }
+          }
+
+      - name: Run plugin tests and shared contract fixture
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $plugin = Join-Path $env:GITHUB_WORKSPACE 'target\aichat-WPplugin'
+          Push-Location $plugin
+          try {
+            composer test -- --no-coverage
+            if ($LASTEXITCODE -ne 0) { throw 'plugin tests failed' }
+            php vendor/bin/phpunit tests/Unit/BackendPluginSharedContractFixturesTest.php
+            if ($LASTEXITCODE -ne 0) { throw 'plugin shared contract fixture failed' }
+          } finally { Pop-Location }
+
+      - name: Run all JavaScript state and boundary selectors
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $plugin = Join-Path $env:GITHUB_WORKSPACE 'target\aichat-WPplugin'
+          $tests = @(Get-ChildItem -LiteralPath (Join-Path $plugin 'tests\js') -File -Filter '*.test.js' | Sort-Object Name)
+          Write-Host "JS_TEST_FILE_COUNT=$($tests.Count)"
+          foreach ($test in $tests) {
+            Write-Host "JS_TEST=$($test.Name)"
+            node $test.FullName
+            if ($LASTEXITCODE -ne 0) { throw "JavaScript test failed: $($test.Name)" }
+          }
+
+      - name: Final exact-SHA and tracked-diff hygiene
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:GITHUB_WORKSPACE 'target'
+          $actual = (& $env:PH04_GIT -C $target rev-parse HEAD).Trim()
+          if ($actual -ne $env:PH04_EXPECTED_SHA) { throw "Final target SHA moved: $actual" }
+          & $env:PH04_GIT -C $target diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed' }
+          $tracked = @(& $env:PH04_GIT -C $target status --short --untracked-files=no)
+          if ($tracked.Count -gt 0) {
+            $tracked | ForEach-Object { Write-Host $_ }
+            throw 'Validation modified tracked Stage-01 files'
+          }
+          Write-Host 'PH04_STAGE01_EXTERNAL_R2_CANONICAL_CI=PASS'
+          Write-Host "VALIDATED_SHA=$actual"
+
+      - name: Cleanup isolated Python environment
+        if: always()
+        shell: powershell
+        run: |
+          if ($env:PH04_PYTHON) {
+            $venv = Split-Path -Parent (Split-Path -Parent $env:PH04_PYTHON)
+            if ($venv -and (Test-Path -LiteralPath $venv)) {
+              Remove-Item -LiteralPath $venv -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
