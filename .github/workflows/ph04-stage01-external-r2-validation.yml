@@ -1,0 +1,56 @@
+name: PH04 Stage-01 External Validation on dedicated r2 v4
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/ph04-stage01-external-r2-validation.yml'
+      - 'ops/ph04/stage01_external_r2_validate.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage01:
+    name: PH04 Stage-01 exact SHA canonical CI on r2 v4
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 60
+    env:
+      GIT_CONFIG_COUNT: '2'
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: C:/p4
+      GIT_CONFIG_KEY_1: safe.directory
+      GIT_CONFIG_VALUE_1: C:/p4/.git
+    steps:
+      - name: Gate dedicated r2 only
+        shell: powershell
+        run: |
+          Write-Host "RUNNER_NAME=$env:RUNNER_NAME"
+          Write-Host "RUNNER_OS=$env:RUNNER_OS"
+          Write-Host "RUNNER_ARCH=$env:RUNNER_ARCH"
+          if ($env:RUNNER_NAME -ne 'LAPTOP-13QINEIF-v622-r2') {
+            throw 'WRONG_RUNNER_NO_PROJECT_WORK_EXECUTED: expected LAPTOP-13QINEIF-v622-r2'
+          }
+          Write-Host 'DEDICATED_R2_GATE=PASS'
+
+      - name: Checkout validation harness only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: harness
+
+      - name: Run exact Stage-01 validator
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "$env:GITHUB_WORKSPACE\harness\ops\ph04\stage01_external_r2_validate.ps1"
+          if ($LASTEXITCODE -ne 0) { throw "PH04 validator exited with code $LASTEXITCODE" }
+
+      - name: Cleanup validation target
+        if: always()
+        shell: powershell
+        run: |
+          $target = Join-Path $env:GITHUB_WORKSPACE 'target'
+          if (Test-Path -LiteralPath $target) {
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+          }
