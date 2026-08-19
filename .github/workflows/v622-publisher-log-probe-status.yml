@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   status:
+    # Read-only status snapshot for the permission-only bridge.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
