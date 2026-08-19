@@ -1,0 +1,285 @@
+name: v622-github-hosted-selected-artifact-recovery-fallback
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - v622-self-hosted-selected-artifact-recovery-resumable
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-cloudflare-production-mutation
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'timed_out' || github.event.workflow_run.conclusion == 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: cloudflare-production
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Deploy protected selected artifact recovery bridge
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          account_id="$(printf '%s' "$RAW_CLOUDFLARE_ACCOUNT_ID" | xargs)"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$account_id"
+          echo "::add-mask::$account_id"
+          echo "V622_CF_ACCOUNT_ID=$account_id" >> "$GITHUB_ENV"
+          export CLOUDFLARE_ACCOUNT_ID="$account_id"
+          cd deploy/cloudflare-worker-free
+          npm install --no-audit --no-fund
+          npm run check
+          npx wrangler deploy src/v622-selected-artifact-recovery-worker.ts --name chatgpt-kaggle-gateway
+
+      - name: Create ephemeral recovery capability
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          token="$(openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n')"
+          echo "::add-mask::$token"
+          export CLOUDFLARE_ACCOUNT_ID="$V622_CF_ACCOUNT_ID"
+          cd deploy/cloudflare-worker-free
+          printf '%s' "$token" | npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway
+          echo "V622_RECOVERY_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Recover exact six selected artifacts on GitHub-hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          uri='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/selected-artifact-recovery'
+          auth="Authorization: Bearer ${V622_RECOVERY_TOKEN}"
+          root="${RUNNER_TEMP}/v622-selected-backbone-checkpoints-configs"
+          mkdir -p "$root"
+
+          get_snapshot() {
+            local out="$1"
+            local ok=0
+            for attempt in $(seq 1 12); do
+              if curl --http1.1 --fail --silent --show-error --connect-timeout 20 --max-time 120 \
+                -H "$auth" -H 'Content-Type: application/json' -X POST --data '{}' "$uri" -o "$out"; then
+                if jq -e \
+                  --arg recipe '27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f' \
+                  --arg policy '7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861' \
+                  '.project == "PNEUMONIA V6.2.2" and .stage == "selected_backbone_checkpoint_config_recovery" and .status == "COMPLETE" and .kernel_ref == "trickermark/pneumonia-v6-2-2-backbone-m06-r224" and .target_count == 6 and .recipe_sha256 == $recipe and .frozen_policy_sha256 == $policy and .locked_test_used == false and .external_data_used == false' "$out" >/dev/null; then
+                  ok=1
+                  break
+                fi
+              fi
+              sleep 5
+            done
+            test "$ok" -eq 1
+          }
+
+          snapshot="${RUNNER_TEMP}/v622-selected-snapshot.json"
+          get_snapshot "$snapshot"
+
+          expected_ids='M06__convnext_tiny M06__densenet121 M06__resnet50v2'
+          for id in $expected_ids; do
+            mkdir -p "$root/$id"
+            for role in config checkpoint; do
+              if [[ "$role" == config ]]; then base='config.json'; else base='final_selected.keras'; fi
+              target="$(jq -c --arg id "$id" --arg role "$role" '[.targets[] | select(.candidate_id == $id and .role == $role)] | if length == 1 then .[0] else empty end' "$snapshot")"
+              test -n "$target"
+              source_name="$(jq -r '.source_file_name' <<<"$target")"
+              dest="$root/$id/$base"
+              downloaded=0
+              attempts=8
+              if [[ "$role" == config ]]; then attempts=4; fi
+              for attempt in $(seq 1 "$attempts"); do
+                fresh="${RUNNER_TEMP}/v622-fresh-${id}-${role}.json"
+                get_snapshot "$fresh"
+                url="$(jq -r --arg id "$id" --arg role "$role" --arg source "$source_name" '[.targets[] | select(.candidate_id == $id and .role == $role and .source_file_name == $source)] | if length == 1 then .[0].url else empty end' "$fresh")"
+                test -n "$url"
+                existing=0
+                [[ -f "$dest" ]] && existing="$(stat -c%s "$dest")"
+                echo "Downloading ${id}|${role}; attempt=${attempt}/${attempts}; existing_bytes=${existing}"
+                if curl --http1.1 --location --fail --show-error --retry 6 --retry-all-errors --retry-delay 3 \
+                  --connect-timeout 30 --max-time 2400 --continue-at - --output "$dest" "$url"; then
+                  [[ -s "$dest" ]] && downloaded=1 && break
+                fi
+                sleep $(( attempt * 5 ))
+              done
+              test "$downloaded" -eq 1
+            done
+          done
+
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'v622-selected-backbone-checkpoints-configs'
+          expected = {
+              'M06__convnext_tiny': '167cb7b1d17b3978f2b4f47f55e315a1d4fae293006d897d25d13b5074dadcea',
+              'M06__densenet121': 'c9b3107715849a633d90689902298c110bbb7c9c1bc1c8a6ac9ff1693f55386e',
+              'M06__resnet50v2': 'dce7845aa7c07ccb913cded8e9ff368e7061f3a43723ded21f8a94dba9fab697',
+          }
+          def sha(path):
+              h=hashlib.sha256()
+              with path.open('rb') as f:
+                  for c in iter(lambda:f.read(1024*1024), b''): h.update(c)
+              return h.hexdigest()
+          rows=[]
+          snapshot=json.loads((Path(os.environ['RUNNER_TEMP'])/'v622-selected-snapshot.json').read_text())
+          source={(t['candidate_id'],t['role']):t for t in snapshot['targets']}
+          for cid in expected:
+              for role,base in [('config','config.json'),('checkpoint','final_selected.keras')]:
+                  p=root/cid/base
+                  if not p.is_file() or p.stat().st_size<=0: raise SystemExit(f'missing {cid} {role}')
+                  digest=sha(p)
+                  if role=='config' and digest != expected[cid]: raise SystemExit(f'config SHA mismatch {cid}')
+                  rows.append({'candidate_id':cid,'role':role,'source_file_name':source[(cid,role)]['source_file_name'],'local_path':f'{cid}/{base}','bytes':p.stat().st_size,'sha256':digest,'expected_sha256':expected[cid] if role=='config' else None})
+          manifest={'schema_version':1,'project':'PNEUMONIA V6.2.2','status':'RECOVERED_SELECTED_ONLY','kernel_ref':'trickermark/pneumonia-v6-2-2-backbone-m06-r224','recipe_sha256':'27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f','frozen_policy_sha256':'7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861','selected_candidate_ids':list(expected),'artifacts':rows,'selected_artifact_count':6,'downloader':'github-hosted-curl-resumable-v1','kaggle_compute_launched':False,'canonical_m01_m12_rerun':False,'hpo_or_confirmation_repeated':False,'locked_test_used':False,'external_data_used':False}
+          mp=root/'SELECTED_ARTIFACT_MANIFEST.json'
+          mp.write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
+          msha=sha(mp)
+          (Path(os.environ['RUNNER_TEMP'])/'v622-selected-manifest-sha.txt').write_text(msha+'\n')
+          print('manifest_sha256='+msha)
+          PY
+
+      - name: Upload ConvNeXt selected files
+        uses: actions/upload-artifact@v4
+        with:
+          name: v622-selected-M06-convnext-tiny
+          path: ${{ runner.temp }}/v622-selected-backbone-checkpoints-configs/M06__convnext_tiny
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          overwrite: true
+
+      - name: Upload DenseNet selected files
+        uses: actions/upload-artifact@v4
+        with:
+          name: v622-selected-M06-densenet121
+          path: ${{ runner.temp }}/v622-selected-backbone-checkpoints-configs/M06__densenet121
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          overwrite: true
+
+      - name: Upload ResNet selected files
+        uses: actions/upload-artifact@v4
+        with:
+          name: v622-selected-M06-resnet50v2
+          path: ${{ runner.temp }}/v622-selected-backbone-checkpoints-configs/M06__resnet50v2
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          overwrite: true
+
+      - name: Stage and upload recovery manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/v622-selected-recovery-manifest"
+          mkdir -p "$dest"
+          cp "${RUNNER_TEMP}/v622-selected-backbone-checkpoints-configs/SELECTED_ARTIFACT_MANIFEST.json" "$dest/"
+          cp "${RUNNER_TEMP}/v622-selected-manifest-sha.txt" "$dest/SELECTED_ARTIFACT_MANIFEST.sha256"
+
+      - name: Upload selected recovery manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: v622-selected-backbone-recovery-manifest
+          path: ${{ runner.temp }}/v622-selected-recovery-manifest
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          overwrite: true
+
+      - name: Remove capability and restore canonical Worker
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          export CLOUDFLARE_ACCOUNT_ID="$V622_CF_ACCOUNT_ID"
+          cd deploy/cloudflare-worker-free
+          delete_ok=0
+          for attempt in $(seq 1 5); do
+            if printf 'y\n' | npx wrangler secret delete CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway; then delete_ok=1; break; fi
+            sleep $((attempt*5))
+          done
+          test "$delete_ok" -eq 1
+          restore_ok=0
+          for attempt in $(seq 1 5); do
+            if npx wrangler deploy; then restore_ok=1; break; fi
+            sleep $((attempt*5))
+          done
+          test "$restore_ok" -eq 1
+
+      - name: Publish exact Stage 1 PASS receipt
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/v622-selected-backbone-checkpoints-configs"
+          manifest_sha="$(tr -d '\r\n ' < "${RUNNER_TEMP}/v622-selected-manifest-sha.txt")"
+          cps="$(jq -r '[.artifacts[] | select(.role=="checkpoint") | (.candidate_id+"="+.sha256)] | join(", ")' "$root/SELECTED_ARTIFACT_MANIFEST.json")"
+          body="$(cat <<EOF
+          ## V6.2.2 selected checkpoints/configs recovered
+
+          - Kernel: \`trickermark/pneumonia-v6-2-2-backbone-m06-r224\`
+          - Scope: exactly 3 \`config.json\` + 3 \`final_selected.keras\`
+          - Config hashes matched canonical run index: \`PASS\`
+          - Selected artifact manifest SHA-256: \`${manifest_sha}\`
+          - Checkpoint SHA-256: \`${cps}\`
+          - Private artifact family: \`v622-selected-M06-convnext-tiny\`, \`v622-selected-M06-densenet121\`, \`v622-selected-M06-resnet50v2\`, \`v622-selected-backbone-recovery-manifest\`
+          - Recovery runner: \`github-hosted ubuntu-latest\`
+          - Kaggle compute launched: \`false\`
+          - Canonical M01-M12 rerun: \`false\`
+          - HPO/confirmation repeated: \`false\`
+          - Locked test used: \`false\`
+          - External data used: \`false\`
+          - Ephemeral capability removed: \`PASS\`
+          - Canonical Worker restored: \`PASS\`
+          - GitHub run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          EOF
+          )"
+          jq -n --arg body "$body" '{body:$body}' | gh api --method POST "/repos/${REPO}/issues/18/comments" --input - >/dev/null
+
+      - name: Emergency cleanup
+        if: failure()
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set +e
+          if [[ -n "${V622_CF_ACCOUNT_ID:-}" ]]; then
+            export CLOUDFLARE_ACCOUNT_ID="$V622_CF_ACCOUNT_ID"
+            cd deploy/cloudflare-worker-free || exit 0
+            for attempt in 1 2 3; do printf 'y\n' | npx wrangler secret delete CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway && break; sleep 5; done
+            for attempt in 1 2 3; do npx wrangler deploy && break; sleep 5; done
+          fi
+
+      - name: Publish fallback failure receipt
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set +e
+          body="## V6.2.2 GitHub-hosted selected recovery fallback diagnostic\n\n- Result: \`FAILED_OR_TIMED_OUT\`\n- Scope: selected 3 configs + 3 checkpoints only\n- Kaggle compute launched: \`false\`\n- Locked test used: \`false\`\n- External data used: \`false\`\n- GitHub run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\n"
+          jq -n --arg body "$body" '{body:$body}' | gh api --method POST "/repos/${REPO}/issues/18/comments" --input - >/dev/null
