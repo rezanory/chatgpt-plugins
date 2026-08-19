@@ -1,0 +1,222 @@
+name: v622-self-hosted-final-freeze-reconciliation
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - v622-self-hosted-selected-artifact-recovery-resumable
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  freeze:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Resolve Stage 1 run identity
+        id: stage1
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ github.event_name }}' -eq 'workflow_run') {
+            $id = '${{ github.event.workflow_run.id }}'
+            $url = '${{ github.event.workflow_run.html_url }}'
+          } else {
+            $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+            $runs = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs?per_page=100" -Headers $headers -Method Get
+            $r = @($runs.workflow_runs | Where-Object { $_.name -eq 'v622-self-hosted-selected-artifact-recovery-resumable' -and $_.conclusion -eq 'success' } | Sort-Object created_at -Descending | Select-Object -First 1)
+            if (-not $r -or $r.Count -eq 0) { throw 'No successful Stage 1 recovery run exists.' }
+            $id = [string]$r[0].id
+            $url = [string]$r[0].html_url
+          }
+          "run_id=$id" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "run_url=$url" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Download ConvNeXt selected files
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-selected-M06-convnext-tiny
+          path: ${{ runner.temp }}/v622-freeze-inputs/convnext
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.stage1.outputs.run_id }}
+
+      - name: Download DenseNet selected files
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-selected-M06-densenet121
+          path: ${{ runner.temp }}/v622-freeze-inputs/densenet
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.stage1.outputs.run_id }}
+
+      - name: Download ResNet selected files
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-selected-M06-resnet50v2
+          path: ${{ runner.temp }}/v622-freeze-inputs/resnet
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.stage1.outputs.run_id }}
+
+      - name: Download Stage 1 recovery manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-selected-backbone-recovery-manifest
+          path: ${{ runner.temp }}/v622-freeze-inputs/manifest
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.stage1.outputs.run_id }}
+
+      - name: Build qualification non-consumption and FINAL_FREEZE_MANIFEST
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = (Get-Command python.exe -ErrorAction Stop).Source
+          $root = Join-Path $env:RUNNER_TEMP 'v622-freeze-inputs'
+          $out = Join-Path $root 'final-freeze'
+          $lines = & $python scripts/v622-final-freeze-build.py --root $root --out-dir $out --stage1-run-id '${{ steps.stage1.outputs.run_id }}' --stage1-run-url '${{ steps.stage1.outputs.run_url }}'
+          if ($LASTEXITCODE -ne 0) { throw 'Final freeze builder failed.' }
+          foreach ($line in @($lines)) {
+            Write-Host $line
+            if ($line -match '^[A-Z0-9_]+=') { $line | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+          }
+
+      - name: Upload FINAL_FREEZE_MANIFEST bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: v622-final-freeze-manifest
+          path: ${{ runner.temp }}/v622-freeze-inputs/final-freeze
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          overwrite: true
+
+      - name: Journal freeze assembly receipt
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $body = "## V6.2.2 final freeze assembled`n`n- Stage 1 recovery run: ${{ steps.stage1.outputs.run_url }}`n- Selected candidates: ``M06__convnext_tiny, M06__densenet121, M06__resnet50v2```n- Ensemble weights: ``1/3, 1/3, 1/3```n- Frozen recipe SHA-256: ``27cae8c59e06b609f9dfd02b526d807dc359b2bb14ae7bc5ee77c68c7553b08f```n- Frozen policy SHA-256: ``7e23bbed9246d5588c67a46380b570e1c1a3e869062613b9dcdb298e2e822861```n- Qualification record: ``used_for_selection=false``, ``qualification_performed=false```n- QUALIFICATION_NON_CONSUMPTION SHA-256: ``$env:QUALIFICATION_NON_CONSUMPTION_SHA256```n- FINAL_FREEZE_MANIFEST SHA-256: ``$env:FINAL_FREEZE_MANIFEST_SHA256```n- Locked test used: ``false```n- External data used: ``false```n- Runner: ``self-hosted windows x64 v622```n- Independent reconciliation: ``PENDING```n- Lockbox remains closed.`n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Headers $headers -Method Post -ContentType 'application/json' -Body $payload | Out-Null
+
+  reconcile:
+    needs: freeze
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout trusted main fresh
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Resolve Stage 1 run identity fresh
+        id: stage1
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ github.event_name }}' -eq 'workflow_run') {
+            $id = '${{ github.event.workflow_run.id }}'
+          } else {
+            $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+            $runs = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs?per_page=100" -Headers $headers -Method Get
+            $r = @($runs.workflow_runs | Where-Object { $_.name -eq 'v622-self-hosted-selected-artifact-recovery-resumable' -and $_.conclusion -eq 'success' } | Sort-Object created_at -Descending | Select-Object -First 1)
+            if (-not $r -or $r.Count -eq 0) { throw 'No successful Stage 1 recovery run exists.' }
+            $id = [string]$r[0].id
+          }
+          "run_id=$id" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Download ConvNeXt selected files fresh
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-selected-M06-convnext-tiny
+          path: ${{ runner.temp }}/v622-reconcile-inputs/convnext
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.stage1.outputs.run_id }}
+
+      - name: Download DenseNet selected files fresh
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-selected-M06-densenet121
+          path: ${{ runner.temp }}/v622-reconcile-inputs/densenet
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.stage1.outputs.run_id }}
+
+      - name: Download ResNet selected files fresh
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-selected-M06-resnet50v2
+          path: ${{ runner.temp }}/v622-reconcile-inputs/resnet
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.stage1.outputs.run_id }}
+
+      - name: Download Stage 1 manifest fresh
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-selected-backbone-recovery-manifest
+          path: ${{ runner.temp }}/v622-reconcile-inputs/manifest
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.stage1.outputs.run_id }}
+
+      - name: Download final freeze bundle from current run
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-final-freeze-manifest
+          path: ${{ runner.temp }}/v622-reconcile-freeze
+
+      - name: Independently reconcile FINAL_FREEZE_MANIFEST
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = (Get-Command python.exe -ErrorAction Stop).Source
+          $stage1 = Join-Path $env:RUNNER_TEMP 'v622-reconcile-inputs'
+          $freeze = Join-Path $env:RUNNER_TEMP 'v622-reconcile-freeze'
+          $out = Join-Path $env:RUNNER_TEMP 'v622-reconciliation-output'
+          $lines = & $python scripts/v622-final-freeze-reconcile.py --stage1-root $stage1 --freeze-dir $freeze --out-dir $out
+          if ($LASTEXITCODE -ne 0) { throw 'Independent final freeze reconciliation failed.' }
+          foreach ($line in @($lines)) {
+            Write-Host $line
+            if ($line -match '^[A-Z0-9_]+=') { $line | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+          }
+
+      - name: Upload independent reconciliation receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: v622-final-freeze-reconciliation
+          path: ${{ runner.temp }}/v622-reconciliation-output
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          overwrite: true
+
+      - name: Journal independent reconciliation PASS
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $body = "## V6.2.2 FINAL_FREEZE reconciliation`n`n- Independent reconciliation: ``PASS```n- FINAL_FREEZE_MANIFEST SHA-256: ``$env:FINAL_FREEZE_MANIFEST_SHA256```n- QUALIFICATION_NON_CONSUMPTION SHA-256: ``$env:QUALIFICATION_NON_CONSUMPTION_SHA256```n- FINAL_FREEZE_RECONCILIATION SHA-256: ``$env:FINAL_FREEZE_RECONCILIATION_SHA256```n- Recipe/policy/selected artifact hashes: ``PASS```n- Qualification non-consumption: ``used_for_selection=false``, ``qualification_performed=false```n- Locked test used: ``false```n- External data used: ``false```n- Runner: ``self-hosted windows x64 v622```n- Lockbox access authorized by this step: ``false```n- Next required gate: ``HARDEN_DISABLE_OBSOLETE_CLOUDFLARE_MUTATING_WORKFLOWS```n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Headers $headers -Method Post -ContentType 'application/json' -Body $payload | Out-Null
