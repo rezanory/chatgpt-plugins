@@ -1,5 +1,6 @@
 name: v622-self-hosted-selected-artifact-index
 
+# trigger: recover selected candidate filenames after backbone COMPLETE
 on:
   workflow_dispatch:
   push:
