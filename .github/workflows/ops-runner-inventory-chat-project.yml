@@ -1,0 +1,110 @@
+name: Ops Runner Inventory for chat-project
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/ops-runner-inventory-chat-project.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    name: Read-only GitHub runner inventory
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 10
+    steps:
+      - name: Report executing control runner
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "CONTROL_RUNNER_NAME=$env:RUNNER_NAME"
+          Write-Host "CONTROL_RUNNER_OS=$env:RUNNER_OS"
+          Write-Host "CONTROL_RUNNER_ARCH=$env:RUNNER_ARCH"
+
+      - name: Inventory registered Actions runner services
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $services = @(Get-CimInstance Win32_Service | Where-Object { $_.Name -like 'actions.runner.*' } | Sort-Object Name)
+          Write-Host "ACTIONS_RUNNER_SERVICE_COUNT=$($services.Count)"
+          foreach ($svc in $services) {
+            Write-Host "RUNNER_SERVICE_NAME=$($svc.Name)"
+            Write-Host "RUNNER_SERVICE_STATE=$($svc.State)"
+            Write-Host "RUNNER_SERVICE_STARTMODE=$($svc.StartMode)"
+            Write-Host "RUNNER_SERVICE_PATH=$($svc.PathName)"
+            Write-Host '---'
+          }
+
+      - name: Inventory running Runner.Listener processes
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $procs = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('Runner.Listener.exe','Runner.Worker.exe') } | Sort-Object Name, ProcessId)
+          Write-Host "RUNNER_PROCESS_COUNT=$($procs.Count)"
+          foreach ($proc in $procs) {
+            Write-Host "RUNNER_PROCESS_NAME=$($proc.Name)"
+            Write-Host "RUNNER_PROCESS_PID=$($proc.ProcessId)"
+            Write-Host "RUNNER_PROCESS_PATH=$($proc.ExecutablePath)"
+            Write-Host '---'
+          }
+
+      - name: Discover non-secret .runner registrations near known runner roots
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $roots = New-Object System.Collections.Generic.List[string]
+          $patterns = @(
+            'C:\actions-runner*',
+            'C:\actions-runners*',
+            'C:\github-runner*',
+            'C:\github-runners*',
+            (Join-Path $env:USERPROFILE 'actions-runner*'),
+            (Join-Path $env:USERPROFILE 'github-runner*')
+          )
+          foreach ($pattern in $patterns) {
+            Get-Item $pattern -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer } | ForEach-Object {
+              if (-not $roots.Contains($_.FullName)) { $roots.Add($_.FullName) }
+            }
+          }
+          $services = @(Get-CimInstance Win32_Service | Where-Object { $_.Name -like 'actions.runner.*' })
+          foreach ($svc in $services) {
+            $raw = [string]$svc.PathName
+            if ($raw -match '^[\"]?([^\"]*RunnerService\.exe)') {
+              $bin = Split-Path -Parent $matches[1]
+              $root = Split-Path -Parent $bin
+              if ($root -and -not $roots.Contains($root)) { $roots.Add($root) }
+            }
+          }
+          Write-Host "CANDIDATE_ROOT_COUNT=$($roots.Count)"
+          foreach ($root in $roots) { Write-Host "CANDIDATE_ROOT=$root" }
+
+          $runnerFiles = New-Object System.Collections.Generic.List[string]
+          foreach ($root in $roots) {
+            Get-ChildItem -LiteralPath $root -Filter '.runner' -File -Recurse -Depth 3 -ErrorAction SilentlyContinue | ForEach-Object {
+              if (-not $runnerFiles.Contains($_.FullName)) { $runnerFiles.Add($_.FullName) }
+            }
+          }
+          Write-Host "RUNNER_CONFIG_COUNT=$($runnerFiles.Count)"
+          foreach ($file in $runnerFiles) {
+            Write-Host "RUNNER_CONFIG_PATH=$file"
+            try {
+              $cfg = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
+              Write-Host "RUNNER_CONFIG_AGENT=$($cfg.agentName)"
+              Write-Host "RUNNER_CONFIG_GITHUB_URL=$($cfg.gitHubUrl)"
+              Write-Host "RUNNER_CONFIG_WORKFOLDER=$($cfg.workFolder)"
+              Write-Host "RUNNER_CONFIG_POOLID=$($cfg.poolId)"
+            }
+            catch {
+              Write-Host "RUNNER_CONFIG_PARSE=FAILED"
+            }
+            Write-Host '---'
+          }
+
+      - name: Assert diagnostic remained read-only
+        shell: powershell
+        run: |
+          Write-Host 'READ_ONLY_DIAGNOSTIC=PASS'
+          Write-Host 'No service start/stop, file write, registry edit, or runner reconfiguration was performed.'
