@@ -1,0 +1,57 @@
+name: Ops Runner Label Probe
+
+on:
+  push:
+    branches: [ops/runner-inventory-chat-project-20260819]
+    paths:
+      - '.github/workflows/ops-runner-label-probe.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/ops-runner-label-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  labels:
+    name: Read current repo runner labels
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 5
+    steps:
+      - name: Query only non-secret runner metadata with current repo token
+        shell: powershell
+        env:
+          REPO_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "EXECUTING_RUNNER=$env:RUNNER_NAME"
+          $headers = @{
+            Authorization = "Bearer $env:REPO_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          try {
+            $value = Invoke-RestMethod -Uri 'https://api.github.com/repos/rezanory/chatgpt-plugins/actions/runners' -Headers $headers -Method Get -TimeoutSec 30
+          }
+          catch {
+            Write-Host "RUNNER_LABEL_API=FAIL"
+            Write-Host "HTTP_ERROR=$($_.Exception.Message)"
+            exit 0
+          }
+          Write-Host 'RUNNER_LABEL_API=PASS'
+          Write-Host "RUNNER_COUNT=$($value.total_count)"
+          foreach ($runner in @($value.runners | Sort-Object name)) {
+            $labels = @($runner.labels | ForEach-Object { $_.name }) -join ','
+            Write-Host "RUNNER_NAME=$($runner.name)"
+            Write-Host "RUNNER_STATUS=$($runner.status)"
+            Write-Host "RUNNER_BUSY=$($runner.busy)"
+            Write-Host "RUNNER_LABELS=$labels"
+            Write-Host '---'
+          }
+
+      - name: Assert no runner mutation occurred
+        shell: powershell
+        run: Write-Host 'READ_ONLY_LABEL_PROBE=PASS'
