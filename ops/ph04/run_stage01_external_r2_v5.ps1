@@ -10,6 +10,7 @@ $text = [System.IO.File]::ReadAllText($source)
 $replacements = [ordered]@{
     'Fail "DOWNLOAD_TOO_SMALL:$Destination:$size"' = 'Fail "DOWNLOAD_TOO_SMALL:${Destination}:${size}"'
     'Fail "DOWNLOAD_SHA256_MISMATCH:$Destination:$actual"' = 'Fail "DOWNLOAD_SHA256_MISMATCH:${Destination}:${actual}"'
+    "`$ComposerSha256 = '5EE7125F8A30A34D246CEFD0BC85B8A783B28F2AEC968994118512350D28027'" = "`$ComposerSha256 = '5EE7125F8A30A34D246CEFDC0BC85B8A783B28F2AEC968994118512350D28027'"
 }
 
 foreach ($entry in $replacements.GetEnumerator()) {
