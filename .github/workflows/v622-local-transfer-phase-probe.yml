@@ -1,0 +1,51 @@
+name: v622-local-transfer-phase-probe
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_LOCAL_TRANSFER_PHASE_PROBE') }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 5
+    steps:
+      - name: Inspect live transfer process without exposing signed URLs
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rows = @()
+          $procs = Get-CimInstance Win32_Process -Filter "Name='curl.exe'" -ErrorAction SilentlyContinue
+          foreach ($p in @($procs)) {
+            $cmd = [string]$p.CommandLine
+            if ($cmd -notmatch 'v622-kaggle-to-kaggle-transfer' -and $cmd -notmatch 'final_selected\.keras' -and $cmd -notmatch 'FROZEN_BACKBONE_ENSEMBLE_POLICY') { continue }
+            $phase = if ($cmd -match '--upload-file') { 'upload_to_kaggle_blob' } else { 'download_from_trickermark_output' }
+            $file = 'unknown'
+            if ($cmd -match '--upload-file\s+"?([^"\s]+)') { $file = Split-Path $matches[1] -Leaf }
+            elseif ($cmd -match '--output\s+"?([^"\s]+)') { $file = Split-Path $matches[1] -Leaf }
+            $host = 'unknown'
+            $urls = [regex]::Matches($cmd, 'https://[^\s"]+')
+            if ($urls.Count -gt 0) {
+              try { $host = ([uri]$urls[$urls.Count - 1].Value).Host } catch {}
+            }
+            $bytes = 0
+            $candidates = Get-ChildItem 'C:\actions-runners\v622-r*\_work\_temp\v622-kaggle-to-kaggle-transfer' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $file }
+            if ($candidates) { $bytes = ($candidates | Sort-Object Length -Descending | Select-Object -First 1).Length }
+            $rows += [pscustomobject]@{ phase=$phase; file=$file; local_bytes=$bytes; destination_host=$host; process_id=$p.ProcessId }
+          }
+          if ($rows.Count -eq 0) {
+            $body = "## V6.2.2 local transfer phase probe`n`n- Active transfer curl process: ``not observed`` on this runner host at probe time.`n- This does not by itself mean the main transfer stopped; the active job may be between curl calls.`n"
+          } else {
+            $lines = @($rows | ForEach-Object { "- Phase: ``$($_.phase)`` | file: ``$($_.file)`` | local bytes: ``$($_.local_bytes)`` | destination host: ``$($_.destination_host)``" }) -join "`n"
+            $body = "## V6.2.2 local transfer phase probe`n`n$lines`n`n- Signed URLs/tokens intentionally redacted.`n- Model compute: ``false``.`n"
+          }
+          $payload = @{ body=$body } | ConvertTo-Json
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28' }
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
