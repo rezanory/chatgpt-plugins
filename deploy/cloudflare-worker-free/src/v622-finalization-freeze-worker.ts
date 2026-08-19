@@ -1,3 +1,4 @@
+// Isolated finalization trigger: superseded transfer/publisher workflows are retired.
 import { kernelStatus, listKernels, type WorkerEnv } from "./kaggle";
 
 type Env = WorkerEnv & { CGP_PROJECT_CONTROL_TOKEN?: string };
