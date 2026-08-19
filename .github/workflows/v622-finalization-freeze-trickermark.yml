@@ -8,10 +8,10 @@ permissions:
 
 jobs:
   retired:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64, v622]
     steps:
       - name: Enforce azadka finalization master architecture
-        shell: bash
+        shell: powershell
         run: |
-          echo 'RETIRED: trickermark may own/share the frozen artifact Dataset, but finalization master remains azadka.'
-          echo 'Use v622-kaggle-finalization-freeze-bridge after azadka Dataset reader permission is verified.'
+          Write-Host 'RETIRED: trickermark may own/share the frozen artifact Dataset, but finalization master remains azadka.'
+          Write-Host 'Use v622-kaggle-finalization-freeze-bridge after azadka Dataset reader permission is verified.'
