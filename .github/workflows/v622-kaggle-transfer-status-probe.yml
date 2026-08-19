@@ -14,35 +14,30 @@ permissions:
 
 jobs:
   probe:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 5
     steps:
       - name: Report latest transfer run
-        shell: bash
+        shell: powershell
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          runs="$(gh api "/repos/${REPO}/actions/runs?per_page=100")"
-          run="$(jq -c '[.workflow_runs[] | select(.name == "v622-kaggle-to-kaggle-finalization-artifact-transfer")] | sort_by(.created_at) | reverse | .[0] // empty' <<<"${runs}")"
-          if [[ -z "${run}" ]]; then
-            echo 'No transfer run found.'
-            exit 0
-          fi
-          id="$(jq -r '.id' <<<"${run}")"
-          jobs="$(gh api "/repos/${REPO}/actions/runs/${id}/jobs?per_page=100&filter=latest")"
-          current="$(jq -r '[.jobs[] as $j | ($j.steps // [])[] | select(.status == "in_progress") | ($j.name + " :: " + .name)] | .[0] // "none"' <<<"${jobs}")"
-          status="$(jq -r '.status' <<<"${run}")"
-          conclusion="$(jq -r '.conclusion // "none"' <<<"${run}")"
-          url="$(jq -r '.html_url' <<<"${run}")"
-          body="## V6.2.2 Kaggle artifact transfer live status
-
-- Run: ${url}
-- Run ID: \`${id}\`
-- Status: \`${status}\`
-- Conclusion: \`${conclusion}\`
-- Current step: \`${current}\`
-- Role: transport/status only; no model compute
-"
-          jq -n --arg body "$body" '{body:$body}' | gh api --method POST "/repos/${REPO}/issues/18/comments" --input - >/dev/null
+          $ErrorActionPreference = 'Stop'
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $repo = $env:GITHUB_REPOSITORY
+          $runs = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/runs?per_page=100" -Headers $headers -Method Get
+          $r = @($runs.workflow_runs | Where-Object { $_.name -eq 'v622-kaggle-to-kaggle-finalization-artifact-transfer' } | Sort-Object created_at -Descending | Select-Object -First 1)
+          if (-not $r -or $r.Count -eq 0) { Write-Host 'No transfer run found.'; exit 0 }
+          $run = $r[0]
+          $jobs = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/runs/$($run.id)/jobs?per_page=100&filter=latest" -Headers $headers -Method Get
+          $current = 'none'
+          foreach ($job in @($jobs.jobs)) {
+            foreach ($step in @($job.steps)) {
+              if ($step.status -eq 'in_progress') { $current = "$($job.name) :: $($step.name)"; break }
+            }
+            if ($current -ne 'none') { break }
+          }
+          $conclusion = if ([string]::IsNullOrWhiteSpace([string]$run.conclusion)) { 'none' } else { [string]$run.conclusion }
+          $body = "## V6.2.2 Kaggle artifact transfer live status`n`n- Run: $($run.html_url)`n- Run ID: ``$($run.id)```n- Status: ``$($run.status)```n- Conclusion: ``$conclusion```n- Current step: ``$current```n- Role: transport/status only; no model compute`n"
+          $payload = @{ body = $body } | ConvertTo-Json
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/issues/18/comments" -Headers $headers -Method Post -ContentType 'application/json' -Body $payload | Out-Null
