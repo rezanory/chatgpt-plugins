@@ -17,11 +17,11 @@ permissions:
 jobs:
   probe:
     if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_KAGGLE_NATIVE_PUBLISHER_PROBE') }}
-    runs-on: [self-hosted, windows, x64, v622]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Read latest publisher run
-        shell: powershell
+        shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
