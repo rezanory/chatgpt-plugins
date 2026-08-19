@@ -1,0 +1,208 @@
+name: v622-finalization-watchdog
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v622-finalization-watchdog.yml'
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-finalization-watchdog
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Detect stalled or failed V6.2.2 finalization workflows
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: '18'
+        run: |
+          set -euo pipefail
+
+          now_epoch="$(date -u +%s)"
+          runs_json="$(mktemp)"
+          selected_json="$(mktemp)"
+
+          gh api \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "/repos/${REPO}/actions/runs?per_page=100" > "${runs_json}"
+
+          jq '
+            .workflow_runs
+            | map(select(.name != "v622-finalization-watchdog"))
+            | map(select(.name | test("^v622-"; "i")))
+            | map(select(.name | test("(recovery|final|freeze|locked|official|external|closure)"; "i")))
+            | group_by(.name)
+            | map(max_by(.created_at))
+          ' "${runs_json}" > "${selected_json}"
+
+          post_alert() {
+            local run_id="$1"
+            local classification="$2"
+            local workflow_name="$3"
+            local run_url="$4"
+            local run_status="$5"
+            local run_conclusion="$6"
+            local age_minutes="$7"
+            local detail="$8"
+            local marker="<!-- v622-watchdog:${run_id}:${classification} -->"
+
+            if gh api --paginate \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "/repos/${REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100" \
+              --jq '.[].body' | grep -Fq -- "${marker}"; then
+              echo "Alert already published: ${marker}"
+              return 0
+            fi
+
+            detected_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            body="$(cat <<EOF
+          ${marker}
+          ## V6.2.2 finalization watchdog alert
+
+          - Classification: \`${classification}\`
+          - Workflow: \`${workflow_name}\`
+          - GitHub run: ${run_url}
+          - Run status: \`${run_status}\`
+          - Run conclusion: \`${run_conclusion:-none}\`
+          - Run age: \`${age_minutes} minutes\`
+          - Detail: ${detail}
+          - Detected at: \`${detected_at}\`
+          - Automatic rerun/cancel performed: \`false\`
+          - Kaggle compute launched: \`false\`
+          - Locked test used by watchdog: \`false\`
+          - External data used by watchdog: \`false\`
+
+          Action: inspect/repair this exact run before advancing the V6.2.2 gate.
+          EOF
+          )"
+
+            jq -n --arg body "${body}" '{body:$body}' |
+              gh api \
+                --method POST \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "/repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+                --input - >/dev/null
+            echo "Published ${classification} for run ${run_id}"
+          }
+
+          while IFS= read -r row; do
+            run_id="$(jq -r '.id' <<<"${row}")"
+            workflow_name="$(jq -r '.name' <<<"${row}")"
+            run_url="$(jq -r '.html_url' <<<"${row}")"
+            run_status="$(jq -r '.status // "unknown"' <<<"${row}")"
+            run_conclusion="$(jq -r '.conclusion // ""' <<<"${row}")"
+            created_at="$(jq -r '.created_at' <<<"${row}")"
+            created_epoch="$(date -u -d "${created_at}" +%s)"
+            age_seconds="$(( now_epoch - created_epoch ))"
+            age_minutes="$(( age_seconds / 60 ))"
+
+            # Ignore stale historical workflows; this is a live finalization watchdog.
+            if (( age_seconds > 172800 )); then
+              continue
+            fi
+
+            case "${run_conclusion}" in
+              failure|cancelled|timed_out|action_required|startup_failure|stale)
+                post_alert \
+                  "${run_id}" "TERMINAL_FAILURE" "${workflow_name}" "${run_url}" \
+                  "${run_status}" "${run_conclusion}" "${age_minutes}" \
+                  "The latest run for this workflow is already terminal with conclusion \`${run_conclusion}\`."
+                continue
+                ;;
+            esac
+
+            case "${run_status}" in
+              queued|waiting|pending|requested)
+                if (( age_seconds >= 600 )); then
+                  post_alert \
+                    "${run_id}" "RUNNER_QUEUE_STALL" "${workflow_name}" "${run_url}" \
+                    "${run_status}" "${run_conclusion}" "${age_minutes}" \
+                    "The workflow has not started execution within the 10-minute queue budget."
+                fi
+                continue
+                ;;
+            esac
+
+            if [[ "${run_status}" != "in_progress" ]]; then
+              continue
+            fi
+
+            jobs_json="$(mktemp)"
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "/repos/${REPO}/actions/runs/${run_id}/jobs?per_page=100&filter=latest" > "${jobs_json}"
+
+            queue_detail=""
+            step_detail=""
+
+            while IFS= read -r job; do
+              job_name="$(jq -r '.name // "unknown"' <<<"${job}")"
+              job_status="$(jq -r '.status // "unknown"' <<<"${job}")"
+              job_created="$(jq -r '.created_at // empty' <<<"${job}")"
+
+              if [[ "${job_status}" == "queued" && -n "${job_created}" ]]; then
+                job_created_epoch="$(date -u -d "${job_created}" +%s)"
+                job_queue_seconds="$(( now_epoch - job_created_epoch ))"
+                if (( job_queue_seconds >= 600 )); then
+                  queue_detail="Job \`${job_name}\` has remained queued for $(( job_queue_seconds / 60 )) minutes."
+                  break
+                fi
+              fi
+
+              current_step="$(jq -c '
+                [.steps[]? | select(.status == "in_progress")]
+                | if length > 0 then .[0] else empty end
+              ' <<<"${job}")"
+              if [[ -n "${current_step}" ]]; then
+                step_name="$(jq -r '.name // "unknown"' <<<"${current_step}")"
+                step_started="$(jq -r '.started_at // empty' <<<"${current_step}")"
+                if [[ -n "${step_started}" ]]; then
+                  step_started_epoch="$(date -u -d "${step_started}" +%s)"
+                  step_seconds="$(( now_epoch - step_started_epoch ))"
+                  if (( step_seconds >= 1800 )); then
+                    step_detail="Job \`${job_name}\`, step \`${step_name}\` has shown no step transition for $(( step_seconds / 60 )) minutes."
+                    break
+                  fi
+                fi
+              fi
+            done < <(jq -c '.jobs[]?' "${jobs_json}")
+
+            if [[ -n "${queue_detail}" ]]; then
+              post_alert \
+                "${run_id}" "RUNNER_QUEUE_STALL" "${workflow_name}" "${run_url}" \
+                "${run_status}" "${run_conclusion}" "${age_minutes}" "${queue_detail}"
+              continue
+            fi
+
+            if [[ -n "${step_detail}" ]]; then
+              post_alert \
+                "${run_id}" "STEP_STALL_SUSPECTED" "${workflow_name}" "${run_url}" \
+                "${run_status}" "${run_conclusion}" "${age_minutes}" "${step_detail}"
+              continue
+            fi
+
+            if (( age_seconds >= 10800 )); then
+              post_alert \
+                "${run_id}" "RUN_DURATION_EXCEEDED" "${workflow_name}" "${run_url}" \
+                "${run_status}" "${run_conclusion}" "${age_minutes}" \
+                "The run has remained in progress beyond the 180-minute hard observation budget."
+            fi
+          done < <(jq -c '.[]' "${selected_json}")
