@@ -1,0 +1,175 @@
+name: control-plane-v3-action
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  id-token: write
+  actions: write
+  checks: write
+  contents: write
+  deployments: write
+  discussions: write
+  issues: write
+  packages: write
+  pages: write
+  pull-requests: write
+  security-events: write
+  statuses: write
+
+jobs:
+  action:
+    if: >-
+      ${{ github.event.issue.number == 33 &&
+          github.event.comment.user.id == 62356000 &&
+          startsWith(github.event.comment.body, 'CONTROL_PLANE_V3_ACTION ') }}
+    runs-on: [self-hosted, windows, x64, v622]
+    environment: cloudflare-production
+    timeout-minutes: 60
+    concurrency:
+      group: control-plane-v3-action-${{ github.event.comment.id }}
+      cancel-in-progress: false
+    steps:
+      - name: Resolve exact v3 action implementation
+        id: resolve
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $r=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/git/ref/heads/feature/control-plane-v3" -Headers $h -TimeoutSec 30
+          $sha=[string]$r.object.sha
+          if($sha -notmatch '^[0-9a-f]{40}$'){throw 'Unable to resolve feature/control-plane-v3 SHA'}
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "CGP_ACTION_IMPL_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Checkout exact v3 action implementation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+
+      - name: Parse bounded action payload
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $event=Get-Content -Raw $env:GITHUB_EVENT_PATH | ConvertFrom-Json
+          if([string]$event.repository.id -ne '1337215097'){throw 'repository id mismatch'}
+          if([string]$event.comment.user.id -ne '62356000'){throw 'actor id mismatch'}
+          $comment=[string]$event.comment.body
+          $prefix='CONTROL_PLANE_V3_ACTION '
+          if(-not $comment.StartsWith($prefix)){throw 'action prefix mismatch'}
+          $raw=$comment.Substring($prefix.Length).Trim()
+          if($raw.Length -lt 2 -or $raw.Length -gt 30000){throw 'action payload length invalid'}
+          $obj=$raw | ConvertFrom-Json
+          $requestId=[string]$obj.request_id
+          $provider=[string]$obj.provider
+          $op=[string]$obj.operation_class
+          if($requestId -notmatch '^[A-Za-z0-9._:-]{3,120}$'){throw 'invalid request_id'}
+          if($provider -notin @('kaggle','github','cloudflare')){throw 'unsupported provider'}
+          if($op -notin @('write','compute','destructive','privileged')){throw 'invalid operation_class'}
+          if($op -in @('destructive','privileged')){
+            if([string]$obj.confirm -ne $requestId){throw 'destructive/privileged action requires confirm=request_id'}
+          }
+          if($obj.body_text_from_path){
+            $spec=$obj.body_text_from_path
+            $field=[string]$spec.field
+            $rel=[string]$spec.path
+            if($field -notmatch '^[A-Za-z][A-Za-z0-9_]{0,63}$'){throw 'invalid body_text_from_path.field'}
+            if($rel -notmatch '^[A-Za-z0-9._/-]+$' -or $rel.Contains('..')){throw 'unsafe body_text_from_path.path'}
+            $root=[IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)
+            $full=[IO.Path]::GetFullPath((Join-Path $root $rel))
+            if(-not $full.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)){throw 'body text path escaped repository'}
+            if(-not (Test-Path -LiteralPath $full -PathType Leaf)){throw 'body text source file missing'}
+            $info=Get-Item -LiteralPath $full
+            if($info.Length -gt 1500000){throw 'body text source exceeds 1.5 MB'}
+            $text=[IO.File]::ReadAllText($full,[Text.Encoding]::UTF8)
+            if(-not $obj.body){$obj | Add-Member -NotePropertyName body -NotePropertyValue ([pscustomobject]@{})}
+            $obj.body | Add-Member -Force -NotePropertyName $field -NotePropertyValue $text
+            $obj.PSObject.Properties.Remove('body_text_from_path')
+          }
+          $payload=Join-Path $env:RUNNER_TEMP 'control-plane-v3-action.json'
+          $json=$obj | ConvertTo-Json -Depth 50 -Compress
+          [IO.File]::WriteAllText($payload,$json,[Text.UTF8Encoding]::new($false))
+          "CGP_ACTION_PAYLOAD=$payload" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_ACTION_REQUEST_ID=$requestId" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_ACTION_PROVIDER=$provider" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_ACTION_CLASS=$op" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "CONTROL PLANE V3 ACTION START | request_id=$requestId | provider=$provider | class=$op | impl=$env:CGP_ACTION_IMPL_SHA"
+
+      - name: Request GitHub OIDC action identity
+        if: ${{ env.CGP_ACTION_PROVIDER == 'kaggle' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $uri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action"
+          $h=@{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
+          $r=Invoke-RestMethod -Uri $uri -Headers $h -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'GitHub OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Execute provider action
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $payload=Get-Content -Raw $env:CGP_ACTION_PAYLOAD | ConvertFrom-Json
+          $out=Join-Path $env:RUNNER_TEMP 'control-plane-v3-action-result.json'
+          if($env:CGP_ACTION_PROVIDER -eq 'kaggle'){
+            $body=Get-Content -Raw $env:CGP_ACTION_PAYLOAD
+            $headers=@{Authorization="Bearer $env:CGP_ACTION_OIDC_TOKEN"}
+            try{
+              $response=Invoke-RestMethod -Uri 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle' -Method Post -Headers $headers -ContentType 'application/json' -Body $body -TimeoutSec 180
+              $response | ConvertTo-Json -Depth 50 | Set-Content -Encoding utf8 $out
+              $code=0
+            }catch{
+              @{ok=$false;error=$_.Exception.Message} | ConvertTo-Json -Compress | Set-Content -Encoding utf8 $out
+              $code=2
+            }
+          } else {
+            $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+            if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+            $method=[string]$payload.method
+            $path=[string]$payload.path
+            $bodyJson=if($null -ne $payload.body){$payload.body | ConvertTo-Json -Depth 50 -Compress}else{$null}
+            $env:CONTROL_PLANE_ALLOWED_CLASSES=$env:CGP_ACTION_CLASS
+            $args=@('scripts/control_plane_http.py','--provider',$env:CGP_ACTION_PROVIDER,'--method',$method,'--path',$path,'--operation-class',$env:CGP_ACTION_CLASS)
+            if($bodyJson){$args+=@('--body-json',$bodyJson)}
+            $text=& $python @args 2>&1 | Out-String
+            $code=$LASTEXITCODE
+            [IO.File]::WriteAllText($out,$text,[Text.UTF8Encoding]::new($false))
+          }
+          "CGP_ACTION_RESULT=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_ACTION_EXIT=$code" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          exit 0
+
+      - name: Publish sanitized action receipt
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $raw=Get-Content -Raw $env:CGP_ACTION_RESULT
+          if($raw.Length -gt 50000){$raw=$raw.Substring(0,50000)+"`n<truncated>"}
+          $status=if($env:CGP_ACTION_EXIT -eq '0'){'PASS'}else{'DIAGNOSTIC'}
+          $body="## CONTROL PLANE V3 ACTION $status`n`n- Request: ``$env:CGP_ACTION_REQUEST_ID```n- Run: ``$env:GITHUB_RUN_ID```n- Implementation: ``$env:CGP_ACTION_IMPL_SHA```n- Provider: ``$env:CGP_ACTION_PROVIDER```n- Operation class: ``$env:CGP_ACTION_CLASS```n`n``````json`n$raw`n``````"
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
+          if($env:CGP_ACTION_EXIT -ne '0'){throw 'provider action returned diagnostic'}
+
+      - name: Upload action receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-plane-v3-action-${{ github.run_id }}
+          path: ${{ env.CGP_ACTION_RESULT }}
+          if-no-files-found: warn
+          retention-days: 14
