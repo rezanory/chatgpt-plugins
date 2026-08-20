@@ -1,5 +1,5 @@
 import canonicalWorker from "./index";
-import { kernelStatus, type WorkerEnv } from "./kaggle";
+import { kernelLogs, kernelStatus, type WorkerEnv } from "./kaggle";
 
 type Rec = Record<string, unknown>;
 const KERNEL_REF = "azadka/pneumonia-v6-2-2-external-validation";
@@ -16,6 +16,20 @@ function normalizedStatus(raw: Rec): string {
   return "UNKNOWN";
 }
 
+function errorExcerpt(log: string): string {
+  if (!log) return "";
+  const lines = log.split(/\r?\n/);
+  let start = -1;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (/Traceback \(most recent call last\)|(?:Error|Exception):|RuntimeError|ValueError|FileNotFoundError|PermissionError|KeyError|TypeError/i.test(lines[i])) {
+      start = Math.max(0, i - 18);
+      break;
+    }
+  }
+  const selected = start >= 0 ? lines.slice(start, Math.min(lines.length, start + 80)) : lines.slice(-80);
+  return selected.join("\n").slice(-12000);
+}
+
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
     status,
@@ -30,6 +44,8 @@ export default {
       try {
         const raw = await kernelStatus(env, "master", KERNEL_REF);
         const status = normalizedStatus(raw);
+        const terminalError = ["ERROR", "FAILED", "CANCELLED", "CANCELED", "DEAD"].includes(status);
+        const log = terminalError ? await kernelLogs(env, "master", KERNEL_REF) : "";
         return json({
           project: "PNEUMONIA V6.2.2",
           stage: "EXTERNAL_VALIDATION",
@@ -37,9 +53,11 @@ export default {
           status,
           terminal: ["COMPLETE", "ERROR", "FAILED", "CANCELLED", "CANCELED", "DEAD"].includes(status),
           complete: status === "COMPLETE",
-          needs_incident_review: ["ERROR", "FAILED", "CANCELLED", "CANCELED", "DEAD"].includes(status),
+          needs_incident_review: terminalError,
           probe_only: true,
           kaggle_compute_launched_by_probe: false,
+          error_excerpt: terminalError ? errorExcerpt(log) : "",
+          log_tail: terminalError ? log.slice(-20000) : "",
           raw_status: raw,
         });
       } catch (error) {
