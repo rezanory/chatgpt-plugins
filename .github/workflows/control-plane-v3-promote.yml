@@ -1,0 +1,146 @@
+name: control-plane-v3-promote
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-cloudflare-production-mutation
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: >-
+      ${{ github.event.issue.number == 33 &&
+          github.event.comment.user.id == 62356000 &&
+          github.event.comment.body == 'CONTROL_PLANE_V3_PROMOTE' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    environment: cloudflare-production
+    timeout-minutes: 60
+    steps:
+      - name: Gate on P0 cleanup and exact validated v3 head
+        id: gate
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $jobs=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/32370858160/jobs?per_page=100" -Headers $h -TimeoutSec 30
+          $p0=@($jobs.jobs | Where-Object {$_.name -eq 'p0'}) | Select-Object -First 1
+          if(-not $p0){throw 'P0 job not found'}
+          if([string]$p0.status -ne 'completed'){throw "P0 job is not terminal: $($p0.status)"}
+          $cleanup=@($p0.steps | Where-Object {$_.name -eq 'Remove P0 capability and restore canonical Worker'}) | Select-Object -First 1
+          if(-not $cleanup -or [string]$cleanup.conclusion -ne 'success'){throw 'P0 canonical restore/capability cleanup not attested successful'}
+
+          $ref=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/git/ref/heads/feature/control-plane-v3" -Headers $h -TimeoutSec 30
+          $branchSha=[string]$ref.object.sha
+          if($branchSha -notmatch '^[0-9a-f]{40}$'){throw 'v3 branch SHA unavailable'}
+
+          $comments=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments?per_page=100" -Headers $h -TimeoutSec 30
+          $pass=@($comments | Where-Object {$_.body -like '## CONTROL PLANE V3 VALIDATION PASS*'}) | Select-Object -Last 1
+          if(-not $pass){throw 'no CONTROL PLANE V3 VALIDATION PASS found'}
+          $match=[regex]::Match([string]$pass.body,'Validated head: `([0-9a-f]{40})`')
+          if(-not $match.Success){throw 'validated head missing from latest PASS receipt'}
+          $validatedSha=$match.Groups[1].Value
+          if($validatedSha -ne $branchSha){throw "branch head $branchSha differs from validated head $validatedSha"}
+          "sha=$branchSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "CGP_V3_PROMOTE_SHA=$branchSha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Checkout exact validated v3 head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.gate.outputs.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify canonical Worker before promotion
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          $h=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
+          if($h.service -ne 'chatgpt-kaggle-gateway' -or $h.write_enabled -ne $false){throw 'canonical pre-promotion health attestation failed'}
+          try{
+            Invoke-WebRequest -UseBasicParsing -Uri "$base/control/v6-2-3/p0/status" -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 30 | Out-Null
+            throw 'temporary P0 status route unexpectedly still exists'
+          }catch{
+            if([int]$_.Exception.Response.StatusCode -ne 404){throw "temporary P0 route not cleanly absent: $($_.Exception.Message)"}
+          }
+
+      - name: Typecheck exact promotion payload
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npm install --no-audit --no-fund
+            if($LASTEXITCODE -ne 0){throw 'npm install failed'}
+            npm run check
+            if($LASTEXITCODE -ne 0){throw 'v3 promotion typecheck failed'}
+          } finally { Pop-Location }
+
+      - name: Deploy OIDC-backed v3 control plane
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $id=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if(-not $id -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials missing'}
+          Write-Host "::add-mask::$id"
+          $env:CLOUDFLARE_ACCOUNT_ID=$id
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway
+            if($LASTEXITCODE -ne 0){throw 'v3 Worker deploy failed'}
+          } finally { Pop-Location }
+
+      - name: Verify v3 production read plane
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          $canonical=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
+          if($canonical.service -ne 'chatgpt-kaggle-gateway' -or $canonical.write_enabled -ne $false){throw 'canonical health changed after v3 promotion'}
+          $v3=Invoke-RestMethod -Uri "$base/control-plane/v3/healthz" -Method Get -TimeoutSec 30
+          if($v3.service -ne 'chatgpt-control-plane-v3' -or $v3.github_oidc_read_broker -ne $true){throw 'v3 OIDC read broker health failed'}
+          if($v3.mutation_default_enabled -ne $false){throw 'v3 mutation default must remain disabled'}
+          try{
+            Invoke-WebRequest -UseBasicParsing -Uri "$base/control/v6-2-3/p0/status" -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 30 | Out-Null
+            throw 'temporary P0 status route reappeared'
+          }catch{
+            if([int]$_.Exception.Response.StatusCode -ne 404){throw "temporary P0 route post-promotion mismatch: $($_.Exception.Message)"}
+          }
+
+      - name: Publish promotion PASS
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $body="## CONTROL PLANE V3 PRODUCTION PROMOTION PASS`n`n- Run: ``$env:GITHUB_RUN_ID```n- Deployed head: ``$env:CGP_V3_PROMOTE_SHA```n- P0 terminal: ``true```n- P0 capability cleanup/canonical restore attested before promotion: ``true```n- Canonical Worker write_enabled: ``false```n- GitHub OIDC read broker: ``ready```n- Mutation default enabled: ``false``"
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
+
+      - name: Publish promotion diagnostic
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $sha=if($env:CGP_V3_PROMOTE_SHA){$env:CGP_V3_PROMOTE_SHA}else{'unresolved'}
+          $body="## CONTROL PLANE V3 PRODUCTION PROMOTION DIAGNOSTIC`n`n- Run: ``$env:GITHUB_RUN_ID```n- Candidate head: ``$sha```n- Result: ``FAILED_CLOSED```n- Automatic Kaggle rerun: ``false``"
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
