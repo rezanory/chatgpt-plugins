@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 WORKER = (
     Path(__file__).resolve().parents[3]
     / "deploy"
