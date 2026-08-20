@@ -52,7 +52,7 @@ jobs:
           $passes=@($allComments | Where-Object {
             $_.user.login -eq 'github-actions[bot]' -and
             $_.body -like '## CONTROL PLANE V3 VALIDATION PASS*'
-          } | Sort-Object {[datetime]$_.created_at} -Descending)
+          })
           $pass=$null
           $match=$null
           foreach($candidate in $passes){
