@@ -1,4 +1,5 @@
 import canonicalWorker from "./index";
+import { executeKaggleOidcAction } from "./control-plane-v3-action";
 import {
   kaggleLiveLog,
   kagglePhaseProbe,
@@ -106,11 +107,11 @@ async function handleKaggleRead(request: Request, env: ControlPlaneV3Env): Promi
   });
 }
 
-function errorResponse(error: unknown, status = 403): Response {
+function errorResponse(error: unknown, readOnly: boolean, status = 403): Response {
   return json(
     {
       ok: false,
-      read_only: true,
+      read_only: readOnly,
       error: error instanceof Error ? error.message.slice(0, 1200) : "unknown error",
     },
     status,
@@ -126,6 +127,7 @@ export default {
         service: "chatgpt-control-plane-v3",
         status: "ready",
         github_oidc_read_broker: true,
+        github_oidc_action_broker: true,
         trusted_repository_id: "1337215097",
         mutation_default_enabled: env.CGP_CONTROL_V3_MUTATION_ENABLED === "1",
       });
@@ -135,7 +137,15 @@ export default {
       try {
         return await handleKaggleRead(request, env);
       } catch (error) {
-        return errorResponse(error);
+        return errorResponse(error, true);
+      }
+    }
+
+    if (url.pathname === "/control-plane/v3/action/kaggle" && request.method === "POST") {
+      try {
+        return json(bounded(await executeKaggleOidcAction(request, env)));
+      } catch (error) {
+        return errorResponse(error, false);
       }
     }
 
