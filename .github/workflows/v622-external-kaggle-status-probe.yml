@@ -56,7 +56,7 @@ jobs:
             if($LASTEXITCODE-ne 0){throw 'status worker deploy failed'}
           } finally { Pop-Location }
 
-      - name: Read live Kaggle external status
+      - name: Read live Kaggle external status and traceback
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -65,11 +65,13 @@ jobs:
           $uri='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/external-kernel-status'
           $v=$null;$last='not ready'
           for($i=1;$i-le 12;$i++){
-            try{$v=Invoke-RestMethod -Uri $uri -Method Get -TimeoutSec 60;if($v.project-ne'PNEUMONIA V6.2.2'){throw 'stale status'};break}catch{$last=$_.Exception.Message;Start-Sleep 5}
+            try{$v=Invoke-RestMethod -Uri $uri -Method Get -TimeoutSec 90;if($v.project-ne'PNEUMONIA V6.2.2'){throw 'stale status'};break}catch{$last=$_.Exception.Message;Start-Sleep 5}
           }
           if(-not $v){throw "status probe failed: $last"}
           $v|ConvertTo-Json -Depth 30|Write-Host
-          $body="## V6.2.2 EXTERNAL KAGGLE STATUS`n`n- Kernel: ``$($v.kernel_ref)```n- Live Kaggle status: ``$($v.status)```n- Terminal: ``$($v.terminal)```n- Complete: ``$($v.complete)```n- Incident review needed: ``$($v.needs_incident_review)```n- Probe launched Kaggle compute: ``false```n- Probe run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $excerpt=[string]$v.error_excerpt
+          if($excerpt.Length -gt 6000){$excerpt=$excerpt.Substring($excerpt.Length-6000)}
+          $body="## V6.2.2 EXTERNAL KAGGLE INCIDENT`n`n- Kernel: ``$($v.kernel_ref)```n- Live Kaggle status: ``$($v.status)```n- Terminal: ``$($v.terminal)```n- Complete: ``$($v.complete)```n- Incident review needed: ``$($v.needs_incident_review)```n- Probe launched Kaggle compute: ``false```n- Error excerpt:`n``````text`n$excerpt`n```````n- Probe run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
           $p=@{body=$body}|ConvertTo-Json -Compress
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
