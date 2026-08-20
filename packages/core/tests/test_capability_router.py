@@ -1,5 +1,4 @@
 import pytest
-
 from chatgpt_plugins_core.capability_registry import SafetyClass
 from chatgpt_plugins_core.capability_router import CapabilityRouteError, route_capability
 
