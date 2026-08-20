@@ -82,3 +82,29 @@ def test_provider_executable_is_fixed(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert captured["command"][0] == "/safe/gh"
     assert captured["shell"] is False
+
+
+def test_cli_receipt_redacts_secret_output_and_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("shutil.which", lambda _: "/usr/bin/kaggle")
+
+    def fake_run(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(
+            returncode=0,
+            stdout="token=KGAT_super_secret_value\nAuthorization: Bearer abc.def.ghi",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    receipt = run_provider_cli(
+        "kaggle",
+        ["auth", "print-access-token", "--token", "KGAT_argument_secret"],
+        safety=SafetyClass.PRIVILEGED,
+        env={"CONTROL_PLANE_ALLOWED_CLASSES": "privileged"},
+    )
+    assert "KGAT_" not in receipt.output
+    assert "abc.def.ghi" not in receipt.output
+    assert "KGAT_argument_secret" not in " ".join(receipt.argv)
+    assert "<redacted>" in receipt.output
+    assert "<redacted>" in receipt.argv
