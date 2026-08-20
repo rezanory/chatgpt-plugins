@@ -32,8 +32,10 @@ def test_global_scope_requires_separate_opt_in() -> None:
     assert 'candidate === "*" && env.CGP_CONTROL_ALLOW_GLOBAL_SCOPE === "1"' in source
 
 
-def test_non_read_capability_must_not_be_expired() -> None:
+def test_non_read_capability_must_be_enabled_and_not_expired() -> None:
     source = WORKER.read_text(encoding="utf-8")
+    assert "CGP_CONTROL_V3_MUTATION_ENABLED" in source
+    assert 'env.CGP_CONTROL_V3_MUTATION_ENABLED !== "1"' in source
     assert "function notExpired" in source
     assert "if (!notExpired(env)) return false" in source
 
