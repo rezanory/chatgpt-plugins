@@ -1,0 +1,98 @@
+name: control-plane-v3-capability-discovery
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install current Kaggle clients
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install --disable-pip-version-check --upgrade kaggle kagglehub
+          if($LASTEXITCODE -ne 0){throw 'Kaggle client install failed'}
+
+      - name: Install project-local Wrangler
+        working-directory: deploy/cloudflare-worker-free
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          npm install --no-audit --no-fund
+          if($LASTEXITCODE -ne 0){throw 'Wrangler install failed'}
+
+      - name: Discover Kaggle command tree
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\control-plane-capabilities" | Out-Null
+          python scripts/control_plane_discover.py --provider kaggle --depth 2 --json-out "$env:RUNNER_TEMP\control-plane-capabilities\kaggle.json"
+          if($LASTEXITCODE -ne 0){throw 'Kaggle discovery failed'}
+
+      - name: Discover GitHub CLI command tree
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python scripts/control_plane_discover.py --provider github --depth 2 --json-out "$env:RUNNER_TEMP\control-plane-capabilities\github.json"
+          if($LASTEXITCODE -ne 0){throw 'GitHub discovery failed'}
+
+      - name: Discover Cloudflare Wrangler command tree
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            python ..\..\scripts\control_plane_discover.py --provider cloudflare --depth 2 --json-out "$env:RUNNER_TEMP\control-plane-capabilities\cloudflare.json"
+            if($LASTEXITCODE -ne 0){throw 'Cloudflare discovery failed'}
+          } finally {
+            Pop-Location
+          }
+
+      - name: Write discovery manifest
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir="$env:RUNNER_TEMP\control-plane-capabilities"
+          $files=Get-ChildItem $dir -File | Sort-Object Name
+          $rows=@()
+          foreach($f in $files){
+            $sha=(Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLowerInvariant()
+            $rows += [ordered]@{name=$f.Name;sha256=$sha;size_bytes=$f.Length}
+          }
+          $manifest=[ordered]@{
+            schema_version=1
+            generated_utc=[DateTime]::UtcNow.ToString('o')
+            github_run_id=$env:GITHUB_RUN_ID
+            git_sha=$env:GITHUB_SHA
+            read_only_discovery=$true
+            files=$rows
+          }
+          $manifest | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 "$dir\manifest.json"
+
+      - name: Upload capability inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-plane-v3-capabilities
+          path: ${{ runner.temp }}/control-plane-capabilities
+          if-no-files-found: error
+          retention-days: 30
