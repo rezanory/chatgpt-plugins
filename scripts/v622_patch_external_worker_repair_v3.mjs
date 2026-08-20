@@ -8,6 +8,10 @@ const newClause="if(TERMINAL_BAD.has(status)){if(!EXTERNAL_VALIDATION_SCRIPT.inc
 if(!text.includes(oldClause)) throw new Error('expected terminal-rerun guard not found');
 if(text.indexOf(oldClause)!==text.lastIndexOf(oldClause)) throw new Error('terminal-rerun guard is not unique');
 text=text.replace(oldClause,newClause);
+const oldReceipt="return{status:'PASS',stage:'EXTERNAL_VALIDATION',summary_sha256:actual,cohorts:v.cohorts,independence_audit:v.independence_audit,next_permitted_stage:v.next_permitted_stage};";
+const newReceipt="const alias=rec(v.nih_alias_resolution);if(v.incident_repair!=='NIH_LABELED_ALIAS_V3'||Number(v.prior_failed_kernel_version)!==2)throw new Error('external validation repair-v3 lineage mismatch');if(Number(alias.missing_count)!==0||Number(alias.conflict_count)!==0||Number(alias.indexed_images)!==Number(alias.labeled_image_index_count))throw new Error('NIH alias-resolution receipt mismatch');return{status:'PASS',stage:'EXTERNAL_VALIDATION',summary_sha256:actual,cohorts:v.cohorts,independence_audit:v.independence_audit,incident_repair:v.incident_repair,prior_failed_kernel_version:v.prior_failed_kernel_version,nih_alias_resolution:v.nih_alias_resolution,next_permitted_stage:v.next_permitted_stage};";
+if(!text.includes(oldReceipt)) throw new Error('expected external receipt return not found');
+text=text.replace(oldReceipt,newReceipt);
 text=text.replaceAll('automatic_rerun_forbidden:true','automatic_rerun_forbidden:true,incident_repair_v3_authorized:true');
 fs.writeFileSync(workerPath,text,'utf8');
-console.log(JSON.stringify({stage:'EXTERNAL_VALIDATION_WORKER_REPAIR',incident_repair:'NIH_LABELED_ALIAS_V3',prior_failed_kernel_version:2},null,2));
+console.log(JSON.stringify({stage:'EXTERNAL_VALIDATION_WORKER_REPAIR',incident_repair:'NIH_LABELED_ALIAS_V3',prior_failed_kernel_version:2,receipt_requires_zero_missing_and_conflicts:true},null,2));
