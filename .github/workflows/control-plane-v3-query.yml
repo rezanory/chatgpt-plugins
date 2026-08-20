@@ -36,6 +36,17 @@ jobs:
           "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "CGP_QUERY_IMPL_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Publish query start marker
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $body="CONTROL PLANE V3 QUERY START | run=$env:GITHUB_RUN_ID | impl=$env:CGP_QUERY_IMPL_SHA | read_only=true | cloudflare_deploy=false | kaggle_compute=false"
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
+
       - name: Checkout exact v3 query implementation
         uses: actions/checkout@v4
         with:
@@ -53,10 +64,10 @@ jobs:
           if(-not $body.StartsWith($prefix)){throw 'query prefix mismatch'}
           $raw=$body.Substring($prefix.Length).Trim()
           if($raw.Length -lt 2 -or $raw.Length -gt 30000){throw 'query payload length invalid'}
-          $obj=$raw | ConvertFrom-Json -Depth 50
+          $obj=$raw | ConvertFrom-Json
           if(-not $obj.provider){throw 'query provider missing'}
           $payload=Join-Path $env:RUNNER_TEMP 'control-plane-v3-query.json'
-          $raw | Set-Content -LiteralPath $payload -Encoding utf8
+          [IO.File]::WriteAllText($payload,$raw,[Text.UTF8Encoding]::new($false))
           "CGP_QUERY_PAYLOAD=$payload" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Request GitHub OIDC read-broker identity
@@ -112,3 +123,15 @@ jobs:
           path: ${{ env.CGP_QUERY_RESULT }}
           if-no-files-found: error
           retention-days: 7
+
+      - name: Publish query workflow diagnostic
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $impl=if($env:CGP_QUERY_IMPL_SHA){$env:CGP_QUERY_IMPL_SHA}else{'unresolved'}
+          $body="## CONTROL PLANE V3 QUERY WORKFLOW DIAGNOSTIC`n`n- Run: ``$env:GITHUB_RUN_ID```n- Query implementation: ``$impl```n- Result: ``FAILED_BEFORE_SANITIZED_RECEIPT```n- Read only: ``true```n- Cloudflare deploy: ``false```n- Kaggle compute launched: ``false``"
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
