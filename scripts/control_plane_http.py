@@ -23,6 +23,14 @@ SENSITIVE_KEY = re.compile(
     r"(token|secret|password|passwd|private[_-]?key|access[_-]?key|authorization|cookie)",
     re.I,
 )
+TOKEN_VALUE = re.compile(
+    r"(KGAT_[A-Za-z0-9_-]+|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|Bearer\s+[A-Za-z0-9._~+/=-]+)",
+    re.I,
+)
+LABELED_SECRET = re.compile(
+    r"((?:token|secret|password|passwd|authorization|api[-_]?key|access[-_]?key)\s*[:=]\s*)(\S+)",
+    re.I,
+)
 SAFETY_CLASSES = {"read", "write", "compute", "destructive", "privileged"}
 GRAPHQL_PATH = {"github": "/graphql", "cloudflare": "/graphql"}
 
@@ -40,6 +48,11 @@ def allowed_classes() -> set[str]:
     return values
 
 
+def redact_text(value: str) -> str:
+    value = TOKEN_VALUE.sub("<redacted>", value)
+    return LABELED_SECRET.sub(r"\1<redacted>", value)
+
+
 def redact(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -48,6 +61,8 @@ def redact(value: Any) -> Any:
         }
     if isinstance(value, list):
         return [redact(item) for item in value]
+    if isinstance(value, str):
+        return redact_text(value)
     return value
 
 
