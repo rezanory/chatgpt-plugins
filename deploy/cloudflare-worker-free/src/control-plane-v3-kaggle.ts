@@ -26,7 +26,10 @@ export interface KaggleCallSpec {
 const API_ROOT = "https://api.kaggle.com/v1";
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_.]{0,127}$/;
 const METHOD = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
+const KERNEL_SLUG = /^[A-Za-z0-9._-]{1,200}$/;
 const READ_METHOD = /^(Get|List|Search|Query|Read|Fetch|Download|Check|Describe|Validate)/;
+const PHASE_MARKER = /(?:^|\n)CGP_PHASE:([A-Za-z0-9_.:-]{1,120})/g;
+const LOG_SECRET = /(KGAT_[A-Za-z0-9_-]+|(?:token|secret|password|authorization)\s*[:=]\s*\S+)/gi;
 
 const ACCOUNTS: Record<
   AccountId,
@@ -96,7 +99,7 @@ function notExpired(env: ControlPlaneV3Env): boolean {
   const raw = env.CGP_CONTROL_EXPIRES_AT?.trim();
   if (!raw) return false;
   const numeric = Number(raw);
-  let expiresAt = Number.isFinite(numeric)
+  const expiresAt = Number.isFinite(numeric)
     ? numeric < 10_000_000_000
       ? numeric * 1000
       : numeric
@@ -145,6 +148,21 @@ function validateSpec(spec: KaggleCallSpec): void {
       `Kaggle method ${spec.method} is not read-like; use a scoped non-read operation class`,
     );
   }
+}
+
+function kernelSlug(accountId: AccountId, kernelRef: string): string {
+  const [owner, slug, ...rest] = kernelRef.split("/");
+  if (rest.length || !owner || !slug) throw new Error("kernel_ref must use owner/slug form");
+  if (owner.toLowerCase() !== ACCOUNTS[accountId].owner.toLowerCase()) {
+    throw new Error(`kernel owner does not match ${accountId}`);
+  }
+  if (!KERNEL_SLUG.test(slug)) throw new Error("kernel slug contains unsupported characters");
+  return slug;
+}
+
+function sanitizeLog(raw: string, maxChars: number): string {
+  const bounded = raw.length > maxChars ? raw.slice(-maxChars) : raw;
+  return bounded.replace(LOG_SECRET, "<redacted>");
 }
 
 async function parseResponse(response: Response): Promise<Record<string, unknown>> {
@@ -208,6 +226,51 @@ export async function kaggleScopedCall(
     throw new Error(`Control-plane capability missing/expired scope: ${requiredScope}`);
   }
   return execute(env, spec);
+}
+
+export async function kaggleLiveLog(
+  env: ControlPlaneV3Env,
+  accountId: AccountId,
+  kernelRef: string,
+  maxChars = 120_000,
+): Promise<Record<string, unknown>> {
+  if (!Number.isInteger(maxChars) || maxChars < 1000 || maxChars > 200_000) {
+    throw new Error("maxChars must be an integer between 1000 and 200000");
+  }
+  const slug = kernelSlug(accountId, kernelRef);
+  const value = await kaggleReadCall(env, {
+    accountId,
+    service: "kernels.KernelsApiService",
+    method: "ListKernelSessionOutput",
+    body: { userName: ACCOUNTS[accountId].owner, kernelSlug: slug, pageSize: 1 },
+  });
+  const log = sanitizeLog(String(value.log ?? ""), maxChars);
+  const matches = [...log.matchAll(PHASE_MARKER)];
+  const phase = matches.length ? matches[matches.length - 1][1] : null;
+  return {
+    account_id: accountId,
+    kernel_ref: kernelRef,
+    phase,
+    phase_marker_found: phase !== null,
+    log_tail: log,
+    bounded: true,
+  };
+}
+
+export async function kagglePhaseProbe(
+  env: ControlPlaneV3Env,
+  accountId: AccountId,
+  kernelRef: string,
+): Promise<Record<string, unknown>> {
+  const result = await kaggleLiveLog(env, accountId, kernelRef, 40_000);
+  return {
+    account_id: result.account_id,
+    kernel_ref: result.kernel_ref,
+    phase: result.phase,
+    phase_marker_found: result.phase_marker_found,
+    live_log_read_used: true,
+    labels_or_metrics_required: false,
+  };
 }
 
 export function kaggleAccountOwner(accountId: AccountId): string {
