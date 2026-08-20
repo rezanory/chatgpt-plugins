@@ -7,15 +7,15 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import urllib.error
-import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 MAX_HTTP_BYTES = 2_000_000
 MAX_RESULT_CHARS = 200_000
-SAFE_PATH = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/?=-]{1,4000}$")
+SAFE_PATH = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/?={}-]{1,4000}$")
 SECRET_KEY = re.compile(r"token|secret|password|authorization|credential|api[_-]?key|cookie|signed[_-]?url", re.I)
 SECRET_VALUE = re.compile(
     r"KGAT_[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._~-]+|Basic\s+[A-Za-z0-9+/=]+|"
@@ -110,7 +110,8 @@ def github_query(payload: dict[str, Any]) -> Any:
         return http_json(f"https://api.github.com{path}", headers=headers)
     if action == "graphql_query":
         query = str(payload.get("query", "")).strip()
-        if not query or query.lower().startswith("mutation") or " mutation " in f" {query.lower()} ":
+        lowered = f" {query.lower()} "
+        if not query or query.lower().startswith("mutation") or " mutation " in lowered:
             raise QueryError("GitHub GraphQL read broker accepts query operations only")
         variables = payload.get("variables", {})
         if not isinstance(variables, dict):
@@ -135,13 +136,20 @@ def cloudflare_query(payload: dict[str, Any]) -> Any:
         "User-Agent": "chatgpt-control-plane-v3-query/1.0",
     }
     if action == "rest_get":
-        path = safe_path(str(payload.get("path", "")))
+        path = str(payload.get("path", ""))
+        account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+        if "{account_id}" in path:
+            if not account_id:
+                raise QueryError("CLOUDFLARE_ACCOUNT_ID unavailable for placeholder expansion")
+            path = path.replace("{account_id}", account_id)
+        path = safe_path(path)
         if not path.startswith("/client/v4/"):
             raise QueryError("Cloudflare REST path must start with /client/v4/")
         return http_json(f"https://api.cloudflare.com{path}", headers=headers)
     if action == "graphql_query":
         query = str(payload.get("query", "")).strip()
-        if not query or query.lower().startswith("mutation") or " mutation " in f" {query.lower()} ":
+        lowered = f" {query.lower()} "
+        if not query or query.lower().startswith("mutation") or " mutation " in lowered:
             raise QueryError("Cloudflare GraphQL broker accepts query operations only")
         variables = payload.get("variables", {})
         if not isinstance(variables, dict):
@@ -166,6 +174,7 @@ def worker_kaggle_read(payload: dict[str, Any]) -> Any:
     action = str(payload.get("action", "raw_read"))
     request_payload = dict(payload)
     request_payload.pop("provider", None)
+    request_payload.pop("request_id", None)
     if action == "kernel_status":
         account_id = str(payload.get("account_id", ""))
         owner = ACCOUNTS.get(account_id)
@@ -195,8 +204,21 @@ def worker_kaggle_read(payload: dict[str, Any]) -> Any:
     )
 
 
-def local_kaggle_kernel_status(payload: dict[str, Any]) -> Any:
+def resolve_kaggle_executable() -> str | None:
     executable = shutil.which("kaggle") or shutil.which("kaggle.exe")
+    if executable:
+        return executable
+    scripts = sysconfig.get_path("scripts")
+    if scripts:
+        candidate = Path(scripts) / "kaggle.exe"
+        if candidate.exists():
+            return str(candidate)
+    user_scripts = Path(os.environ.get("APPDATA", "")) / "Python" / f"Python{sys.version_info.major}{sys.version_info.minor}" / "Scripts" / "kaggle.exe"
+    return str(user_scripts) if user_scripts.exists() else None
+
+
+def local_kaggle_kernel_status(payload: dict[str, Any]) -> Any:
+    executable = resolve_kaggle_executable()
     if not executable:
         raise QueryError("local Kaggle CLI unavailable")
     kernel_ref = str(payload.get("kernel_ref", ""))
