@@ -36,3 +36,18 @@ def test_non_read_capability_must_not_be_expired() -> None:
     source = WORKER.read_text(encoding="utf-8")
     assert "function notExpired" in source
     assert "if (!notExpired(env)) return false" in source
+
+
+def test_live_phase_probe_uses_bounded_sanitized_log() -> None:
+    source = WORKER.read_text(encoding="utf-8")
+    assert "export async function kaggleLiveLog" in source
+    assert "export async function kagglePhaseProbe" in source
+    assert "ListKernelSessionOutput" in source
+    assert "CGP_PHASE:" in source
+    assert "sanitizeLog" in source
+    assert "maxChars > 200_000" in source
+
+
+def test_phase_probe_does_not_require_labels_or_metrics() -> None:
+    source = WORKER.read_text(encoding="utf-8")
+    assert "labels_or_metrics_required: false" in source
