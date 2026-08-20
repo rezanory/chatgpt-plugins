@@ -97,11 +97,12 @@ def provider_config(provider: str) -> tuple[str, dict[str, str]]:
 
 def safe_relative_path(path: str) -> str:
     value = path.strip()
-    if not value.startswith("/"):
-        value = "/" + value
     parsed = urllib.parse.urlsplit(value)
     if parsed.scheme or parsed.netloc:
         raise ControlPlaneHttpError("absolute URLs are forbidden")
+    if not value.startswith("/"):
+        value = "/" + value
+        parsed = urllib.parse.urlsplit(value)
     if ".." in parsed.path.split("/"):
         raise ControlPlaneHttpError("parent path traversal is forbidden")
     return urllib.parse.urlunsplit(("", "", parsed.path, parsed.query, ""))
