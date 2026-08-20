@@ -54,9 +54,15 @@ jobs:
           $part1=(Get-Content -Raw 'scripts/v623_p0_sandbox.py.b64.part01').Trim()
           $raw=[Convert]::FromBase64String($part0+$part1)
           $template=Join-Path $env:RUNNER_TEMP 'v623_p0_sandbox.py'
-          [IO.File]::WriteAllBytes($template,$raw)
+          $text=[Text.Encoding]::UTF8.GetString($raw)
+          $bad='raise RuntimeError "Shadow materialization count mismatch"'
+          $good='raise RuntimeError("Shadow materialization count mismatch")'
+          $count=([regex]::Matches($text,[regex]::Escape($bad))).Count
+          if($count -ne 1){throw "Expected exactly one known P0 syntax typo; found $count"}
+          $text=$text.Replace($bad,$good)
+          [IO.File]::WriteAllText($template,$text,[Text.UTF8Encoding]::new($false))
           & $python -m py_compile $template
-          if($LASTEXITCODE -ne 0){throw 'P0 template does not compile'}
+          if($LASTEXITCODE -ne 0){throw 'P0 template does not compile after known-typo repair'}
           $audit=@'
           import ast,re,sys
           from pathlib import Path
