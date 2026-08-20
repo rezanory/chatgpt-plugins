@@ -103,20 +103,6 @@ jobs:
           "CGP_QUERY_EXIT=$code" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           exit 0
 
-      - name: Publish sanitized query receipt
-        shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference='Stop'
-          $raw=Get-Content -Raw $env:CGP_QUERY_RESULT
-          if($raw.Length -gt 50000){$raw=$raw.Substring(0,50000)+"`n<truncated>"}
-          $status=if($env:CGP_QUERY_EXIT -eq '0'){'PASS'}else{'DIAGNOSTIC'}
-          $body="## CONTROL PLANE V3 QUERY $status`n`n- Run: ``$env:GITHUB_RUN_ID```n- Query implementation: ``$env:CGP_QUERY_IMPL_SHA```n- Read only: ``true```n- Cloudflare deploy: ``false```n- Kaggle compute launched: ``false```n`n``````json`n$raw`n``````"
-          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $p=@{body=$body}|ConvertTo-Json -Compress
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
-
       - name: Upload query receipt
         uses: actions/upload-artifact@v4
         with:
@@ -124,6 +110,41 @@ jobs:
           path: ${{ env.CGP_QUERY_RESULT }}
           if-no-files-found: error
           retention-days: 7
+
+      - name: Publish sanitized query receipt
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, pathlib, urllib.request
+          raw=pathlib.Path(os.environ['CGP_QUERY_RESULT']).read_text(encoding='utf-8-sig')
+          if len(raw)>50000:
+              raw=raw[:50000]+'\n<truncated>'
+          status='PASS' if os.environ.get('CGP_QUERY_EXIT')=='0' else 'DIAGNOSTIC'
+          body=(f"## CONTROL PLANE V3 QUERY {status}\n\n"
+                f"- Run: `{os.environ['GITHUB_RUN_ID']}`\n"
+                f"- Query implementation: `{os.environ['CGP_QUERY_IMPL_SHA']}`\n"
+                "- Read only: `true`\n- Cloudflare deploy: `false`\n"
+                "- Kaggle compute launched: `false`\n\n```json\n"+raw+"\n```")
+          payload=json.dumps({'body':body},ensure_ascii=True).encode('utf-8')
+          url=f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/33/comments"
+          req=urllib.request.Request(url,data=payload,method='POST',headers={
+              'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],
+              'Accept':'application/vnd.github+json',
+              'X-GitHub-Api-Version':'2022-11-28',
+              'Content-Type':'application/json; charset=utf-8',
+              'User-Agent':'control-plane-v3-query-journal/1.0',
+          })
+          with urllib.request.urlopen(req,timeout=30) as response:
+              if response.status not in (200,201):
+                  raise SystemExit(f'journal HTTP {response.status}')
+          '@
+          $script | & $python -
+          if($LASTEXITCODE -ne 0){throw 'sanitized query receipt publish failed'}
 
       - name: Publish query workflow diagnostic
         if: failure()
