@@ -1,6 +1,6 @@
 const GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const GITHUB_OIDC_JWKS = "https://token.actions.githubusercontent.com/.well-known/jwks";
-const READ_AUDIENCE = "cgp-control-plane-v3";
+const CONTROL_PLANE_AUDIENCE = "cgp-control-plane-v3";
 const ACTION_AUDIENCE = "cgp-control-plane-v3-action";
 const TRUSTED_REPOSITORY = "rezanory/chatgpt-plugins";
 const TRUSTED_REPOSITORY_ID = "1337215097";
@@ -118,7 +118,7 @@ async function verifyBrokerOidc(
   const verified = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, signingInput);
   if (!verified) throw new Error("GitHub OIDC JWT signature invalid");
 
-  const expectedAudience = kind === "read" ? READ_AUDIENCE : ACTION_AUDIENCE;
+  const expectedAudience = kind === "read" ? CONTROL_PLANE_AUDIENCE : ACTION_AUDIENCE;
   const expectedWorkflow = kind === "read" ? READ_WORKFLOW_REF : ACTION_WORKFLOW_REF;
   const now = Math.floor(Date.now() / 1000);
   const exp = numericClaim(claims, "exp");
