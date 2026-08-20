@@ -4,8 +4,8 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 from .capability_registry import SafetyClass
 
@@ -98,11 +98,13 @@ _SENSITIVE_FLAG = re.compile(
     re.I,
 )
 _TOKEN_VALUE = re.compile(
-    r"(KGAT_[A-Za-z0-9_-]+|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|Bearer\s+[A-Za-z0-9._~+/=-]+)",
+    r"(KGAT_[A-Za-z0-9_-]+|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|"
+    r"Bearer\s+[A-Za-z0-9._~+/=-]+)",
     re.I,
 )
 _LABELED_SECRET = re.compile(
-    r"((?:token|secret|password|passwd|authorization|api[-_]?key|access[-_]?key)\s*[:=]\s*)(\S+)",
+    r"((?:token|secret|password|passwd|authorization|api[-_]?key|access[-_]?key)\s*[:=]\s*)"
+    r"(\S+)",
     re.I,
 )
 
@@ -125,7 +127,8 @@ def _validate_read_argv(args: Sequence[str]) -> None:
         )
     if not words & _READ_HINTS:
         raise CliTransportError(
-            "read-only classification is not proven for this command; use an explicit non-read safety class"
+            "read-only classification is not proven for this command; "
+            "use an explicit non-read safety class"
         )
 
 
