@@ -3,6 +3,8 @@ import type { AccountId, WorkerEnv } from "./kaggle";
 export type ControlPlaneV3Env = WorkerEnv & {
   CGP_PROJECT_CONTROL_TOKEN?: string;
   CGP_CONTROL_SCOPES?: string;
+  CGP_CONTROL_EXPIRES_AT?: string;
+  CGP_CONTROL_ALLOW_GLOBAL_SCOPE?: string;
 };
 
 export type KaggleOperationClass =
@@ -24,6 +26,7 @@ export interface KaggleCallSpec {
 const API_ROOT = "https://api.kaggle.com/v1";
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_.]{0,127}$/;
 const METHOD = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
+const READ_METHOD = /^(Get|List|Search|Query|Read|Fetch|Download|Check|Describe|Validate)/;
 
 const ACCOUNTS: Record<
   AccountId,
@@ -89,6 +92,31 @@ function scopes(env: ControlPlaneV3Env): Set<string> {
   );
 }
 
+function notExpired(env: ControlPlaneV3Env): boolean {
+  const raw = env.CGP_CONTROL_EXPIRES_AT?.trim();
+  if (!raw) return false;
+  const numeric = Number(raw);
+  let expiresAt = Number.isFinite(numeric)
+    ? numeric < 10_000_000_000
+      ? numeric * 1000
+      : numeric
+    : Date.parse(raw);
+  if (!Number.isFinite(expiresAt)) return false;
+  return Date.now() < expiresAt;
+}
+
+function scopeMatches(env: ControlPlaneV3Env, requiredScope: string): boolean {
+  const allowed = scopes(env);
+  if (allowed.has(requiredScope)) return true;
+  for (const candidate of allowed) {
+    if (candidate === "*" && env.CGP_CONTROL_ALLOW_GLOBAL_SCOPE === "1") return true;
+    if (!candidate.endsWith(":*")) continue;
+    const prefix = candidate.slice(0, -1);
+    if (requiredScope.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 export function controlPlaneCapabilityAuthorized(
   request: Request,
   env: ControlPlaneV3Env,
@@ -97,8 +125,8 @@ export function controlPlaneCapabilityAuthorized(
   const token = env.CGP_PROJECT_CONTROL_TOKEN?.trim();
   if (!token || token.length < 32) return false;
   if (request.headers.get("authorization") !== `Bearer ${token}`) return false;
-  const allowed = scopes(env);
-  return allowed.has("*") || allowed.has(requiredScope);
+  if (!notExpired(env)) return false;
+  return scopeMatches(env, requiredScope);
 }
 
 function defaultScope(spec: KaggleCallSpec): string {
@@ -111,6 +139,11 @@ function validateSpec(spec: KaggleCallSpec): void {
   if (!(spec.accountId in ACCOUNTS)) throw new Error("unknown Kaggle account");
   if (!spec.body || typeof spec.body !== "object" || Array.isArray(spec.body)) {
     throw new Error("Kaggle body must be an object");
+  }
+  if (spec.operationClass === "read" && !READ_METHOD.test(spec.method)) {
+    throw new Error(
+      `Kaggle method ${spec.method} is not read-like; use a scoped non-read operation class`,
+    );
   }
 }
 
@@ -172,7 +205,7 @@ export async function kaggleScopedCall(
   if (spec.operationClass === "read") return execute(env, spec);
   const requiredScope = spec.requiredScope?.trim() || defaultScope(spec);
   if (!controlPlaneCapabilityAuthorized(request, env, requiredScope)) {
-    throw new Error(`Control-plane capability missing required scope: ${requiredScope}`);
+    throw new Error(`Control-plane capability missing/expired scope: ${requiredScope}`);
   }
   return execute(env, spec);
 }
