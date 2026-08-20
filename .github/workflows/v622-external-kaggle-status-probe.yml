@@ -1,90 +1,19 @@
-name: v622-external-kaggle-status-probe
+name: v622-external-kaggle-status-probe-retired-after-incident
 
+# Root cause captured: NIH sample dataset is mounted without the assumed sample.zip.
+# This diagnostic workflow is retired before the governed repair run.
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/v622-external-kaggle-status-probe.yml'
-  issue_comment:
-    types: [created]
   workflow_dispatch:
 
 permissions:
   contents: read
-  issues: write
-
-concurrency:
-  group: v622-external-status-probe
-  cancel-in-progress: false
 
 jobs:
-  probe:
-    if: ${{ github.event_name != 'issue_comment' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_EXTERNAL_KAGGLE_STATUS') }}
+  retired:
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 15
-    environment: cloudflare-production
     steps:
-      - name: Checkout trusted main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Deploy read-only external status worker
+      - name: Confirm incident probe retired
         shell: powershell
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          $ErrorActionPreference='Stop'
-          $id=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
-          if(-not $id -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials missing'}
-          Write-Host "::add-mask::$id"
-          $env:CLOUDFLARE_ACCOUNT_ID=$id
-          [IO.File]::AppendAllText($env:GITHUB_ENV,"V622_CF_ACCOUNT_ID=$id`n",[Text.UTF8Encoding]::new($false))
-          Push-Location deploy/cloudflare-worker-free
-          try {
-            npm install --no-audit --no-fund
-            if($LASTEXITCODE-ne 0){throw 'npm failed'}
-            npm run check
-            if($LASTEXITCODE-ne 0){throw 'typecheck failed'}
-            npx wrangler deploy src/v622-external-kaggle-status-worker.ts --name chatgpt-kaggle-gateway
-            if($LASTEXITCODE-ne 0){throw 'status worker deploy failed'}
-          } finally { Pop-Location }
-
-      - name: Read live Kaggle external status and traceback
-        shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference='Stop'
-          $uri='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/external-kernel-status'
-          $v=$null;$last='not ready'
-          for($i=1;$i-le 12;$i++){
-            try{$v=Invoke-RestMethod -Uri $uri -Method Get -TimeoutSec 90;if($v.project-ne'PNEUMONIA V6.2.2'){throw 'stale status'};break}catch{$last=$_.Exception.Message;Start-Sleep 5}
-          }
-          if(-not $v){throw "status probe failed: $last"}
-          $v|ConvertTo-Json -Depth 30|Write-Host
-          $excerpt=[string]$v.error_excerpt
-          if($excerpt.Length -gt 6000){$excerpt=$excerpt.Substring($excerpt.Length-6000)}
-          $body="## V6.2.2 EXTERNAL KAGGLE INCIDENT`n`n- Kernel: ``$($v.kernel_ref)```n- Live Kaggle status: ``$($v.status)```n- Terminal: ``$($v.terminal)```n- Complete: ``$($v.complete)```n- Incident review needed: ``$($v.needs_incident_review)```n- Probe launched Kaggle compute: ``false```n- Error excerpt:`n``````text`n$excerpt`n```````n- Probe run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
-          $p=@{body=$body}|ConvertTo-Json -Compress
-          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
-
-      - name: Restore canonical Worker
-        if: always()
-        shell: powershell
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          $ErrorActionPreference='Continue'
-          if($env:V622_CF_ACCOUNT_ID){
-            $env:CLOUDFLARE_ACCOUNT_ID=$env:V622_CF_ACCOUNT_ID
-            Push-Location deploy/cloudflare-worker-free
-            try{npx wrangler deploy}finally{Pop-Location}
-          }
+          Write-Host 'External Kaggle incident root cause is already captured in Issue 18.'
+          Write-Host 'No Cloudflare/Kaggle/model mutation is performed.'
