@@ -18,17 +18,18 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-
 SENSITIVE_KEY = re.compile(
     r"(token|secret|password|passwd|private[_-]?key|access[_-]?key|authorization|cookie)",
     re.I,
 )
 TOKEN_VALUE = re.compile(
-    r"(KGAT_[A-Za-z0-9_-]+|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|Bearer\s+[A-Za-z0-9._~+/=-]+)",
+    r"(KGAT_[A-Za-z0-9_-]+|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|"
+    r"Bearer\s+[A-Za-z0-9._~+/=-]+)",
     re.I,
 )
 LABELED_SECRET = re.compile(
-    r"((?:token|secret|password|passwd|authorization|api[-_]?key|access[-_]?key)\s*[:=]\s*)(\S+)",
+    r"((?:token|secret|password|passwd|authorization|api[-_]?key|access[-_]?key)\s*[:=]\s*)"
+    r"(\S+)",
     re.I,
 )
 SAFETY_CLASSES = {"read", "write", "compute", "destructive", "privileged"}
@@ -117,11 +118,9 @@ def require_safety(provider: str, operation_class: str, method: str, relative_pa
         raise ControlPlaneHttpError("GET/HEAD operations must be classified as read")
 
     if operation_class == "read":
-        if method in {"GET", "HEAD"}:
-            pass
-        elif method == "POST" and parsed_path == GRAPHQL_PATH[provider]:
-            pass
-        else:
+        read_method = method in {"GET", "HEAD"}
+        graphql_read = method == "POST" and parsed_path == GRAPHQL_PATH[provider]
+        if not (read_method or graphql_read):
             raise ControlPlaneHttpError(
                 "read operations may use GET/HEAD, or POST only to the provider GraphQL endpoint"
             )
@@ -169,8 +168,9 @@ def request_api(args: argparse.Namespace) -> Any:
             detail: Any = json.loads(raw) if raw else {}
         except json.JSONDecodeError:
             detail = raw[:20_000]
+        detail_json = json.dumps(redact(detail), ensure_ascii=False)[:12000]
         raise ControlPlaneHttpError(
-            f"{args.provider} HTTP {exc.code}: {json.dumps(redact(detail), ensure_ascii=False)[:12000]}"
+            f"{args.provider} HTTP {exc.code}: {detail_json}"
         ) from exc
 
 
@@ -199,7 +199,8 @@ def main() -> int:
     try:
         result = request_api(args)
     except (ControlPlaneHttpError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        error = json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+        print(error, file=sys.stderr)
         return 2
     print(json.dumps({"ok": True, "result": redact(result)}, indent=2, ensure_ascii=False))
     return 0
