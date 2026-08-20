@@ -17,7 +17,7 @@ const newReport="'discovered_image_count':int(len(index)),'labeled_image_index_c
 if(!script.includes(oldReport)) throw new Error('v2 NIH load-report lineage not found');
 script=script.replace(oldReport,newReport);
 const oldSummary="'incident_repair':'NIH_MOUNT_PACKAGING_V2','prior_failed_kernel_version':1,'repair_scope':'NIH input packaging discovery only; frozen model/policy unchanged'";
-const newSummary="'incident_repair':'NIH_LABELED_ALIAS_V3','prior_failed_kernel_version':2,'repair_scope':'NIH labeled Image Index alias resolution only; byte-identical aliases accepted deterministically; frozen model/policy unchanged'";
+const newSummary="'incident_repair':'NIH_LABELED_ALIAS_V3','prior_failed_kernel_version':2,'repair_scope':'NIH labeled Image Index alias resolution only; byte-identical aliases accepted deterministically; frozen model/policy unchanged','nih_alias_resolution':{'labeled_image_index_count':int(len(labeled_names)),'indexed_images':int(len(index)),'alias_count':int(alias_count),'missing_count':int(len(missing)),'conflict_count':int(len(conflicts))}";
 if(!script.includes(oldSummary)) throw new Error('v2 external summary lineage not found');
 script=script.replace(oldSummary,newSummary);
 const sha=crypto.createHash('sha256').update(Buffer.from(script,'utf8')).digest('hex');
