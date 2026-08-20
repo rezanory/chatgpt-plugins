@@ -72,8 +72,50 @@ Rules:
 - Read operations may run without extra confirmation when relevant.
 - Write/compute/destructive operations require current user authorization for the concrete task and scope.
 - Destructive or privileged actions require explicit scope and must not be inferred from a read request.
+- Unknown/new CLI commands are not blocked: if read-only status cannot be proven, route them with an explicit non-read safety class and grant.
+- Generic REST read-POST is GraphQL-only; normal REST mutations cannot be relabeled as read.
+- Raw Kaggle REST methods classified as read must be read-like (`Get/List/Search/Query/Read/Fetch/Download/Check/Describe/Validate`).
 - Never turn a transport/probe error into a compute failure.
 - Never rerun Kaggle compute automatically after an ambiguous failure.
+
+## Live execution observability
+
+Every newly generated Kaggle compute script should emit coarse, non-sensitive phase markers to stdout:
+
+```text
+CGP_PHASE:BOOTSTRAP
+CGP_PHASE:DATA_AUDIT
+CGP_PHASE:TRAIN_SEED_42_HEAD
+CGP_PHASE:TRAIN_SEED_42_FINETUNE
+CGP_PHASE:CAL_SEED_42
+CGP_PHASE:SHADOW_SEED_42
+CGP_PHASE:TRAIN_SEED_2026_HEAD
+CGP_PHASE:TRAIN_SEED_2026_FINETUNE
+CGP_PHASE:CAL_SEED_2026
+CGP_PHASE:SHADOW_SEED_2026
+CGP_PHASE:RECEIPT
+CGP_PHASE:COMPLETE
+```
+
+Rules:
+
+- phase markers must not contain labels, predictions, secrets, metrics, thresholds, or patient/sample identifiers;
+- use the read-only `kagglePhaseProbe`/`kaggleLiveLog` path to inspect the bounded live log where Kaggle exposes it;
+- sanitize bounded log output before returning it to the control plane;
+- absence of a phase marker is `PHASE_UNKNOWN`, not a compute failure;
+- phase telemetry must never be used to tune a locked-test execution.
+
+This lets the operator distinguish TRAIN vs CAL vs SHADOW without reopening evidence or waiting for the terminal receipt.
+
+## Ephemeral capability contract
+
+Non-read Cloudflare/Kaggle bridge capabilities must be time-bounded and narrowly scoped:
+
+- `CGP_PROJECT_CONTROL_TOKEN`: random masked token, minimum 32 characters;
+- `CGP_CONTROL_SCOPES`: exact or hierarchical scopes such as `kaggle:compute:kernels.KernelsApiService:SaveKernel` or `kaggle:compute:kernels.KernelsApiService:*`;
+- `CGP_CONTROL_EXPIRES_AT`: required expiry in epoch seconds/milliseconds or an ISO timestamp;
+- global `*` scope is rejected unless `CGP_CONTROL_ALLOW_GLOBAL_SCOPE=1` is separately and explicitly set;
+- capability cleanup/revocation is mandatory after the operation.
 
 ## Kaggle scientific governance
 
@@ -91,7 +133,7 @@ For ML projects with locked test data:
 - Prefer separate Worker names/routes for temporary bridges.
 - If the canonical Worker name must be reused, acquire the global mutation concurrency lock.
 - Record predecessor version when possible.
-- Use ephemeral, masked, narrowly scoped capability tokens.
+- Use ephemeral, masked, narrowly scoped, expiring capability tokens.
 - Cleanup must delete temporary capability and restore canonical Worker.
 - Restore must be attested by health/route/version checks; cleanup failure must fail visibly.
 
