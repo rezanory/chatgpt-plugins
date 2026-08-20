@@ -1,3 +1,12 @@
+from .capability_registry import (
+    CapabilityFamily,
+    SafetyClass,
+    capability_families,
+    preferred_transports,
+    providers,
+    supports_safety_class,
+)
+from .capability_router import CapabilityRouteError, RouteDecision, route_capability
 from .ids import new_job_id, slugify
 from .models import (
     ACTIVE_STATUSES,
@@ -26,6 +35,8 @@ __all__ = [
     "AccountDescriptor",
     "AccountLease",
     "AccountScheduler",
+    "CapabilityFamily",
+    "CapabilityRouteError",
     "ComputeJobSpec",
     "ComputeProvider",
     "FailureCategory",
@@ -39,10 +50,17 @@ __all__ = [
     "RepairPolicy",
     "RepoPolicy",
     "RepositoryNotAllowed",
+    "RouteDecision",
+    "SafetyClass",
     "SourceRef",
     "TaskSpec",
     "TransportAdapter",
     "TransportReceipt",
+    "capability_families",
     "new_job_id",
+    "preferred_transports",
+    "providers",
+    "route_capability",
     "slugify",
+    "supports_safety_class",
 ]
