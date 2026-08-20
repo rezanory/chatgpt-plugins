@@ -83,6 +83,17 @@ jobs:
           & $env:CONTROL_PLANE_V3_PYTHON -m compileall -q packages plugins scripts/control_plane_discover.py scripts/control_plane_http.py
           if($LASTEXITCODE -ne 0){throw 'Python compile failed'}
 
+      - name: Bootstrap portable Git for tests
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap_git.ps1
+          if($LASTEXITCODE -ne 0){throw 'portable Git bootstrap failed'}
+          git --version
+          if($LASTEXITCODE -ne 0){throw 'Git unavailable after bootstrap'}
+
       - name: Python test suite
         shell: powershell
         run: |
