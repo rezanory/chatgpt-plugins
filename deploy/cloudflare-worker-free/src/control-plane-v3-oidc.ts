@@ -1,18 +1,23 @@
 const GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const GITHUB_OIDC_JWKS = "https://token.actions.githubusercontent.com/.well-known/jwks";
-const CONTROL_PLANE_AUDIENCE = "cgp-control-plane-v3";
+const READ_AUDIENCE = "cgp-control-plane-v3";
+const ACTION_AUDIENCE = "cgp-control-plane-v3-action";
 const TRUSTED_REPOSITORY = "rezanory/chatgpt-plugins";
 const TRUSTED_REPOSITORY_ID = "1337215097";
 const TRUSTED_OWNER_ID = "62356000";
 const TRUSTED_ACTOR_ID = "62356000";
 const TRUSTED_REF = "refs/heads/main";
-const TRUSTED_WORKFLOW_REF =
+const READ_WORKFLOW_REF =
   "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main";
+const ACTION_WORKFLOW_REF =
+  "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-action.yml@refs/heads/main";
 const CLOCK_SKEW_SECONDS = 60;
 
 type Rec = Record<string, unknown>;
+type BrokerKind = "read" | "action";
 
 export interface VerifiedGitHubOidcIdentity {
+  broker_kind: BrokerKind;
   repository: string;
   repository_id: string;
   repository_owner_id: string;
@@ -64,9 +69,9 @@ function numericClaim(claims: Rec, key: string): number {
   return numeric;
 }
 
-function audienceMatches(value: unknown): boolean {
-  if (typeof value === "string") return value === CONTROL_PLANE_AUDIENCE;
-  return Array.isArray(value) && value.some((item) => item === CONTROL_PLANE_AUDIENCE);
+function audienceMatches(value: unknown, expected: string): boolean {
+  if (typeof value === "string") return value === expected;
+  return Array.isArray(value) && value.some((item) => item === expected);
 }
 
 async function signingKey(kid: string): Promise<CryptoKey> {
@@ -91,7 +96,10 @@ async function signingKey(kid: string): Promise<CryptoKey> {
   );
 }
 
-export async function verifyGitHubReadBrokerOidc(request: Request): Promise<VerifiedGitHubOidcIdentity> {
+async function verifyBrokerOidc(
+  request: Request,
+  kind: BrokerKind,
+): Promise<VerifiedGitHubOidcIdentity> {
   const authorization = request.headers.get("authorization") ?? "";
   if (!authorization.startsWith("Bearer ")) throw new Error("GitHub OIDC bearer token missing");
   const token = authorization.slice(7).trim();
@@ -110,15 +118,19 @@ export async function verifyGitHubReadBrokerOidc(request: Request): Promise<Veri
   const verified = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, signingInput);
   if (!verified) throw new Error("GitHub OIDC JWT signature invalid");
 
+  const expectedAudience = kind === "read" ? READ_AUDIENCE : ACTION_AUDIENCE;
+  const expectedWorkflow = kind === "read" ? READ_WORKFLOW_REF : ACTION_WORKFLOW_REF;
   const now = Math.floor(Date.now() / 1000);
   const exp = numericClaim(claims, "exp");
   const nbf = claims.nbf === undefined ? now : numericClaim(claims, "nbf");
   const iat = numericClaim(claims, "iat");
   if (exp < now - CLOCK_SKEW_SECONDS) throw new Error("GitHub OIDC JWT expired");
   if (nbf > now + CLOCK_SKEW_SECONDS) throw new Error("GitHub OIDC JWT not active yet");
-  if (iat > now + CLOCK_SKEW_SECONDS || iat < now - 15 * 60) throw new Error("GitHub OIDC JWT issue time outside read-broker window");
+  if (iat > now + CLOCK_SKEW_SECONDS || iat < now - 15 * 60) {
+    throw new Error("GitHub OIDC JWT issue time outside broker window");
+  }
   if (claims.iss !== GITHUB_OIDC_ISSUER) throw new Error("GitHub OIDC issuer mismatch");
-  if (!audienceMatches(claims.aud)) throw new Error("GitHub OIDC audience mismatch");
+  if (!audienceMatches(claims.aud, expectedAudience)) throw new Error("GitHub OIDC audience mismatch");
 
   const repository = claimString(claims, "repository");
   const repositoryId = claimString(claims, "repository_id");
@@ -136,13 +148,16 @@ export async function verifyGitHubReadBrokerOidc(request: Request): Promise<Veri
   if (ownerId !== TRUSTED_OWNER_ID || actorId !== TRUSTED_ACTOR_ID) {
     throw new Error("GitHub OIDC owner/actor identity mismatch");
   }
-  if (workflowRef !== TRUSTED_WORKFLOW_REF || ref !== TRUSTED_REF || eventName !== "issue_comment") {
+  if (workflowRef !== expectedWorkflow || ref !== TRUSTED_REF || eventName !== "issue_comment") {
     throw new Error("GitHub OIDC workflow/ref/event mismatch");
   }
   if (claims.repository_visibility !== "private") throw new Error("GitHub OIDC repository visibility mismatch");
-  if (!/^\d+$/.test(runId) || !/^[0-9a-f]{40}$/.test(sha)) throw new Error("GitHub OIDC run/sha claim invalid");
+  if (!/^\d+$/.test(runId) || !/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error("GitHub OIDC run/sha claim invalid");
+  }
 
   return {
+    broker_kind: kind,
     repository,
     repository_id: repositoryId,
     repository_owner_id: ownerId,
@@ -153,4 +168,16 @@ export async function verifyGitHubReadBrokerOidc(request: Request): Promise<Veri
     sha,
     event_name: eventName,
   };
+}
+
+export function verifyGitHubReadBrokerOidc(
+  request: Request,
+): Promise<VerifiedGitHubOidcIdentity> {
+  return verifyBrokerOidc(request, "read");
+}
+
+export function verifyGitHubActionBrokerOidc(
+  request: Request,
+): Promise<VerifiedGitHubOidcIdentity> {
+  return verifyBrokerOidc(request, "action");
 }
