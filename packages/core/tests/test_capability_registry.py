@@ -55,9 +55,14 @@ def test_cloudflare_registry_covers_resource_families() -> None:
 
 
 def test_github_registry_has_native_connector_and_api_fallback() -> None:
-    assert preferred_transports("github", "pull_requests_reviews_merge_queue")[0] == "native_connector"
+    transports = preferred_transports("github", "pull_requests_reviews_merge_queue")
+    assert transports[0] == "native_connector"
     assert "gh_api" in preferred_transports("github", "raw_api")
-    assert supports_safety_class("github", "actions_workflows_runs_jobs_artifacts_caches_runners", SafetyClass.COMPUTE)
+    assert supports_safety_class(
+        "github",
+        "actions_workflows_runs_jobs_artifacts_caches_runners",
+        SafetyClass.COMPUTE,
+    )
 
 
 def test_read_only_search_is_not_misclassified_as_compute() -> None:
