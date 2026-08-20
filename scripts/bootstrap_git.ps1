@@ -22,7 +22,7 @@ function Probe-Git([string]$PathValue, [string]$Source) {
   & $PathValue --version
   if ($LASTEXITCODE -ne 0) { return $false }
   Add-GitHubPath ([IO.Path]::GetDirectoryName($PathValue))
-  Write-Host "CONTROL_PLANE_V3_GIT_READY=$Source:$PathValue"
+  Write-Host "CONTROL_PLANE_V3_GIT_READY=${Source}:$PathValue"
   return $true
 }
 
