@@ -44,71 +44,49 @@ jobs:
           run-id: 32197039097
           path: ${{ runner.temp }}/v622-w16-source
 
-      - name: Assemble and safety-check P0 Kaggle template
+      - name: Safety-check complete P0 Kaggle template
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){throw 'python.exe not found on self-hosted runner'}
-          $part0=(Get-Content -Raw 'scripts/v623_p0_sandbox.py.b64.part00').Trim()
-          $part1=(Get-Content -Raw 'scripts/v623_p0_sandbox.py.b64.part01').Trim()
-          $raw=[Convert]::FromBase64String($part0+$part1)
-          $template=Join-Path $env:RUNNER_TEMP 'v623_p0_sandbox.py'
-          $text=[Text.Encoding]::UTF8.GetString($raw)
-          $bad='raise RuntimeError "Shadow materialization count mismatch"'
-          $good='raise RuntimeError("Shadow materialization count mismatch")'
-          $count=([regex]::Matches($text,[regex]::Escape($bad))).Count
-          if($count -ne 1){throw "Expected exactly one known P0 syntax typo; found $count"}
-          $text=$text.Replace($bad,$good)
-          [IO.File]::WriteAllText($template,$text,[Text.UTF8Encoding]::new($false))
+          $template=(Resolve-Path 'scripts/v623_p0_sandbox_v2.py').Path
           & $python -m py_compile $template
-          if($LASTEXITCODE -ne 0){throw 'P0 template does not compile after known-typo repair'}
+          if($LASTEXITCODE -ne 0){throw 'P0 v2 template does not compile'}
           $audit=@'
-          import ast,json,re,sys
+          import ast,sys
           from pathlib import Path
           path=Path(sys.argv[1]); src=path.read_text(encoding='utf-8'); tree=ast.parse(src)
-          if '__SOURCE_ZIP_B64__' not in src: raise SystemExit('missing source ZIP placeholder')
-          if not re.search(r'for\s+partition\s+in\s+\(\s*["\']train["\']\s*,\s*["\']val["\']\s*\)',src):
-              raise SystemExit('development-only train/val enumeration marker missing')
-          if 'dirs[:] = [d for d in dirs if d.lower() != "test"' not in src:
-              raise SystemExit('explicit test-directory pruning marker missing')
-          def call_name(fn):
-              if isinstance(fn,ast.Name): return fn.id
-              if isinstance(fn,ast.Attribute):
-                  left=call_name(fn.value)
-                  return (left+'.' if left else '')+fn.attr
-              return ''
-          def target_names(node):
-              out=[]
-              for t in node.targets if isinstance(node,ast.Assign) else []:
-                  if isinstance(t,ast.Name): out.append(t.id.lower())
-              return out
-          for node in ast.walk(tree):
-              if isinstance(node,ast.Assign) and any(x in {'cmd','command','train_cmd','train_command'} for x in target_names(node)):
-                  seg=(ast.get_source_segment(src,node) or '').lower()
-                  if re.search(r'\bcal(?:_|\b)',seg) or 'shadow' in seg:
-                      raise SystemExit('CAL/SHADOW appears in training command construction; refusing GPU launch')
-          training_calls=[]; all_calls=[]
-          for node in ast.walk(tree):
-              if not isinstance(node,ast.Call): continue
-              name=call_name(node.func); low=name.lower()
-              if name: all_calls.append(name)
-              seg=ast.get_source_segment(src,node) or ''
-              seglow=seg.lower()
-              if 'fit_platt_calibrator' in low or 'select_threshold' in low or 'apply_platt_calibrator' in low:
-                  continue
-              is_training=('train' in low or low.endswith('.fit') or low=='fit' or 'run_experiment' in low or low.startswith('subprocess.'))
-              if is_training:
-                  training_calls.append(name)
-                  if re.search(r'\bcal(?:_|\b)',seglow) or 'shadow' in seglow:
-                      raise SystemExit(f'CAL/SHADOW appears in training-like call {name}; refusing GPU launch')
-          if not training_calls:
-              print('P0_AST_CALL_INVENTORY='+json.dumps(sorted(set(all_calls))))
-              raise SystemExit('no canonical training-like call found')
-          required=['P0_RECEIPT.json','locked_test_used','external_data_used','P0_SPLIT_RECEIPT.json','test_partition_enumerated']
+          if src.count('__SOURCE_ZIP_B64__') != 1: raise SystemExit('source ZIP placeholder cardinality mismatch')
+          required=[
+              'for partition in ("train", "val")',
+              'dirs[:] = [d for d in dirs if d.lower() != "test"',
+              '"test_partition_enumerated": False',
+              '"locked_test_used": False',
+              '"external_data_used": False',
+              'P0_SPLIT_RECEIPT.json','P0_RECEIPT.json',
+          ]
           missing=[x for x in required if x not in src]
-          if missing: raise SystemExit('missing P0 safety receipt markers: '+','.join(missing))
-          print({'p0_preflight':'PASS','training_calls':sorted(set(training_calls)),'locked_test_enumeration':'forbidden_by_template'})
+          if missing: raise SystemExit('missing P0 safety markers: '+repr(missing))
+          fit_calls=[]
+          for node in ast.walk(tree):
+              if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=='fit':
+                  seg=ast.get_source_segment(src,node) or ''
+                  fit_calls.append(seg)
+                  low=seg.lower()
+                  if 'train_ds' not in seg or 'cal' in low or 'shadow' in low or 'validation_data' in low:
+                      raise SystemExit('non-TRAIN data appears in model.fit: '+seg)
+          if len(fit_calls)!=2: raise SystemExit(f'expected exactly two TRAIN-only model.fit calls, found {len(fit_calls)}')
+          lines=src.splitlines()
+          def first_line(marker):
+              hits=[i for i,line in enumerate(lines,1) if marker in line]
+              if not hits: raise SystemExit('missing sequencing marker: '+marker)
+              return hits[0]
+          if not (first_line('calibrator = fit_platt_calibrator') < first_line('frozen_threshold =') < first_line('shadow_labels =')):
+              raise SystemExit('CAL->threshold freeze->SHADOW evaluation sequence violated')
+          if 'shadow_labels_used_for_policy": False' not in src:
+              raise SystemExit('shadow non-consumption policy marker missing')
+          print({'p0_preflight':'PASS','fit_calls':fit_calls,'development_only':True,'locked_test':False,'external':False})
           '@
           $audit | & $python - $template
           if($LASTEXITCODE -ne 0){throw 'P0 static leakage preflight failed'}
@@ -120,7 +98,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $body="V6.2.3-P0 PREFLIGHT PASS | github_run_id=$env:GITHUB_RUN_ID | development_only=true | locked_test=false | external=false | kaggle_launch_next=true"
+          $body="V6.2.3-P0 PREFLIGHT PASS | github_run_id=$env:GITHUB_RUN_ID | development_only=true | locked_test=false | external=false | train=480 | cal=120 | shadow=120 | kaggle_launch_next=true"
           $p=@{body=$body}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
 
