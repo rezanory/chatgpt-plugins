@@ -4,7 +4,6 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
-
 from chatgpt_plugins_core import CliTransportError, SafetyClass
 from chatgpt_plugins_core.cli_transport import run_provider_cli
 
