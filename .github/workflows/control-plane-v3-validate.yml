@@ -87,6 +87,7 @@ jobs:
             scripts/control_plane_discover.py `
             scripts/control_plane_http.py `
             scripts/control_plane_query.py `
+            scripts/v623_p0_split_diagnostic.py `
             plugins/kaggle/src/chatgpt_plugin_kaggle/kaggle_cli.py
           if($LASTEXITCODE -ne 0){throw 'Ruff failed'}
 
@@ -95,7 +96,8 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           & $env:CONTROL_PLANE_V3_PYTHON -m compileall -q packages plugins `
-            scripts/control_plane_discover.py scripts/control_plane_http.py scripts/control_plane_query.py
+            scripts/control_plane_discover.py scripts/control_plane_http.py scripts/control_plane_query.py `
+            scripts/v623_p0_split_diagnostic.py
           if($LASTEXITCODE -ne 0){throw 'Python compile failed'}
 
       - name: Bootstrap portable Git for tests
