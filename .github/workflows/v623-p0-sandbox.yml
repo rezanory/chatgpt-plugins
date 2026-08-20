@@ -64,7 +64,7 @@ jobs:
           & $python -m py_compile $template
           if($LASTEXITCODE -ne 0){throw 'P0 template does not compile after known-typo repair'}
           $audit=@'
-          import ast,re,sys
+          import ast,json,re,sys
           from pathlib import Path
           path=Path(sys.argv[1]); src=path.read_text(encoding='utf-8'); tree=ast.parse(src)
           if '__SOURCE_ZIP_B64__' not in src: raise SystemExit('missing source ZIP placeholder')
@@ -88,10 +88,11 @@ jobs:
                   seg=(ast.get_source_segment(src,node) or '').lower()
                   if re.search(r'\bcal(?:_|\b)',seg) or 'shadow' in seg:
                       raise SystemExit('CAL/SHADOW appears in training command construction; refusing GPU launch')
-          training_calls=[]
+          training_calls=[]; all_calls=[]
           for node in ast.walk(tree):
               if not isinstance(node,ast.Call): continue
               name=call_name(node.func); low=name.lower()
+              if name: all_calls.append(name)
               seg=ast.get_source_segment(src,node) or ''
               seglow=seg.lower()
               if 'fit_platt_calibrator' in low or 'select_threshold' in low or 'apply_platt_calibrator' in low:
@@ -102,6 +103,7 @@ jobs:
                   if re.search(r'\bcal(?:_|\b)',seglow) or 'shadow' in seglow:
                       raise SystemExit(f'CAL/SHADOW appears in training-like call {name}; refusing GPU launch')
           if not training_calls:
+              print('P0_AST_CALL_INVENTORY='+json.dumps(sorted(set(all_calls))))
               raise SystemExit('no canonical training-like call found')
           required=['P0_RECEIPT.json','locked_test_used','external_data_used','P0_SPLIT_RECEIPT.json','test_partition_enumerated']
           missing=[x for x in required if x not in src]
