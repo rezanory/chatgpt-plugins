@@ -52,7 +52,9 @@ if (-not $SkipCloudflare) {
   try {
     npm install --no-audit --no-fund
     if ($LASTEXITCODE -ne 0) { throw 'Wrangler bootstrap failed' }
-    npx wrangler --version
+    $nodeBin = Join-Path $worker 'node_modules\.bin'
+    Add-GitHubPath $nodeBin
+    wrangler --version
     if ($LASTEXITCODE -ne 0) { throw 'Wrangler version probe failed' }
   } finally {
     Pop-Location
