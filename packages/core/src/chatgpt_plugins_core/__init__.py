@@ -7,6 +7,7 @@ from .capability_registry import (
     supports_safety_class,
 )
 from .capability_router import CapabilityRouteError, RouteDecision, route_capability
+from .cli_transport import CliReceipt, CliTransportError, run_provider_cli
 from .ids import new_job_id, slugify
 from .models import (
     ACTIVE_STATUSES,
@@ -37,6 +38,8 @@ __all__ = [
     "AccountScheduler",
     "CapabilityFamily",
     "CapabilityRouteError",
+    "CliReceipt",
+    "CliTransportError",
     "ComputeJobSpec",
     "ComputeProvider",
     "FailureCategory",
@@ -61,6 +64,7 @@ __all__ = [
     "preferred_transports",
     "providers",
     "route_capability",
+    "run_provider_cli",
     "slugify",
     "supports_safety_class",
 ]
