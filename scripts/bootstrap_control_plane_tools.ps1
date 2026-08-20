@@ -21,10 +21,19 @@ function Resolve-Python {
 }
 
 function Add-PythonUserScripts([string]$PythonExe) {
-  $userBase = (& $PythonExe -m site --user-base | Select-Object -First 1).Trim()
-  if (-not $userBase) { throw 'Unable to resolve Python user base' }
-  $scripts = Join-Path $userBase 'Scripts'
-  if (Test-Path $scripts) { Add-GitHubPath $scripts }
+  $scripts = (& $PythonExe -c "import sysconfig; print(sysconfig.get_path('scripts', scheme=sysconfig.get_preferred_scheme('user')))" | Select-Object -First 1).Trim()
+  if (-not $scripts) { throw 'Unable to resolve Python user Scripts path' }
+  if (-not (Test-Path $scripts)) {
+    $userBase = (& $PythonExe -m site --user-base | Select-Object -First 1).Trim()
+    $fallback = Get-ChildItem $userBase -Directory -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -match '^Python\d+$' } |
+      ForEach-Object { Join-Path $_.FullName 'Scripts' } |
+      Where-Object { Test-Path $_ } |
+      Select-Object -First 1
+    if ($fallback) { $scripts = $fallback }
+  }
+  if (-not (Test-Path $scripts)) { throw "Python user Scripts path does not exist: $scripts" }
+  Add-GitHubPath $scripts
   return $scripts
 }
 
@@ -35,13 +44,10 @@ if (-not $SkipKaggle) {
   $pythonScripts = Add-PythonUserScripts $python
   & $python -c "import kagglehub; print('kagglehub', getattr(kagglehub, '__version__', 'unknown'))"
   if ($LASTEXITCODE -ne 0) { throw 'kagglehub import/version probe failed' }
-  $kaggle = Get-Command kaggle.exe -ErrorAction SilentlyContinue
-  if (-not $kaggle) {
-    $candidate = Join-Path $pythonScripts 'kaggle.exe'
-    if (Test-Path $candidate) { $kaggle = Get-Item $candidate }
-  }
-  if (-not $kaggle) { throw 'kaggle.exe not found after installation' }
-  & $kaggle.Source --version
+  $kaggleCommand = Get-Command kaggle.exe -ErrorAction SilentlyContinue
+  $kaggleExe = if ($kaggleCommand) { $kaggleCommand.Source } else { Join-Path $pythonScripts 'kaggle.exe' }
+  if (-not (Test-Path $kaggleExe)) { throw "kaggle.exe not found after installation: $kaggleExe" }
+  & $kaggleExe --version
   if ($LASTEXITCODE -ne 0) { throw 'Kaggle CLI version probe failed' }
 }
 
