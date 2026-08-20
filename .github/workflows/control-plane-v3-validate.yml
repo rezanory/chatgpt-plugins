@@ -104,13 +104,13 @@ jobs:
           $ErrorActionPreference='Stop'
           & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap_git.ps1
           if($LASTEXITCODE -ne 0){throw 'portable Git bootstrap failed'}
-          git --version
-          if($LASTEXITCODE -ne 0){throw 'Git unavailable after bootstrap'}
 
       - name: Python test suite
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
+          git --version
+          if($LASTEXITCODE -ne 0){throw 'Git unavailable after bootstrap'}
           & $env:CONTROL_PLANE_V3_PYTHON -m pytest
           if($LASTEXITCODE -ne 0){throw 'pytest failed'}
 
