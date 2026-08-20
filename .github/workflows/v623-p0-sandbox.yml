@@ -70,19 +70,33 @@ jobs:
           if '__SOURCE_ZIP_B64__' not in src: raise SystemExit('missing source ZIP placeholder')
           if not re.search(r'for\s+partition\s+in\s+\(\s*["\']train["\']\s*,\s*["\']val["\']\s*\)',src):
               raise SystemExit('development-only train/val enumeration marker missing')
-          fit_calls=[]
+          if 'dirs[:] = [d for d in dirs if d.lower() != "test"' not in src:
+              raise SystemExit('explicit test-directory pruning marker missing')
+          def call_name(fn):
+              if isinstance(fn,ast.Name): return fn.id
+              if isinstance(fn,ast.Attribute):
+                  left=call_name(fn.value)
+                  return (left+'.' if left else '')+fn.attr
+              return ''
+          training_calls=[]
           for node in ast.walk(tree):
-              if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=='fit':
-                  seg=ast.get_source_segment(src,node) or ''
-                  fit_calls.append(seg)
-                  low=seg.lower()
-                  if re.search(r'\bcal(?:_|\b)',low) or 'shadow' in low:
-                      raise SystemExit('CAL/SHADOW appears inside model.fit; refusing GPU launch')
-          if not fit_calls: raise SystemExit('no model.fit call found')
-          required=['P0_RECEIPT.json','locked_test_used','external_data_used','P0_SPLIT_RECEIPT.json']
+              if not isinstance(node,ast.Call): continue
+              name=call_name(node.func); low=name.lower()
+              seg=ast.get_source_segment(src,node) or ''
+              seglow=seg.lower()
+              if 'fit_platt_calibrator' in low or 'select_threshold' in low or 'apply_platt_calibrator' in low:
+                  continue
+              is_training=('train' in low or low.endswith('.fit') or low=='fit' or 'run_experiment' in low or low=='subprocess.run')
+              if is_training:
+                  training_calls.append(name)
+                  if re.search(r'\bcal(?:_|\b)',seglow) or 'shadow' in seglow:
+                      raise SystemExit(f'CAL/SHADOW appears in training-like call {name}; refusing GPU launch')
+          if not training_calls:
+              raise SystemExit('no canonical training-like call found')
+          required=['P0_RECEIPT.json','locked_test_used','external_data_used','P0_SPLIT_RECEIPT.json','test_partition_enumerated']
           missing=[x for x in required if x not in src]
           if missing: raise SystemExit('missing P0 safety receipt markers: '+','.join(missing))
-          print({'p0_preflight':'PASS','fit_calls':len(fit_calls),'locked_test_enumeration':'forbidden_by_template'})
+          print({'p0_preflight':'PASS','training_calls':training_calls,'locked_test_enumeration':'forbidden_by_template'})
           '@
           $audit | & $python - $template
           if($LASTEXITCODE -ne 0){throw 'P0 static leakage preflight failed'}
