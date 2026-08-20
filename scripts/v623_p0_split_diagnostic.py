@@ -25,6 +25,10 @@ TARGETS = {
 NEAR_DUP_HAMMING = 2
 MAX_ATTEMPTS = 120
 SEED_BASE = 623100
+PATIENT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"person[_-]?(\d+)", re.IGNORECASE), "person"),
+    (re.compile(r"(?:normal2[-_])?im[-_]?(\d+)", re.IGNORECASE), "im"),
+)
 
 
 @dataclass(frozen=True)
@@ -49,17 +53,14 @@ def write_json(path: Path, value: object) -> None:
 
 
 def patient_id_from_filename(name: str, class_name: str) -> str:
-    stem = Path(name).stem
-    if class_name == "PNEUMONIA":
-        match = re.match(r"^(person\d+)(?:_|$)", stem, re.I)
+    del class_name
+    stem = Path(name).stem.lower()
+    for pattern, prefix in PATIENT_PATTERNS:
+        match = pattern.search(stem)
         if match:
-            return match.group(1).lower()
-    for pattern in (r"^(NORMAL2-IM-\d+)", r"^(IM-\d+)"):
-        match = re.match(pattern, stem, re.I)
-        if match:
-            return match.group(1).lower()
-    # Fail closed to a single-image group rather than accidentally merging unrelated patients.
-    return f"fallback:{class_name.lower()}:{stem.lower()}"
+            return f"{prefix}_{match.group(1)}"
+    normalized = re.sub(r"[^a-z0-9]+", "_", stem).strip("_")
+    return f"fallback_{normalized}"
 
 
 def looks_dev_root(root: Path) -> bool:
@@ -253,7 +254,7 @@ for class_name in ("NORMAL", "PNEUMONIA"):
         "patient_groups": len(groups),
         "group_size_histogram": dict(sorted(histogram.items())),
         "max_group_size": max(histogram) if histogram else 0,
-        "fallback_patient_groups": sum(patient_id.startswith("fallback:") for patient_id in groups),
+        "fallback_patient_groups": sum(patient_id.startswith("fallback_") for patient_id in groups),
     }
 
 print("CGP_PHASE:SPLIT_DIAGNOSTIC_SEARCH", flush=True)
