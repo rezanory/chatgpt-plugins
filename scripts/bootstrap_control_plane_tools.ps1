@@ -14,13 +14,35 @@ function Add-GitHubPath([string]$PathValue) {
   }
 }
 
-if (-not $SkipKaggle) {
+function Resolve-Python {
   $python = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
   if (-not $python) { $python = (Get-Command python -ErrorAction Stop).Source }
+  return $python
+}
+
+function Add-PythonUserScripts([string]$PythonExe) {
+  $userBase = (& $PythonExe -m site --user-base | Select-Object -First 1).Trim()
+  if (-not $userBase) { throw 'Unable to resolve Python user base' }
+  $scripts = Join-Path $userBase 'Scripts'
+  if (Test-Path $scripts) { Add-GitHubPath $scripts }
+  return $scripts
+}
+
+if (-not $SkipKaggle) {
+  $python = Resolve-Python
   & $python -m pip install --disable-pip-version-check --upgrade kaggle kagglehub
   if ($LASTEXITCODE -ne 0) { throw 'Kaggle CLI/kagglehub bootstrap failed' }
+  $pythonScripts = Add-PythonUserScripts $python
   & $python -c "import kagglehub; print('kagglehub', getattr(kagglehub, '__version__', 'unknown'))"
-  kaggle --version
+  if ($LASTEXITCODE -ne 0) { throw 'kagglehub import/version probe failed' }
+  $kaggle = Get-Command kaggle.exe -ErrorAction SilentlyContinue
+  if (-not $kaggle) {
+    $candidate = Join-Path $pythonScripts 'kaggle.exe'
+    if (Test-Path $candidate) { $kaggle = Get-Item $candidate }
+  }
+  if (-not $kaggle) { throw 'kaggle.exe not found after installation' }
+  & $kaggle.Source --version
+  if ($LASTEXITCODE -ne 0) { throw 'Kaggle CLI version probe failed' }
 }
 
 if (-not $SkipCloudflare) {
@@ -31,6 +53,7 @@ if (-not $SkipCloudflare) {
     npm install --no-audit --no-fund
     if ($LASTEXITCODE -ne 0) { throw 'Wrangler bootstrap failed' }
     npx wrangler --version
+    if ($LASTEXITCODE -ne 0) { throw 'Wrangler version probe failed' }
   } finally {
     Pop-Location
   }
@@ -55,6 +78,7 @@ if (-not $SkipGitHubCli) {
     Add-GitHubPath $gh.Directory.FullName
   }
   gh --version
+  if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI version probe failed' }
 }
 
 Write-Host 'CONTROL_PLANE_V3_BOOTSTRAP_PASS'
