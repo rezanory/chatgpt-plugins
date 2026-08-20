@@ -1,0 +1,27 @@
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+
+const [payloadPath]=process.argv.slice(2);
+if(!payloadPath) throw new Error('usage: node v622_patch_external_payload_alias_v3.mjs <payload.ts>');
+let text=fs.readFileSync(payloadPath,'utf8');
+const m=text.match(/export const EXTERNAL_VALIDATION_SCRIPT=(.+?) as const;\n/);
+if(!m) throw new Error('EXTERNAL_VALIDATION_SCRIPT export not found');
+let script=JSON.parse(m[1]);
+const oldBlock=`image_paths=sorted(p.resolve() for p in nih_image_root.rglob('*') if p.is_file() and p.suffix.lower() in image_ext)\nif not image_paths: raise RuntimeError('NIH image discovery produced zero files')\nindex={}; duplicates=set()\nfor p in image_paths:\n    if p.name in index and index[p.name]!=p: duplicates.add(p.name)\n    else: index[p.name]=p\nif duplicates: raise RuntimeError(f'NIH duplicate image basenames: {sorted(duplicates)[:10]}')\nprint(json.dumps({'stage':'NIH_MOUNT_DISCOVERY','repair':'NIH_MOUNT_PACKAGING_V2','packaging':nih_packaging,'mount_root':str(nih_mount_root),'image_root':str(nih_image_root),'images_discovered':len(index),'labels_csv':str(nih_labels)},sort_keys=True))`;
+const newBlock=`labeled_names=sorted({Path(str(v)).name for v in nih_raw['Image Index'].dropna().astype(str) if str(v).strip()})\nif not labeled_names: raise RuntimeError('NIH sample_labels.csv contains no Image Index values')\nlabeled_set=set(labeled_names)\ncandidates={name:[] for name in labeled_names}\nfor p in sorted((q.resolve() for q in nih_image_root.rglob('*') if q.is_file() and q.suffix.lower() in image_ext),key=lambda q:str(q)):\n    if p.name in labeled_set: candidates[p.name].append(p)\nmissing=[name for name in labeled_names if not candidates[name]]\nif missing: raise RuntimeError(f'NIH labeled images missing from mounted dataset: {missing[:10]} (count={len(missing)})')\nindex={}; alias_count=0; conflicts=[]\nfor name in labeled_names:\n    paths=sorted({p for p in candidates[name]},key=lambda q:str(q))\n    if len(paths)>1:\n        digests=[(str(p),sha(p)) for p in paths]\n        distinct={d for _,d in digests}\n        if len(distinct)>1:\n            conflicts.append({'name':name,'candidates':digests})\n            continue\n        alias_count+=len(paths)-1\n    index[name]=paths[0]\nif conflicts: raise RuntimeError(f'NIH labeled basename content conflicts: {conflicts[:3]} (count={len(conflicts)})')\nprint(json.dumps({'stage':'NIH_MOUNT_DISCOVERY','repair':'NIH_LABELED_ALIAS_V3','packaging':nih_packaging,'mount_root':str(nih_mount_root),'image_root':str(nih_image_root),'labeled_image_names':len(labeled_names),'indexed_images':len(index),'alias_count':alias_count,'missing_count':len(missing),'conflict_count':len(conflicts),'labels_csv':str(nih_labels)},sort_keys=True))`;
+if(!script.includes(oldBlock)) throw new Error('expected v2 NIH duplicate-basename guard not found');
+if(script.indexOf(oldBlock)!==script.lastIndexOf(oldBlock)) throw new Error('v2 NIH duplicate-basename guard not unique');
+script=script.replace(oldBlock,newBlock);
+const oldReport="'discovered_image_count':int(len(index)),'incident_repair':'NIH_MOUNT_PACKAGING_V2','n_images'";
+const newReport="'discovered_image_count':int(len(index)),'labeled_image_index_count':int(len(labeled_names)),'alias_count':int(alias_count),'missing_count':int(len(missing)),'conflict_count':int(len(conflicts)),'incident_repair':'NIH_LABELED_ALIAS_V3','n_images'";
+if(!script.includes(oldReport)) throw new Error('v2 NIH load-report lineage not found');
+script=script.replace(oldReport,newReport);
+const oldSummary="'incident_repair':'NIH_MOUNT_PACKAGING_V2','prior_failed_kernel_version':1,'repair_scope':'NIH input packaging discovery only; frozen model/policy unchanged'";
+const newSummary="'incident_repair':'NIH_LABELED_ALIAS_V3','prior_failed_kernel_version':2,'repair_scope':'NIH labeled Image Index alias resolution only; byte-identical aliases accepted deterministically; frozen model/policy unchanged'";
+if(!script.includes(oldSummary)) throw new Error('v2 external summary lineage not found');
+script=script.replace(oldSummary,newSummary);
+const sha=crypto.createHash('sha256').update(Buffer.from(script,'utf8')).digest('hex');
+text=text.replace(m[0],`export const EXTERNAL_VALIDATION_SCRIPT=${JSON.stringify(script)} as const;\n`);
+text=text.replace(/export const EXTERNAL_VALIDATION_SCRIPT_SHA256="[0-9a-f]+" as const;/,`export const EXTERNAL_VALIDATION_SCRIPT_SHA256=${JSON.stringify(sha)} as const;`);
+fs.writeFileSync(payloadPath,text,'utf8');
+console.log(JSON.stringify({stage:'EXTERNAL_VALIDATION_PAYLOAD_ALIAS_REPAIR',incident_repair:'NIH_LABELED_ALIAS_V3',prior_failed_kernel_version:2,script_sha256:sha,repair_scope:'labeled Image Index only; byte-identical aliases canonicalized; missing/content conflicts fail hard'},null,2));
