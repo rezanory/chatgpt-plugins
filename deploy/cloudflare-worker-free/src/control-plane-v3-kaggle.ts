@@ -5,6 +5,7 @@ export type ControlPlaneV3Env = WorkerEnv & {
   CGP_CONTROL_SCOPES?: string;
   CGP_CONTROL_EXPIRES_AT?: string;
   CGP_CONTROL_ALLOW_GLOBAL_SCOPE?: string;
+  CGP_CONTROL_V3_MUTATION_ENABLED?: string;
 };
 
 export type KaggleOperationClass =
@@ -125,6 +126,7 @@ export function controlPlaneCapabilityAuthorized(
   env: ControlPlaneV3Env,
   requiredScope: string,
 ): boolean {
+  if (env.CGP_CONTROL_V3_MUTATION_ENABLED !== "1") return false;
   const token = env.CGP_PROJECT_CONTROL_TOKEN?.trim();
   if (!token || token.length < 32) return false;
   if (request.headers.get("authorization") !== `Bearer ${token}`) return false;
@@ -223,7 +225,7 @@ export async function kaggleScopedCall(
   if (spec.operationClass === "read") return execute(env, spec);
   const requiredScope = spec.requiredScope?.trim() || defaultScope(spec);
   if (!controlPlaneCapabilityAuthorized(request, env, requiredScope)) {
-    throw new Error(`Control-plane capability missing/expired scope: ${requiredScope}`);
+    throw new Error(`Control-plane capability missing/disabled/expired scope: ${requiredScope}`);
   }
   return execute(env, spec);
 }
