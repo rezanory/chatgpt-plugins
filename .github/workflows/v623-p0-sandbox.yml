@@ -1,0 +1,93 @@
+name: v623-p0-sandbox
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v623-p0-sandbox.yml'
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: v623-p0-single-model-sandbox
+  cancel-in-progress: false
+
+jobs:
+  p0:
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 420
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download exact recovered W16 source artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-selected-kernel-source
+          github-token: ${{ github.token }}
+          repository: rezanory/chatgpt-plugins
+          run-id: 32197039097
+          path: ${{ runner.temp }}/v622-w16-source
+
+      - name: Assemble and safety-check P0 Kaggle template
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){throw 'python.exe not found on self-hosted runner'}
+          $part0=(Get-Content -Raw 'scripts/v623_p0_sandbox.py.b64.part00').Trim()
+          $part1=(Get-Content -Raw 'scripts/v623_p0_sandbox.py.b64.part01').Trim()
+          $raw=[Convert]::FromBase64String($part0+$part1)
+          $template=Join-Path $env:RUNNER_TEMP 'v623_p0_sandbox.py'
+          [IO.File]::WriteAllBytes($template,$raw)
+          & $python -m py_compile $template
+          if($LASTEXITCODE -ne 0){throw 'P0 template does not compile'}
+          $audit=@'
+          import ast,re,sys
+          from pathlib import Path
+          path=Path(sys.argv[1]); src=path.read_text(encoding='utf-8'); tree=ast.parse(src)
+          if '__SOURCE_ZIP_B64__' not in src: raise SystemExit('missing source ZIP placeholder')
+          if not re.search(r'for\s+partition\s+in\s+\(\s*["\']train["\']\s*,\s*["\']val["\']\s*\)',src):
+              raise SystemExit('development-only train/val enumeration marker missing')
+          fit_calls=[]
+          for node in ast.walk(tree):
+              if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=='fit':
+                  seg=ast.get_source_segment(src,node) or ''
+                  fit_calls.append(seg)
+                  low=seg.lower()
+                  if re.search(r'\bcal(?:_|\b)',low) or 'shadow' in low:
+                      raise SystemExit('CAL/SHADOW appears inside model.fit; refusing GPU launch')
+          if not fit_calls: raise SystemExit('no model.fit call found')
+          required=['P0_RECEIPT.json','locked_test_used','external_data_used','P0_SPLIT_RECEIPT.json']
+          missing=[x for x in required if x not in src]
+          if missing: raise SystemExit('missing P0 safety receipt markers: '+','.join(missing))
+          print({'p0_preflight':'PASS','fit_calls':len(fit_calls),'locked_test_enumeration':'forbidden_by_template'})
+          '@
+          $audit | & $python - $template
+          if($LASTEXITCODE -ne 0){throw 'P0 static leakage preflight failed'}
+          "V623_P0_TEMPLATE=$template" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Launch and monitor development-only P0 on Kaggle
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          K_MASTER: ${{ secrets.CGP_KAGGLE_MASTER_TOKEN }}
+          K_KG02: ${{ secrets.CGP_KAGGLE_KG02_TOKEN }}
+          K_KG03: ${{ secrets.CGP_KAGGLE_KG03_TOKEN }}
+          K_KG04: ${{ secrets.CGP_KAGGLE_KG04_TOKEN }}
+          K_KG05: ${{ secrets.CGP_KAGGLE_KG05_TOKEN }}
+          K_KG06: ${{ secrets.CGP_KAGGLE_KG06_TOKEN }}
+          K_KG07: ${{ secrets.CGP_KAGGLE_KG07_TOKEN }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){throw 'python.exe not found on self-hosted runner'}
+          $src=Join-Path $env:RUNNER_TEMP 'v622-w16-source'
+          & $python scripts/v623_p0_control.py --source-artifact-dir $src --template $env:V623_P0_TEMPLATE
+          if($LASTEXITCODE -ne 0){throw 'V6.2.3-P0 control failed'}
