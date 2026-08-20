@@ -16,7 +16,10 @@ from typing import Any
 MAX_HTTP_BYTES = 2_000_000
 MAX_RESULT_CHARS = 200_000
 SAFE_PATH = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/?={}-]{1,4000}$")
-SECRET_KEY = re.compile(r"token|secret|password|authorization|credential|api[_-]?key|cookie|signed[_-]?url", re.I)
+SECRET_KEY = re.compile(
+    r"token|secret|password|authorization|credential|api[_-]?key|cookie|signed[_-]?url",
+    re.I,
+)
 SECRET_VALUE = re.compile(
     r"KGAT_[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._~-]+|Basic\s+[A-Za-z0-9+/=]+|"
     r"X-Goog-Signature=|X-Amz-Signature=",
@@ -52,7 +55,11 @@ def sanitize(value: Any, depth: int = 0) -> Any:
         result: dict[str, Any] = {}
         for key, child in list(value.items())[:2000]:
             text_key = str(key)
-            result[text_key] = "<redacted>" if SECRET_KEY.search(text_key) else sanitize(child, depth + 1)
+            result[text_key] = (
+                "<redacted>"
+                if SECRET_KEY.search(text_key)
+                else sanitize(child, depth + 1)
+            )
         return result
     return str(value)
 
@@ -62,7 +69,11 @@ def bounded(value: Any) -> Any:
     encoded = json.dumps(clean, ensure_ascii=False, separators=(",", ":"))
     if len(encoded) <= MAX_RESULT_CHARS:
         return clean
-    return {"truncated": True, "original_json_chars": len(encoded), "preview": encoded[:MAX_RESULT_CHARS]}
+    return {
+        "truncated": True,
+        "original_json_chars": len(encoded),
+        "preview": encoded[:MAX_RESULT_CHARS],
+    }
 
 
 def safe_path(path: str) -> str:
@@ -213,7 +224,13 @@ def resolve_kaggle_executable() -> str | None:
         candidate = Path(scripts) / "kaggle.exe"
         if candidate.exists():
             return str(candidate)
-    user_scripts = Path(os.environ.get("APPDATA", "")) / "Python" / f"Python{sys.version_info.major}{sys.version_info.minor}" / "Scripts" / "kaggle.exe"
+    user_scripts = (
+        Path(os.environ.get("APPDATA", ""))
+        / "Python"
+        / f"Python{sys.version_info.major}{sys.version_info.minor}"
+        / "Scripts"
+        / "kaggle.exe"
+    )
     return str(user_scripts) if user_scripts.exists() else None
 
 
@@ -234,7 +251,11 @@ def local_kaggle_kernel_status(payload: dict[str, Any]) -> Any:
     output = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
     if completed.returncode != 0:
         raise QueryError(f"local Kaggle status failed: {sanitize(output.strip())}")
-    return {"transport": "local_kaggle_cli", "kernel_ref": kernel_ref, "output": output.strip()}
+    return {
+        "transport": "local_kaggle_cli",
+        "kernel_ref": kernel_ref,
+        "output": output.strip(),
+    }
 
 
 def kaggle_query(payload: dict[str, Any]) -> Any:
@@ -248,7 +269,11 @@ def kaggle_query(payload: dict[str, Any]) -> Any:
             local = local_kaggle_kernel_status(payload)
             return {"worker_read_error": str(worker_error), "fallback": local}
         except QueryError as local_error:
-            raise QueryError(f"Kaggle read unavailable: worker={worker_error}; local={local_error}") from local_error
+            message = (
+                f"Kaggle read unavailable: worker={worker_error}; "
+                f"local={local_error}"
+            )
+            raise QueryError(message) from local_error
 
 
 def execute(payload: dict[str, Any]) -> dict[str, Any]:
@@ -281,7 +306,7 @@ def main() -> int:
         raise QueryError("query payload must be an object")
     try:
         result = execute(payload)
-    except Exception as exc:  # noqa: BLE001 - broker must emit bounded structured diagnostics
+    except Exception as exc:  # noqa: BLE001 - broker emits bounded structured diagnostics
         result = {
             "ok": False,
             "request_id": str(payload.get("request_id", ""))[:120],
@@ -289,8 +314,15 @@ def main() -> int:
             "read_only": True,
             "error": str(sanitize(str(exc)))[:4000],
         }
-    Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"ok": result.get("ok"), "provider": result.get("provider"), "out": args.out}))
+    Path(args.out).write_text(
+        json.dumps(result, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {"ok": result.get("ok"), "provider": result.get("provider"), "out": args.out}
+        )
+    )
     return 0 if result.get("ok") else 2
 
 
