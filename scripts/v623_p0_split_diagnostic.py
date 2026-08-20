@@ -109,10 +109,12 @@ def groups_for(class_name: str) -> dict[str, list[Sample]]:
 
 
 def exact_subset(groups: dict[str, list[Sample]], target: int, seed: int) -> list[str] | None:
-    items = [(patient_id, len(rows)) for patient_id, rows in groups.items()]
-    random.Random(seed).shuffle(items)
+    patient_ids = sorted(groups)
+    rng = random.Random(seed)
+    rng.shuffle(patient_ids)
     parent: dict[int, tuple[int, str] | None] = {0: None}
-    for patient_id, size in items:
+    for patient_id in patient_ids:
+        size = len(groups[patient_id])
         for total in sorted(list(parent), reverse=True):
             new_total = total + size
             if new_total > target or new_total in parent:
@@ -141,7 +143,7 @@ def build_assignment(seed: int) -> tuple[dict[str, list[Sample]] | None, str | N
             chosen = exact_subset(
                 remaining,
                 TARGETS[class_name][split_name],
-                seed + class_index * 1009 + split_index * 101,
+                seed + class_index * 1000 + split_index * 101,
             )
             if chosen is None:
                 return None, f"subset_fail:{class_name}:{split_name}"
