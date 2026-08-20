@@ -40,6 +40,12 @@ function base64UrlBytes(value: string): Uint8Array {
   return bytes;
 }
 
+function concreteBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 function decodeJsonSegment(value: string): Rec {
   const bytes = base64UrlBytes(value);
   return object(JSON.parse(new TextDecoder().decode(bytes)));
@@ -99,8 +105,8 @@ export async function verifyGitHubReadBrokerOidc(request: Request): Promise<Veri
   if (header.alg !== "RS256" || header.typ !== "JWT") throw new Error("GitHub OIDC JWT algorithm/type invalid");
 
   const key = await signingKey(kid);
-  const signingInput = new TextEncoder().encode(`${segments[0]}.${segments[1]}`);
-  const signature = base64UrlBytes(segments[2]);
+  const signingInput = concreteBuffer(new TextEncoder().encode(`${segments[0]}.${segments[1]}`));
+  const signature = concreteBuffer(base64UrlBytes(segments[2]));
   const verified = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, signingInput);
   if (!verified) throw new Error("GitHub OIDC JWT signature invalid");
 
