@@ -1,0 +1,62 @@
+name: v622-final-closure
+
+on:
+  workflow_dispatch:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  closeout:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.number == 18 && github.event.comment.body == 'V622_FINAL_CLOSURE_RUN') }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 10
+    steps:
+      - name: Verify complete immutable finalization chain
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $all=@();$page=1
+          do{$batch=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments?per_page=100&page=$page" -Headers $h;$all+=@($batch);$page++}while(@($batch).Count -eq 100)
+          $text=($all|ForEach-Object{[string]$_.body}) -join "`n"
+          $required=@(
+            'FINAL_FREEZE_MANIFEST PASS.*2313023819c9eec669d835b99dcc2524b03bb0da236c2ec8f98c4e1221948414',
+            'FINAL_FREEZE_RECONCILIATION PASS[\s\S]*99a319c8d397342aaefd3c15e0eb8f968a973738f55ef97925a2a16da8c485d8',
+            'LOCKBOX HARDENING PASS[\s\S]*Workflow mutation markers found: `0`[\s\S]*Remaining mutators: `none`',
+            'OFFICIAL LOCKED TEST PASS[\s\S]*Completion SHA-256: `2ecc67f4268f812604e51db5b46d2ece36f9de12ff7baf3cf0bbbc8df4a58ada`',
+            'EXTERNAL VALIDATION PASS[\s\S]*Next permitted stage: `FINAL_CLOSURE`'
+          )
+          foreach($pattern in $required){if($text -notmatch $pattern){throw "Required closure evidence missing: $pattern"}}
+          $ext=[regex]::Match($text,'EXTERNAL VALIDATION PASS[\s\S]*?Summary SHA-256: `([0-9a-f]{64})`')
+          if(-not $ext.Success){throw 'External summary SHA not found'}
+          $externalSha=$ext.Groups[1].Value
+          $closure=[ordered]@{
+            schema_version=1
+            project='PNEUMONIA V6.2.2'
+            status='CLOSED_PASS'
+            final_freeze_manifest_sha256='2313023819c9eec669d835b99dcc2524b03bb0da236c2ec8f98c4e1221948414'
+            final_freeze_reconciliation_sha256='99a319c8d397342aaefd3c15e0eb8f968a973738f55ef97925a2a16da8c485d8'
+            official_locked_test_completion_sha256='2ecc67f4268f812604e51db5b46d2ece36f9de12ff7baf3cf0bbbc8df4a58ada'
+            external_validation_summary_sha256=$externalSha
+            training_rerun=$false
+            hpo_rerun=$false
+            confirmation_rerun=$false
+            reselection_after_locked_test=$false
+            all_model_compute_environment='Kaggle'
+            finalization_master='azadka'
+            github_role='control_bridge_journal_only'
+            remaining_gate='NONE'
+          }
+          $json=$closure|ConvertTo-Json -Depth 20
+          $path=Join-Path $env:RUNNER_TEMP 'V622_FINAL_CLOSURE.json'
+          [IO.File]::WriteAllText($path,$json+"`n",[Text.UTF8Encoding]::new($false))
+          $sha=(Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant()
+          $body="## V6.2.2 FINAL CLOSURE PASS`n`n- Status: ``CLOSED_PASS```n- FINAL_FREEZE_MANIFEST SHA-256: ``$($closure.final_freeze_manifest_sha256)```n- FINAL_FREEZE_RECONCILIATION SHA-256: ``$($closure.final_freeze_reconciliation_sha256)```n- OFFICIAL_LOCKED_TEST completion SHA-256: ``$($closure.official_locked_test_completion_sha256)```n- EXTERNAL_VALIDATION summary SHA-256: ``$externalSha```n- FINAL_CLOSURE SHA-256: ``$sha```n- Kaggle finalization master: ``azadka```n- Train/HPO/confirmation rerun: ``false / false / false```n- Reselection after locked test: ``false```n- Remaining gate: ``NONE```n- GitHub role: ``control/bridge/journal only```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
