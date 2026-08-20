@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "control_plane_http.py"
 SPEC = importlib.util.spec_from_file_location("control_plane_http", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
