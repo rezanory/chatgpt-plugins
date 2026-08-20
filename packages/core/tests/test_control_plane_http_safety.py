@@ -52,17 +52,28 @@ def test_unknown_allowed_class_fails_closed(monkeypatch: pytest.MonkeyPatch) -> 
         MODULE.allowed_classes()
 
 
-def test_redaction_is_recursive() -> None:
+def test_redaction_is_recursive_and_value_aware() -> None:
     value = {
         "token": "abc",
-        "nested": [{"password": "x", "visible": 1}],
+        "nested": [
+            {
+                "password": "x",
+                "visible": 1,
+                "generic_value": "Bearer abc.def.ghi",
+                "message": "access_key=supersecret",
+            }
+        ],
         "authorization_header": "secret",
+        "opaque": "KGAT_should_never_escape",
     }
     redacted = MODULE.redact(value)
     assert redacted["token"] == "<redacted>"
     assert redacted["nested"][0]["password"] == "<redacted>"
     assert redacted["nested"][0]["visible"] == 1
+    assert "abc.def.ghi" not in redacted["nested"][0]["generic_value"]
+    assert "supersecret" not in redacted["nested"][0]["message"]
     assert redacted["authorization_header"] == "<redacted>"
+    assert "KGAT_" not in redacted["opaque"]
 
 
 def test_environment_is_not_modified(monkeypatch: pytest.MonkeyPatch) -> None:
