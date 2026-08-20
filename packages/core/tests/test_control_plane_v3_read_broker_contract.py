@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 
@@ -25,16 +27,16 @@ def test_worker_read_broker_is_read_only_and_falls_through_to_canonical_worker()
     assert "kaggleReadCall" in source
     assert "kaggleScopedCall" not in source
     assert "canonicalWorker.fetch(request, env, ctx)" in source
-    assert 'read_only: true' in source
+    assert "read_only: true" in source
 
 
 def test_query_broker_uses_fixed_hosts_and_rejects_graphql_mutations() -> None:
     source = QUERY.read_text(encoding="utf-8")
-    assert 'https://api.github.com' in source
-    assert 'https://api.cloudflare.com' in source
-    assert 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev' in source
-    assert 'GraphQL read broker accepts query operations only' in source
-    assert 'Cloudflare GraphQL broker accepts query operations only' in source
-    assert 'provider must be github, cloudflare, or kaggle' in source
-    assert 'subprocess.run(' in source
-    assert 'shell=True' not in source
+    assert "https://api.github.com" in source
+    assert "https://api.cloudflare.com" in source
+    assert "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev" in source
+    assert "GraphQL read broker accepts query operations only" in source
+    assert "Cloudflare GraphQL broker accepts query operations only" in source
+    assert "provider must be github, cloudflare, or kaggle" in source
+    assert "subprocess.run(" in source
+    assert "shell=True" not in source
