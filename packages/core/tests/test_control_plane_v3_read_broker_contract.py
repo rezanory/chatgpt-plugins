@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[3]
 OIDC = ROOT / "deploy/cloudflare-worker-free/src/control-plane-v3-oidc.ts"
 INDEX = ROOT / "deploy/cloudflare-worker-free/src/control-plane-v3-index.ts"
