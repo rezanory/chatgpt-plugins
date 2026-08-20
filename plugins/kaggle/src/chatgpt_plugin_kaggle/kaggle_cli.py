@@ -15,9 +15,9 @@ class KaggleCliError(RuntimeError):
 def ensure_auth_present() -> None:
     """Require the current non-interactive Kaggle API token flow.
 
-    V0.1 intentionally does not use browser sessions, cookies, OAuth login, or legacy
-    username/key credentials. Every account is expected to expose exactly one GitHub Environment
-    secret named ``KAGGLE_API_TOKEN`` generated from Kaggle Settings -> API.
+    The provider accepts the official non-interactive ``KAGGLE_API_TOKEN`` path. Interactive
+    OAuth/browser login belongs in explicit bootstrap/admin workflows rather than normal provider
+    actions.
     """
 
     if os.getenv("KAGGLE_API_TOKEN"):
@@ -27,9 +27,15 @@ def ensure_auth_present() -> None:
     )
 
 
-def run_kaggle(args: list[str], *, timeout: int = 120) -> str:
-    ensure_auth_present()
-    command = ["kaggle", *args]
+def _run_cli(
+    command: list[str],
+    *,
+    timeout: int,
+    require_auth: bool,
+    max_chars: int = 30_000,
+) -> str:
+    if require_auth:
+        ensure_auth_present()
     proc = subprocess.run(
         command,
         check=False,
@@ -38,12 +44,45 @@ def run_kaggle(args: list[str], *, timeout: int = 120) -> str:
         stderr=subprocess.STDOUT,
         timeout=timeout,
         env=os.environ.copy(),
+        shell=False,
     )
-    output = sanitize_text(proc.stdout or "", max_chars=30_000)
+    output = sanitize_text(proc.stdout or "", max_chars=max_chars)
     if proc.returncode != 0:
-        rendered_command = " ".join(command[:3])
-        raise KaggleCliError(f"{rendered_command} failed ({proc.returncode}): {output[-8000:]}")
+        rendered_command = " ".join(command[:4])
+        raise KaggleCliError(
+            f"{rendered_command} failed ({proc.returncode}): {output[-8000:]}"
+        )
     return output
+
+
+def run_kaggle(args: list[str], *, timeout: int = 120) -> str:
+    """Universal authenticated Kaggle CLI transport.
+
+    This function is deliberately not restricted to a small command subset. Higher layers must
+    apply Control Plane v3 safety classification and user-authorization rules before using it for
+    write, compute, destructive, or privileged operations. ``shell=False`` prevents shell-command
+    injection; the executable is always the official ``kaggle`` CLI.
+    """
+
+    return _run_cli(["kaggle", *args], timeout=timeout, require_auth=True)
+
+
+def kaggle_version() -> str:
+    """Return the installed Kaggle CLI version without requiring credentials."""
+
+    return _run_cli(["kaggle", "--version"], timeout=30, require_auth=False, max_chars=4000)
+
+
+def kaggle_help(path: list[str] | None = None) -> str:
+    """Return current CLI help for a command path without performing a mutation."""
+
+    parts = list(path or [])
+    return _run_cli(
+        ["kaggle", *parts, "--help"],
+        timeout=45,
+        require_auth=False,
+        max_chars=30_000,
+    )
 
 
 def create_private_dataset(path: Path) -> str:
