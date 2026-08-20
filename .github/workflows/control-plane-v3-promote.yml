@@ -42,8 +42,14 @@ jobs:
           $branchSha=[string]$ref.object.sha
           if($branchSha -notmatch '^[0-9a-f]{40}$'){throw 'v3 branch SHA unavailable'}
 
-          $comments=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments?per_page=100" -Headers $h -TimeoutSec 30
-          $pass=@($comments | Where-Object {$_.body -like '## CONTROL PLANE V3 VALIDATION PASS*'}) | Select-Object -Last 1
+          $allComments=@()
+          for($page=1; $page -le 30; $page++){
+            $batch=@(Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments?per_page=100&page=$page" -Headers $h -TimeoutSec 30)
+            if($batch.Count -eq 0){break}
+            $allComments += $batch
+            if($batch.Count -lt 100){break}
+          }
+          $pass=@($allComments | Where-Object {$_.body -like '## CONTROL PLANE V3 VALIDATION PASS*'}) | Select-Object -Last 1
           if(-not $pass){throw 'no CONTROL PLANE V3 VALIDATION PASS found'}
           $match=[regex]::Match([string]$pass.body,'Validated head: `([0-9a-f]{40})`')
           if(-not $match.Success){throw 'validated head missing from latest PASS receipt'}
@@ -105,7 +111,7 @@ jobs:
             if($LASTEXITCODE -ne 0){throw 'v3 Worker deploy failed'}
           } finally { Pop-Location }
 
-      - name: Verify v3 production read plane
+      - name: Verify v3 production read and action planes
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -114,6 +120,7 @@ jobs:
           if($canonical.service -ne 'chatgpt-kaggle-gateway' -or $canonical.write_enabled -ne $false){throw 'canonical health changed after v3 promotion'}
           $v3=Invoke-RestMethod -Uri "$base/control-plane/v3/healthz" -Method Get -TimeoutSec 30
           if($v3.service -ne 'chatgpt-control-plane-v3' -or $v3.github_oidc_read_broker -ne $true){throw 'v3 OIDC read broker health failed'}
+          if($v3.github_oidc_action_broker -ne $true){throw 'v3 OIDC action broker health failed'}
           if($v3.mutation_default_enabled -ne $false){throw 'v3 mutation default must remain disabled'}
           try{
             Invoke-WebRequest -UseBasicParsing -Uri "$base/control/v6-2-3/p0/status" -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 30 | Out-Null
@@ -129,7 +136,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $body="## CONTROL PLANE V3 PRODUCTION PROMOTION PASS`n`n- Run: ``$env:GITHUB_RUN_ID```n- Deployed head: ``$env:CGP_V3_PROMOTE_SHA```n- P0 terminal: ``true```n- P0 capability cleanup/canonical restore attested before promotion: ``true```n- Canonical Worker write_enabled: ``false```n- GitHub OIDC read broker: ``ready```n- Mutation default enabled: ``false``"
+          $body="## CONTROL PLANE V3 PRODUCTION PROMOTION PASS`n`n- Run: ``$env:GITHUB_RUN_ID```n- Deployed head: ``$env:CGP_V3_PROMOTE_SHA```n- P0 terminal: ``true```n- P0 capability cleanup/canonical restore attested before promotion: ``true```n- Canonical Worker write_enabled: ``false```n- GitHub OIDC read broker: ``ready```n- GitHub OIDC action broker: ``ready```n- Mutation default enabled: ``false``"
           $p=@{body=$body}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
 
