@@ -1,0 +1,42 @@
+name: v622-final-closure-after-external
+
+on:
+  workflow_run:
+    workflows: ['v622-external-validation']
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+
+jobs:
+  dispatch-closure:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 8
+    steps:
+      - name: Verify external PASS receipt then dispatch final closure once
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $repo=$env:GITHUB_REPOSITORY
+          $ready=$false
+          for($attempt=1;$attempt-le 12;$attempt++){
+            $all=@();$page=1
+            do{$batch=Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/issues/18/comments?per_page=100&page=$page" -Headers $h;$all+=@($batch);$page++}while(@($batch).Count-eq100)
+            $text=($all|ForEach-Object{[string]$_.body})-join "`n"
+            if($text-match '## V6\.2\.2 EXTERNAL VALIDATION PASS[\s\S]*Next permitted stage: `FINAL_CLOSURE`'){$ready=$true;break}
+            Start-Sleep -Seconds 5
+          }
+          if(-not $ready){throw 'Successful external workflow completed without durable EXTERNAL VALIDATION PASS receipt'}
+          if($text-match '## V6\.2\.2 FINAL CLOSURE PASS'){Write-Host 'FINAL_CLOSURE already present; no dispatch.';exit 0}
+          $runs=Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/workflows/v622-final-closure.yml/runs?per_page=20" -Headers $h
+          $active=@($runs.workflow_runs|Where-Object{$_.status-in@('queued','in_progress','pending','waiting','requested')})
+          if($active.Count-gt0){Write-Host "Existing final-closure run retained: $($active[0].id)";exit 0}
+          $p=@{ref='main'}|ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/workflows/v622-final-closure.yml/dispatches" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
+          Write-Host 'V622_FINAL_CLOSURE_AUTO_DISPATCHED'
