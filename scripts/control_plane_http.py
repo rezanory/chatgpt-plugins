@@ -3,6 +3,7 @@
 
 This is not a general-purpose HTTP client. Hosts are fixed by provider, credential values are read
 only from environment variables, and non-read operations require an explicit safety-class grant.
+A POST classified as read is accepted only for the provider's GraphQL endpoint.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ SENSITIVE_KEY = re.compile(
     re.I,
 )
 SAFETY_CLASSES = {"read", "write", "compute", "destructive", "privileged"}
+GRAPHQL_PATH = {"github": "/graphql", "cloudflare": "/graphql"}
 
 
 class ControlPlaneHttpError(RuntimeError):
@@ -31,7 +33,11 @@ class ControlPlaneHttpError(RuntimeError):
 
 def allowed_classes() -> set[str]:
     raw = os.environ.get("CONTROL_PLANE_ALLOWED_CLASSES", "read")
-    return {item.strip().lower() for item in re.split(r"[\s,]+", raw) if item.strip()}
+    values = {item.strip().lower() for item in re.split(r"[\s,]+", raw) if item.strip()}
+    unknown = values - SAFETY_CLASSES
+    if unknown:
+        raise ControlPlaneHttpError(f"unknown allowed safety classes: {sorted(unknown)}")
+    return values
 
 
 def redact(value: Any) -> Any:
@@ -85,15 +91,26 @@ def safe_relative_path(path: str) -> str:
     return urllib.parse.urlunsplit(("", "", parsed.path, parsed.query, ""))
 
 
-def require_safety(operation_class: str, method: str) -> None:
+def require_safety(provider: str, operation_class: str, method: str, relative_path: str) -> None:
     operation_class = operation_class.lower()
     if operation_class not in SAFETY_CLASSES:
         raise ControlPlaneHttpError(f"invalid safety class: {operation_class}")
     method = method.upper()
+    parsed_path = urllib.parse.urlsplit(relative_path).path.rstrip("/") or "/"
+
     if method in {"GET", "HEAD"} and operation_class != "read":
         raise ControlPlaneHttpError("GET/HEAD operations must be classified as read")
-    if operation_class == "read" and method not in {"GET", "HEAD", "POST"}:
-        raise ControlPlaneHttpError("read operations may only use GET/HEAD or GraphQL-style POST")
+
+    if operation_class == "read":
+        if method in {"GET", "HEAD"}:
+            pass
+        elif method == "POST" and parsed_path == GRAPHQL_PATH[provider]:
+            pass
+        else:
+            raise ControlPlaneHttpError(
+                "read operations may use GET/HEAD, or POST only to the provider GraphQL endpoint"
+            )
+
     if operation_class not in allowed_classes():
         raise ControlPlaneHttpError(
             f"safety class {operation_class!r} is not granted by CONTROL_PLANE_ALLOWED_CLASSES"
@@ -114,9 +131,9 @@ def read_body(args: argparse.Namespace) -> bytes | None:
 
 def request_api(args: argparse.Namespace) -> Any:
     method = args.method.upper()
-    require_safety(args.operation_class, method)
-    base, headers = provider_config(args.provider)
     relative = safe_relative_path(args.path)
+    require_safety(args.provider, args.operation_class, method, relative)
+    base, headers = provider_config(args.provider)
     url = base + relative
     body = read_body(args)
     if body is not None:
@@ -153,14 +170,15 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=120)
     args = parser.parse_args()
 
-    # argparse.FileType returns an open file. Convert to a small shim with read_text semantics.
     if args.body_file is not None:
         content = args.body_file.read()
         args.body_file.close()
+
         class _Body:
             def read_text(self, encoding: str = "utf-8") -> str:
                 del encoding
                 return content
+
         args.body_file = _Body()
 
     try:
