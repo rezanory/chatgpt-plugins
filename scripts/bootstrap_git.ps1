@@ -37,6 +37,15 @@ $cacheBase = if ($env:RUNNER_TOOL_CACHE) {
 $cached = Find-Git $cacheBase
 if ($cached -and (Probe-Git $cached.FullName 'cache')) { exit 0 }
 
+$legacyRoots = @(
+  (Join-Path $env:RUNNER_TEMP 'control-plane-v3-mingit'),
+  (Join-Path $env:RUNNER_TEMP 'control-plane-v3-mingit-cache')
+)
+foreach ($legacyRoot in $legacyRoots) {
+  $legacyGit = Find-Git $legacyRoot
+  if ($legacyGit -and (Probe-Git $legacyGit.FullName 'legacy-cache')) { exit 0 }
+}
+
 $headers = @{ 'User-Agent' = 'chatgpt-control-plane-v3-bootstrap' }
 if ($env:GITHUB_TOKEN) { $headers.Authorization = "Bearer $env:GITHUB_TOKEN" }
 
