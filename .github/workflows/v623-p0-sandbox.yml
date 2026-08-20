@@ -78,6 +78,16 @@ jobs:
                   left=call_name(fn.value)
                   return (left+'.' if left else '')+fn.attr
               return ''
+          def target_names(node):
+              out=[]
+              for t in node.targets if isinstance(node,ast.Assign) else []:
+                  if isinstance(t,ast.Name): out.append(t.id.lower())
+              return out
+          for node in ast.walk(tree):
+              if isinstance(node,ast.Assign) and any(x in {'cmd','command','train_cmd','train_command'} for x in target_names(node)):
+                  seg=(ast.get_source_segment(src,node) or '').lower()
+                  if re.search(r'\bcal(?:_|\b)',seg) or 'shadow' in seg:
+                      raise SystemExit('CAL/SHADOW appears in training command construction; refusing GPU launch')
           training_calls=[]
           for node in ast.walk(tree):
               if not isinstance(node,ast.Call): continue
@@ -86,7 +96,7 @@ jobs:
               seglow=seg.lower()
               if 'fit_platt_calibrator' in low or 'select_threshold' in low or 'apply_platt_calibrator' in low:
                   continue
-              is_training=('train' in low or low.endswith('.fit') or low=='fit' or 'run_experiment' in low or low=='subprocess.run')
+              is_training=('train' in low or low.endswith('.fit') or low=='fit' or 'run_experiment' in low or low.startswith('subprocess.'))
               if is_training:
                   training_calls.append(name)
                   if re.search(r'\bcal(?:_|\b)',seglow) or 'shadow' in seglow:
@@ -96,7 +106,7 @@ jobs:
           required=['P0_RECEIPT.json','locked_test_used','external_data_used','P0_SPLIT_RECEIPT.json','test_partition_enumerated']
           missing=[x for x in required if x not in src]
           if missing: raise SystemExit('missing P0 safety receipt markers: '+','.join(missing))
-          print({'p0_preflight':'PASS','training_calls':training_calls,'locked_test_enumeration':'forbidden_by_template'})
+          print({'p0_preflight':'PASS','training_calls':sorted(set(training_calls)),'locked_test_enumeration':'forbidden_by_template'})
           '@
           $audit | & $python - $template
           if($LASTEXITCODE -ne 0){throw 'P0 static leakage preflight failed'}
