@@ -146,7 +146,12 @@ def build_assignment(seed: int) -> tuple[dict[str, list[Sample]] | None, str | N
                 return None, f"subset_fail:{class_name}:{split_name}"
             for patient_id in chosen:
                 assignment[split_name].extend(remaining[patient_id])
-            remaining = {patient_id: rows for patient_id, rows in remaining.items() if patient_id not in set(chosen)}
+            chosen_set = set(chosen)
+            remaining = {
+                patient_id: rows
+                for patient_id, rows in remaining.items()
+                if patient_id not in chosen_set
+            }
     return assignment, None
 
 
@@ -176,7 +181,14 @@ def audit(assignment: dict[str, list[Sample]]) -> dict:
         for right in names[index + 1 :]:
             overlap = sorted(patient_sets[left] & patient_sets[right])
             if overlap:
-                patient_overlap.append({"a": left, "b": right, "count": len(overlap), "examples": overlap[:10]})
+                patient_overlap.append(
+                    {
+                        "a": left,
+                        "b": right,
+                        "count": len(overlap),
+                        "examples": overlap[:10],
+                    }
+                )
 
     flat: list[tuple[str, Sample, str, int]] = []
     for split_name, rows in assignment.items():
