@@ -84,8 +84,10 @@ jobs:
             packages/core/tests/test_cli_transport.py `
             packages/core/tests/test_control_plane_http_safety.py `
             packages/core/tests/test_control_plane_v3_worker_contract.py `
+            packages/core/tests/test_control_plane_v3_read_broker_contract.py `
             scripts/control_plane_discover.py `
             scripts/control_plane_http.py `
+            scripts/control_plane_query.py `
             plugins/kaggle/src/chatgpt_plugin_kaggle/kaggle_cli.py
           if($LASTEXITCODE -ne 0){throw 'Ruff failed'}
 
@@ -93,7 +95,8 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          & $env:CONTROL_PLANE_V3_PYTHON -m compileall -q packages plugins scripts/control_plane_discover.py scripts/control_plane_http.py
+          & $env:CONTROL_PLANE_V3_PYTHON -m compileall -q packages plugins `
+            scripts/control_plane_discover.py scripts/control_plane_http.py scripts/control_plane_query.py
           if($LASTEXITCODE -ne 0){throw 'Python compile failed'}
 
       - name: Bootstrap portable Git for tests
@@ -161,7 +164,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $body="## CONTROL PLANE V3 VALIDATION PASS`n`n- Branch: ``feature/control-plane-v3```n- Validated head: ``$env:CONTROL_PLANE_V3_VALIDATED_HEAD```n- Python lint/compile/tests: ``PASS```n- Cloudflare TypeScript/Wrangler check: ``PASS```n- Official CLI bootstrap: ``PASS```n- Runtime capability discovery: ``PASS```n- Discovery SHA-256: ``$env:CONTROL_PLANE_V3_DISCOVERY_SHA```n- Cloudflare deploy: ``false```n- Kaggle compute: ``false```n- Active P0 modified: ``false```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
+          $body="## CONTROL PLANE V3 VALIDATION PASS`n`n- Branch: ``feature/control-plane-v3```n- Validated head: ``$env:CONTROL_PLANE_V3_VALIDATED_HEAD```n- Python lint/compile/tests: ``PASS```n- OIDC/query broker contract: ``PASS```n- Cloudflare TypeScript/Wrangler check: ``PASS```n- Official CLI bootstrap: ``PASS```n- Runtime capability discovery: ``PASS```n- Discovery SHA-256: ``$env:CONTROL_PLANE_V3_DISCOVERY_SHA```n- Cloudflare deploy: ``false```n- Kaggle compute: ``false```n- Active P0 modified: ``false```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n"
           $p=@{body=$body}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
 
