@@ -1,0 +1,137 @@
+name: v622-external-validation-repair-v3
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: v622-cloudflare-production-mutation
+  cancel-in-progress: false
+
+jobs:
+  external:
+    if: ${{ github.event.issue.number == 18 && github.event.comment.body == 'V622_EXTERNAL_VALIDATION_REPAIR_V3_RUN' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 360
+    environment: cloudflare-production
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Revalidate exact repair-v3 gate
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $all=@();$page=1
+          do{$batch=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments?per_page=100&page=$page" -Headers $h;$all+=@($batch);$page++}while(@($batch).Count -eq 100)
+          $text=($all|ForEach-Object{[string]$_.body}) -join "`n"
+          if($text -notmatch 'FINAL_FREEZE_MANIFEST PASS.*2313023819c9eec669d835b99dcc2524b03bb0da236c2ec8f98c4e1221948414'){throw 'final freeze PASS missing'}
+          if($text -notmatch 'FINAL_FREEZE_RECONCILIATION PASS[\s\S]*99a319c8d397342aaefd3c15e0eb8f968a973738f55ef97925a2a16da8c485d8'){throw 'reconciliation PASS missing'}
+          if($text -notmatch 'LOCKBOX HARDENING PASS[\s\S]*Workflow mutation markers found: `0`[\s\S]*Remaining mutators: `none`'){throw 'hardening PASS missing'}
+          if($text -notmatch 'OFFICIAL LOCKED TEST PASS[\s\S]*Completion SHA-256: `2ecc67f4268f812604e51db5b46d2ece36f9de12ff7baf3cf0bbbc8df4a58ada`[\s\S]*Next permitted stage: `EXTERNAL_VALIDATION`'){throw 'locked-test immutable gate missing'}
+          if($text -match '## V6\.2\.2 EXTERNAL VALIDATION PASS'){throw 'external validation PASS already exists; relaunch forbidden'}
+          if($text -notmatch 'external repair v2 exact root cause[\s\S]*External kernel `azadka/pneumonia-v6-2-2-external-validation` v2 is `ERROR`[\s\S]*RuntimeError: NIH duplicate image basenames'){throw 'exact v2 duplicate-basename incident evidence missing'}
+          if($text -notmatch 'Narrow repair required: restrict image discovery to `Image Index` names present in `sample_labels.csv`'){throw 'approved narrow alias repair not recorded'}
+          $root=Join-Path $env:GITHUB_WORKSPACE '.github/workflows';$markers=@('CLOUDFLARE_API_TOKEN','wrangler deploy','CGP_PROJECT_CONTROL_TOKEN','chatgpt-kaggle-gateway');$bad=@()
+          foreach($f in Get-ChildItem $root -File){if($f.Extension -notin @('.yml','.yaml') -or $f.Name -eq 'v622-external-validation-repair-v3.yml'){continue};$raw=Get-Content -Raw $f.FullName;if(@($markers|Where-Object{$raw.Contains($_)}).Count -gt 0){$bad+=$f.Name}}
+          if($bad.Count -gt 0){throw "obsolete Cloudflare mutators remain before repair v3: $($bad -join ', ')"}
+          Write-Host 'EXTERNAL_REPAIR_V3_PREFLIGHT_PASS'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download exact recovered W16 source artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: v622-selected-kernel-source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 32197039097
+          path: ${{ runner.temp }}/v622-w16-source
+
+      - name: Build alias-safe exact-source external payload
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $src=Join-Path $env:RUNNER_TEMP 'v622-w16-source';$payload=Join-Path $env:GITHUB_WORKSPACE 'deploy/cloudflare-worker-free/src/v622-external-validation-payload.ts';$meta=Join-Path $env:RUNNER_TEMP 'v622-external-validation-payload.json';$worker=Join-Path $env:GITHUB_WORKSPACE 'deploy/cloudflare-worker-free/src/v622-external-validation-worker.ts'
+          node scripts/v622_build_external_validation_payload.mjs $src scripts/v622_external_validation_template.py $payload $meta
+          if($LASTEXITCODE -ne 0){throw 'base external payload build failed'}
+          node scripts/v622_patch_external_payload_alias_v3.mjs $payload
+          if($LASTEXITCODE -ne 0){throw 'alias-safe payload patch failed'}
+          Copy-Item -Force scripts/v622_external_validation_worker_template.ts.txt $worker
+          node scripts/v622_patch_external_worker_repair_v3.mjs $worker
+          if($LASTEXITCODE -ne 0){throw 'repair-v3 worker patch failed'}
+          $raw=Get-Content -Raw $payload
+          if($raw -notmatch "NIH_LABELED_ALIAS_V3" -or $raw -notmatch "prior_failed_kernel_version':2"){throw 'repair-v3 payload lineage missing'}
+          $sha=([regex]::Match($raw,'EXTERNAL_VALIDATION_SCRIPT_SHA256="([0-9a-f]{64})"')).Groups[1].Value
+          if(-not $sha){throw 'repaired script SHA unavailable'}
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"V622_EXTERNAL_SCRIPT_SHA=$sha`n",[Text.UTF8Encoding]::new($false))
+          Write-Host "EXTERNAL_REPAIR_V3_PAYLOAD_PASS script_sha=$sha"
+
+      - name: Deploy protected repair-v3 bridge
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference='Stop';$id=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim();if(-not $id -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials missing'};Write-Host "::add-mask::$id";[IO.File]::AppendAllText($env:GITHUB_ENV,"V622_CF_ACCOUNT_ID=$id`n",[Text.UTF8Encoding]::new($false));$env:CLOUDFLARE_ACCOUNT_ID=$id;Push-Location deploy/cloudflare-worker-free;try{npm install --no-audit --no-fund;if($LASTEXITCODE-ne 0){throw 'npm failed'};npm run check;if($LASTEXITCODE-ne 0){throw 'typecheck failed'};npx wrangler deploy src/v622-external-validation-worker.ts --name chatgpt-kaggle-gateway;if($LASTEXITCODE-ne 0){throw 'repair-v3 bridge deploy failed'}}finally{Pop-Location}
+
+      - name: Create ephemeral repair-v3 capability
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $b=New-Object byte[] 48;$r=[Security.Cryptography.RandomNumberGenerator]::Create();try{$r.GetBytes($b)}finally{$r.Dispose()};$t=[Convert]::ToBase64String($b).TrimEnd('=').Replace('+','-').Replace('/','_');Write-Host "::add-mask::$t";$env:CLOUDFLARE_ACCOUNT_ID=$env:V622_CF_ACCOUNT_ID;Push-Location deploy/cloudflare-worker-free;try{$t|npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway;if($LASTEXITCODE-ne 0){throw 'secret failed'}}finally{Pop-Location};[IO.File]::AppendAllText($env:GITHUB_ENV,"V622_EXTERNAL_TOKEN=$t`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Launch exact external repair v3
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop';$base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev';$h=@{Authorization="Bearer $env:V622_EXTERNAL_TOKEN";'Content-Type'='application/json'};$v=$null;$last='not ready'
+          for($i=1;$i-le 24;$i++){try{$x=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30;if($x.service-ne'v622-external-validation'){throw 'stale bridge'};$v=Invoke-RestMethod -Uri "$base/control/v6-2-2/external-validation/launch" -Method Post -Headers $h -Body '{}' -TimeoutSec 180;break}catch{$last=$_.Exception.Message;Write-Host "repair-v3 readiness $i/24: $last";Start-Sleep 5}}
+          if(-not $v){throw "repair-v3 launch did not converge: $last"};$v|ConvertTo-Json -Depth 30|Write-Host;if($v.ok-eq$false){throw $v.error};if($v.target_kernel_ref-ne'azadka/pneumonia-v6-2-2-external-validation'){throw 'unexpected target'}
+          if($v.action -notin @('incident_repair_v3_submitted','existing_active','existing_complete')){throw "unexpected repair-v3 action: $($v.action)"}
+          $body="## V6.2.2 EXTERNAL VALIDATION REPAIR V3 LAUNCHED`n`n- Kernel: ``azadka/pneumonia-v6-2-2-external-validation```n- Repair: ``NIH_LABELED_ALIAS_V3```n- Prior failed kernel version: ``2```n- Scope: labeled ``Image Index`` only; duplicate physical paths accepted only when SHA-256-identical; deterministic canonical path; missing/content conflicts fail hard.`n- Frozen ensemble/weights/calibration/threshold: unchanged`n- Second locked-test access: ``false```n- Training/HPO/confirmation/reselection: ``false```n- Generated script SHA-256: ``$env:V622_EXTERNAL_SCRIPT_SHA```n- Action: ``$($v.action)```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n";$p=@{body=$body}|ConvertTo-Json -Compress;$gh=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'};Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $gh -ContentType 'application/json' -Body $p|Out-Null
+
+      - name: Monitor repair v3 to terminal status
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop';$h=@{Authorization="Bearer $env:V622_EXTERNAL_TOKEN";'Content-Type'='application/json'};$uri='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/external-validation/status';$terminal=$null;$last=''
+          for($i=1;$i-le 900;$i++){try{$v=Invoke-RestMethod -Uri $uri -Method Post -Headers $h -Body '{}' -TimeoutSec 180;$s=([string]$v.status).ToUpperInvariant();Write-Host "external repair v3 $i/900: $s";if($s-eq'COMPLETE'){$terminal=$v;break};if($s-in@('ERROR','FAILED','CANCELLED','CANCELED','DEAD')){throw "terminal repair-v3 external failure: $s"}}catch{if($_.Exception.Message-match'terminal repair-v3 external failure'){throw};$last=$_.Exception.Message;Write-Host "repair-v3 transport $i/900: $last"};Start-Sleep -Seconds 20}
+          if(-not $terminal){throw "repair-v3 external validation not COMPLETE: $last"};if(-not $terminal.receipt){throw 'repair-v3 COMPLETE without validated receipt'};$terminal.receipt|ConvertTo-Json -Depth 50|Set-Content -Encoding utf8 "$env:RUNNER_TEMP\v622-external-validation-receipt.json"
+
+      - name: Publish external-validation PASS
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $r=Get-Content -Raw "$env:RUNNER_TEMP\v622-external-validation-receipt.json"|ConvertFrom-Json;$c=$r.cohorts;$a=$r.nih_alias_resolution;$body="## V6.2.2 EXTERNAL VALIDATION PASS`n`n- Kernel: ``azadka/pneumonia-v6-2-2-external-validation```n- Repair lineage: ``NIH_LABELED_ALIAS_V3 after failed version 2```n- Summary SHA-256: ``$($r.summary_sha256)```n- NIH alias resolution: labeled=``$($a.labeled_image_index_count)`` indexed=``$($a.indexed_images)`` aliases=``$($a.alias_count)`` missing=``$($a.missing_count)`` conflicts=``$($a.conflict_count)```n- CheXpert valid n: ``$($c.chexpert_valid.n_samples)`` | Balanced accuracy: ``$($c.chexpert_valid.metrics.balanced_accuracy)`` | MCC: ``$($c.chexpert_valid.metrics.mcc)```n- NIH pneumonia-vs-No Finding n: ``$($c.nih_pneumonia_vs_no_finding.n_samples)`` | Balanced accuracy: ``$($c.nih_pneumonia_vs_no_finding.metrics.balanced_accuracy)`` | MCC: ``$($c.nih_pneumonia_vs_no_finding.metrics.mcc)```n- Independence audit: ``$($r.independence_audit.status)```n- Threshold/calibration/weights retuned: ``false```n- Official locked-test feedback used: ``false```n- Training/HPO/confirmation/reselection: ``false```n- Next permitted stage: ``$($r.next_permitted_stage)```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n";$p=@{body=$body}|ConvertTo-Json -Compress;$gh=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'};Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $gh -ContentType 'application/json' -Body $p|Out-Null
+
+      - name: Remove capability and restore canonical Worker
+        if: always()
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference='Continue';if($env:V622_CF_ACCOUNT_ID){$env:CLOUDFLARE_ACCOUNT_ID=$env:V622_CF_ACCOUNT_ID;Push-Location deploy/cloudflare-worker-free;try{'y'|npx wrangler secret delete CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway;npx wrangler deploy}finally{Pop-Location}}
+
+      - name: Publish repair-v3 diagnostic
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $body="## V6.2.2 EXTERNAL VALIDATION REPAIR V3 DIAGNOSTIC`n`n- Result: ``FAILED_OR_INCOMPLETE```n- Automatic additional repair/rerun: ``FORBIDDEN_PENDING_NEW_INCIDENT_REVIEW```n- Frozen ensemble/threshold/calibration/weights remain unchanged.`n- Second locked-test access: ``false```n- Training/HPO/confirmation/reselection: ``false```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`n";$p=@{body=$body}|ConvertTo-Json -Compress;$gh=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'};Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $gh -ContentType 'application/json' -Body $p|Out-Null
