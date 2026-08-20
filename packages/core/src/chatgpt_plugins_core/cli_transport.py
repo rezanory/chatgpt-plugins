@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -92,6 +93,19 @@ _MUTATION_HINTS = {
     "revoke",
 }
 
+_SENSITIVE_FLAG = re.compile(
+    r"(token|secret|password|passwd|api[-_]?key|private[-_]?key|access[-_]?key|authorization)",
+    re.I,
+)
+_TOKEN_VALUE = re.compile(
+    r"(KGAT_[A-Za-z0-9_-]+|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|Bearer\s+[A-Za-z0-9._~+/=-]+)",
+    re.I,
+)
+_LABELED_SECRET = re.compile(
+    r"((?:token|secret|password|passwd|authorization|api[-_]?key|access[-_]?key)\s*[:=]\s*)(\S+)",
+    re.I,
+)
+
 
 def _allowed_classes(env: Mapping[str, str] | None = None) -> set[SafetyClass]:
     source = os.environ if env is None else env
@@ -115,6 +129,34 @@ def _validate_read_argv(args: Sequence[str]) -> None:
         )
 
 
+def _sanitize_output(raw: str, max_chars: int) -> str:
+    value = (raw or "")[-max_chars:]
+    value = _TOKEN_VALUE.sub("<redacted>", value)
+    return _LABELED_SECRET.sub(r"\1<redacted>", value)
+
+
+def _sanitize_argv(args: Sequence[str]) -> tuple[str, ...]:
+    safe: list[str] = []
+    redact_next = False
+    for raw in args:
+        value = str(raw)
+        if redact_next:
+            safe.append("<redacted>")
+            redact_next = False
+            continue
+        if value.startswith("-") and "=" in value:
+            name, _, _ = value.partition("=")
+            if _SENSITIVE_FLAG.search(name):
+                safe.append(f"{name}=<redacted>")
+                continue
+        if value.startswith("-") and _SENSITIVE_FLAG.search(value):
+            safe.append(value)
+            redact_next = True
+            continue
+        safe.append(_TOKEN_VALUE.sub("<redacted>", value))
+    return tuple(safe)
+
+
 def run_provider_cli(
     provider: str,
     args: Sequence[str],
@@ -129,7 +171,7 @@ def run_provider_cli(
     The transport is intentionally generic: it does not enumerate a closed set of commands.
     Unknown/new commands remain usable. If their read-only nature cannot be proven, callers must
     classify them as write/compute/destructive/privileged and explicitly grant that class through
-    CONTROL_PLANE_ALLOWED_CLASSES.
+    CONTROL_PLANE_ALLOWED_CLASSES. Returned argv/output are sanitized before leaving the transport.
     """
 
     try:
@@ -145,7 +187,8 @@ def run_provider_cli(
         raise CliTransportError(f"safety class {safety.value!r} is not granted")
 
     child_env = dict(os.environ if env is None else env)
-    command = [resolved, *[str(arg) for arg in args]]
+    raw_args = [str(arg) for arg in args]
+    command = [resolved, *raw_args]
     proc = subprocess.run(
         command,
         check=False,
@@ -156,15 +199,16 @@ def run_provider_cli(
         shell=False,
         env=child_env,
     )
-    output = (proc.stdout or "")[-max_chars:]
+    output = _sanitize_output(proc.stdout or "", max_chars)
+    safe_args = _sanitize_argv(raw_args)
     if proc.returncode != 0:
-        preview = " ".join([executable, *[str(arg) for arg in args[:3]]])
+        preview = " ".join([executable, *safe_args[:3]])
         raise CliTransportError(
             f"{preview} failed ({proc.returncode}): {output[-8000:]}"
         )
     return CliReceipt(
         provider=provider,
-        argv=(executable, *tuple(str(arg) for arg in args)),
+        argv=(executable, *safe_args),
         safety=safety,
         returncode=proc.returncode,
         output=output,
