@@ -11,7 +11,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: v623-p0-single-model-sandbox
+  group: v622-cloudflare-production-mutation
   cancel-in-progress: false
 
 jobs:
@@ -19,6 +19,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.number == 18 && github.event.comment.body == 'V623_P0_RUN') }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 420
+    environment: cloudflare-production
     steps:
       - name: Checkout trusted main
         uses: actions/checkout@v4
@@ -31,7 +32,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $body="V6.2.3-P0 RUNNER START | github_run_id=$env:GITHUB_RUN_ID | runner=$env:RUNNER_NAME | head=$env:GITHUB_SHA | kaggle_launched=false"
+          $body="V6.2.3-P0 RUNNER START | github_run_id=$env:GITHUB_RUN_ID | runner=$env:RUNNER_NAME | head=$env:GITHUB_SHA | kaggle_launched=false | route=cloudflare_bridge"
           $p=@{body=$body}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
 
@@ -98,25 +99,191 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $body="V6.2.3-P0 PREFLIGHT PASS | github_run_id=$env:GITHUB_RUN_ID | development_only=true | locked_test=false | external=false | train=480 | cal=120 | shadow=120 | kaggle_launch_next=true"
+          $body="V6.2.3-P0 PREFLIGHT PASS | github_run_id=$env:GITHUB_RUN_ID | development_only=true | locked_test=false | external=false | train=480 | cal=120 | shadow=120 | cloudflare_bridge_next=true"
           $p=@{body=$body}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p|Out-Null
 
-      - name: Launch and monitor development-only P0 on Kaggle
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build exact P0 payload and typecheck bridge
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $src=Join-Path $env:RUNNER_TEMP 'v622-w16-source'
+          $payload=Join-Path $env:GITHUB_WORKSPACE 'deploy/cloudflare-worker-free/src/v623-p0-payload.ts'
+          node scripts/v623_build_p0_payload.mjs $src $env:V623_P0_TEMPLATE $payload
+          if($LASTEXITCODE -ne 0){throw 'P0 payload build failed'}
+          $raw=Get-Content -Raw $payload
+          $sha=([regex]::Match($raw,'P0_SCRIPT_SHA256 = "([0-9a-f]{64})"')).Groups[1].Value
+          if(-not $sha){throw 'P0 script SHA unavailable'}
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"V623_P0_SCRIPT_SHA=$sha`n",[Text.UTF8Encoding]::new($false))
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npm install --no-audit --no-fund
+            if($LASTEXITCODE -ne 0){throw 'npm install failed'}
+            npm run check
+            if($LASTEXITCODE -ne 0){throw 'P0 Worker typecheck failed'}
+          } finally { Pop-Location }
+
+      - name: Deploy protected P0 bridge
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $id=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if(-not $id -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials missing'}
+          Write-Host "::add-mask::$id"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"V623_CF_ACCOUNT_ID=$id`n",[Text.UTF8Encoding]::new($false))
+          $env:CLOUDFLARE_ACCOUNT_ID=$id
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npx wrangler deploy src/v623-p0-worker.ts --name chatgpt-kaggle-gateway
+            if($LASTEXITCODE -ne 0){throw 'P0 bridge deploy failed'}
+          } finally { Pop-Location }
+
+      - name: Create ephemeral P0 capability
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $b=New-Object byte[] 48
+          $r=[Security.Cryptography.RandomNumberGenerator]::Create()
+          try{$r.GetBytes($b)}finally{$r.Dispose()}
+          $t=[Convert]::ToBase64String($b).TrimEnd('=').Replace('+','-').Replace('/','_')
+          Write-Host "::add-mask::$t"
+          $env:CLOUDFLARE_ACCOUNT_ID=$env:V623_CF_ACCOUNT_ID
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            $t | npx wrangler secret put CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway
+            if($LASTEXITCODE -ne 0){throw 'P0 capability secret upload failed'}
+          } finally { Pop-Location }
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"V623_P0_TOKEN=$t`nV623_P0_CAP_CREATED=1`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Launch development-only P0 through Cloudflare
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          K_MASTER: ${{ secrets.CGP_KAGGLE_MASTER_TOKEN }}
-          K_KG02: ${{ secrets.CGP_KAGGLE_KG02_TOKEN }}
-          K_KG03: ${{ secrets.CGP_KAGGLE_KG03_TOKEN }}
-          K_KG04: ${{ secrets.CGP_KAGGLE_KG04_TOKEN }}
-          K_KG05: ${{ secrets.CGP_KAGGLE_KG05_TOKEN }}
-          K_KG06: ${{ secrets.CGP_KAGGLE_KG06_TOKEN }}
-          K_KG07: ${{ secrets.CGP_KAGGLE_KG07_TOKEN }}
         run: |
           $ErrorActionPreference='Stop'
-          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
-          if(-not $python){throw 'python.exe not found on self-hosted runner'}
-          $src=Join-Path $env:RUNNER_TEMP 'v622-w16-source'
-          & $python scripts/v623_p0_control.py --source-artifact-dir $src --template $env:V623_P0_TEMPLATE
-          if($LASTEXITCODE -ne 0){throw 'V6.2.3-P0 control failed'}
+          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          $h=@{Authorization="Bearer $env:V623_P0_TOKEN";'X-CGP-GitHub-Run'="$env:GITHUB_RUN_ID";'Content-Type'='application/json'}
+          $v=$null;$last='not ready'
+          for($i=1;$i-le 24;$i++){
+            try{
+              $x=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
+              if($x.service-ne'v623-p0-bridge' -or [string]$x.github_run_id-ne[string]$env:GITHUB_RUN_ID -or -not $x.payload_ready){throw 'stale or incomplete P0 bridge'}
+              $v=Invoke-RestMethod -Uri "$base/control/v6-2-3/p0/launch" -Method Post -Headers $h -Body '{}' -TimeoutSec 240
+              break
+            }catch{$last=$_.Exception.Message;Write-Host "P0 readiness/launch $i/24: $last";Start-Sleep 5}
+          }
+          if(-not $v){throw "P0 launch did not converge: $last"}
+          $v|ConvertTo-Json -Depth 30|Write-Host
+          if($v.ok-eq$false){throw $v.error}
+          if($v.action -notin @('created_and_submitted','existing_active','existing_complete')){throw "unexpected P0 action: $($v.action)"}
+          if(-not $v.selected_account_id -or -not $v.target_kernel_ref){throw 'P0 launch identity missing'}
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"V623_P0_ACCOUNT=$($v.selected_account_id)`nV623_P0_OWNER=$($v.selected_owner)`nV623_P0_KERNEL_REF=$($v.target_kernel_ref)`n",[Text.UTF8Encoding]::new($false))
+          $version='';$kernelId=''
+          if($v.result){$version=[string]$v.result.versionNumber;$kernelId=[string]$v.result.kernelId}
+          $body="## V6.2.3-P0 KAGGLE LAUNCH`n`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kaggle account: ``$($v.selected_account_id)`` / ``$($v.selected_owner)```n- Kaggle kernel: ``$($v.target_kernel_ref)```n- Kaggle version: ``$version```n- Kaggle kernelId: ``$kernelId```n- Action: ``$($v.action)```n- P0 script SHA-256: ``$env:V623_P0_SCRIPT_SHA```n- Development split: ``480 TRAIN / 120 CAL / 120 SHADOW```n- Locked 624 used: ``false```n- CheXpert/NIH used: ``false / false```n- Status: ``NON_OFFICIAL_DIRECTIONAL_ONLY``"
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          $gh=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $gh -ContentType 'application/json' -Body $p|Out-Null
+
+      - name: Monitor P0 to terminal receipt
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:V623_P0_TOKEN";'X-CGP-GitHub-Run'="$env:GITHUB_RUN_ID";'Content-Type'='application/json'}
+          $uri='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-3/p0/status'
+          $payload=@{account_id=$env:V623_P0_ACCOUNT;kernel_ref=$env:V623_P0_KERNEL_REF}|ConvertTo-Json -Compress
+          $terminal=$null;$last=''
+          for($i=1;$i-le 720;$i++){
+            try{
+              $v=Invoke-RestMethod -Uri $uri -Method Post -Headers $h -Body $payload -TimeoutSec 180
+              $s=([string]$v.status).ToUpperInvariant()
+              Write-Host "P0 $i/720: $s"
+              if($s-eq'COMPLETE'){
+                if($v.receipt){$terminal=$v;break}
+                Write-Host 'P0 COMPLETE; waiting for validated output receipt propagation'
+              }
+              if($s-in@('ERROR','FAILED','CANCELLED','CANCELED','DEAD')){throw "terminal P0 compute failure: $s"}
+            }catch{
+              if($_.Exception.Message-match'terminal P0 compute failure'){throw}
+              $last=$_.Exception.Message
+              Write-Host "P0 transport/status $i/720: $last"
+            }
+            Start-Sleep -Seconds 30
+          }
+          if(-not $terminal){throw "P0 did not reach COMPLETE with validated receipt: $last"}
+          $terminal.receipt|ConvertTo-Json -Depth 80|Set-Content -Encoding utf8 "$env:RUNNER_TEMP\v623-p0-receipt.json"
+
+      - name: Publish P0 directional receipt
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $r=Get-Content -Raw "$env:RUNNER_TEMP\v623-p0-receipt.json"|ConvertFrom-Json
+          $m=$r.aggregate_metrics
+          $body="## V6.2.3-P0 SINGLE-MODEL SANDBOX RECEIPT`n`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kaggle kernel: ``$env:V623_P0_KERNEL_REF```n- Kaggle account: ``$env:V623_P0_ACCOUNT`` / ``$env:V623_P0_OWNER```n- Model: ``M06 + ConvNeXt-Tiny @ 224```n- Development-only split: ``480 train / 120 calibration / 120 shadow```n- Locked 624 used: ``false```n- test/ partition enumerated: ``false```n- CheXpert/NIH used: ``false / false```n- Verdict: ``$($r.verdict)```n- Min shadow balanced accuracy across seeds: ``$($m.shadow_balanced_accuracy_min)```n- Mean shadow balanced accuracy: ``$($m.shadow_balanced_accuracy_mean)```n- Min shadow MCC: ``$($m.shadow_mcc_min)```n- Min Normal recall: ``$($m.shadow_recall_normal_min)```n- Min Pneumonia recall: ``$($m.shadow_recall_pneumonia_min)```n- Threshold spread: ``$($m.threshold_spread)```n- P0 script SHA-256: ``$env:V623_P0_SCRIPT_SHA```n- Receipt SHA-256: ``$($r.receipt_sha256)```n- Next action: ``$($r.next_action)```n- Status: ``NON_OFFICIAL_DIRECTIONAL_ONLY``"
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          $gh=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $gh -ContentType 'application/json' -Body $p|Out-Null
+
+      - name: Remove P0 capability and restore canonical Worker
+        if: always()
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference='Continue'
+          $errors=@()
+          if($env:V623_CF_ACCOUNT_ID){
+            $env:CLOUDFLARE_ACCOUNT_ID=$env:V623_CF_ACCOUNT_ID
+            Push-Location deploy/cloudflare-worker-free
+            try {
+              if($env:V623_P0_CAP_CREATED-eq'1'){
+                'y' | npx wrangler secret delete CGP_PROJECT_CONTROL_TOKEN --name chatgpt-kaggle-gateway
+                if($LASTEXITCODE-ne 0){$errors+='capability delete failed'}
+              }
+              npx wrangler deploy
+              if($LASTEXITCODE-ne 0){$errors+='canonical Worker restore deploy failed'}
+            } finally { Pop-Location }
+            $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+            $ok=$false;$last=''
+            for($i=1;$i-le 24;$i++){
+              try{
+                $x=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
+                if($x.service-eq'chatgpt-kaggle-gateway' -and $x.write_enabled-eq$false){$ok=$true;break}
+                $last="unexpected service=$($x.service) write_enabled=$($x.write_enabled)"
+              }catch{$last=$_.Exception.Message}
+              Start-Sleep 5
+            }
+            if(-not $ok){$errors+="canonical health verification failed: $last"}
+            try{
+              Invoke-WebRequest -Uri "$base/control/v6-2-3/p0/status" -Method Post -ContentType 'application/json' -Body '{}' -UseBasicParsing -TimeoutSec 30 | Out-Null
+              $errors+='temporary P0 route still responds after canonical restore'
+            }catch{
+              $code=$null
+              try{$code=[int]$_.Exception.Response.StatusCode}catch{}
+              if($code-ne 404){$errors+="temporary route absence check returned $code"}
+            }
+          }
+          if($errors.Count-gt 0){throw ($errors -join '; ')}
+          Write-Host 'V623_P0_CANONICAL_RESTORE_PASS'
+
+      - name: Publish P0 failure diagnostic
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $body="## V6.2.3-P0 DIAGNOSTIC`n`n- Result: ``FAILED_OR_INCOMPLETE```n- Automatic duplicate launch/rerun: ``FORBIDDEN_PENDING_INCIDENT_REVIEW```n- Locked 624 reused: ``false```n- CheXpert/NIH reused: ``false / false```n- V6.2.2 frozen lineage changed: ``false```n- Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          $gh=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $gh -ContentType 'application/json' -Body $p|Out-Null
