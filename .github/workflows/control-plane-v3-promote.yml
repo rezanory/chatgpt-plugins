@@ -49,10 +49,21 @@ jobs:
             $allComments += $batch
             if($batch.Count -lt 100){break}
           }
-          $pass=@($allComments | Where-Object {$_.body -like '## CONTROL PLANE V3 VALIDATION PASS*'}) | Select-Object -Last 1
-          if(-not $pass){throw 'no CONTROL PLANE V3 VALIDATION PASS found'}
-          $match=[regex]::Match([string]$pass.body,'Validated head: `([0-9a-f]{40})`')
-          if(-not $match.Success){throw 'validated head missing from latest PASS receipt'}
+          $passes=@($allComments | Where-Object {
+            $_.user.login -eq 'github-actions[bot]' -and
+            $_.body -like '## CONTROL PLANE V3 VALIDATION PASS*'
+          } | Sort-Object {[datetime]$_.created_at} -Descending)
+          $pass=$null
+          $match=$null
+          foreach($candidate in $passes){
+            $candidateMatch=[regex]::Match([string]$candidate.body,'Validated head: `([0-9a-f]{40})`')
+            if($candidateMatch.Success -and $candidateMatch.Groups[1].Value -eq $branchSha){
+              $pass=$candidate
+              $match=$candidateMatch
+              break
+            }
+          }
+          if(-not $pass){throw "no CONTROL PLANE V3 VALIDATION PASS matches current branch head $branchSha"}
           $validatedSha=$match.Groups[1].Value
           if($validatedSha -ne $branchSha){throw "branch head $branchSha differs from validated head $validatedSha"}
           "sha=$branchSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
