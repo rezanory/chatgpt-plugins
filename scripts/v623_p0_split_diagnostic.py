@@ -22,7 +22,11 @@ TARGETS = {
     "NORMAL": {"shadow": 60, "cal": 60, "train": 240},
     "PNEUMONIA": {"shadow": 60, "cal": 60, "train": 240},
 }
-NEAR_DUP_HAMMING = 2
+DHASH_CANDIDATE_HAMMING = 2
+PHASH_CANDIDATE_HAMMING = 4
+PIXEL_CORR_MIN = 0.97
+GRADIENT_CORR_MIN = 0.75
+STRUCTURAL_SIZE = 128
 MAX_ATTEMPTS = 120
 SEED_BASE = 623100
 PATIENT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -158,22 +162,82 @@ def build_assignment(seed: int) -> tuple[dict[str, list[Sample]] | None, str | N
     return assignment, None
 
 
-print("CGP_PHASE:SPLIT_DIAGNOSTIC_HASHING", flush=True)
-sha_cache: dict[str, str] = {}
-dhash_cache: dict[str, int] = {}
-for index, sample in enumerate(samples, start=1):
-    key = str(sample.path)
-    sha_cache[key] = sha256_file(sample.path)
-    with Image.open(sample.path) as image:
+def dhash_value(path: Path) -> int:
+    with Image.open(path) as image:
         gray = image.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
         pixels = np.asarray(gray, dtype=np.uint8)
     bits = pixels[:, 1:] > pixels[:, :-1]
     value = 0
     for bit in bits.reshape(-1):
         value = (value << 1) | int(bit)
-    dhash_cache[key] = value
+    return value
+
+
+def phash_value(path: Path) -> int:
+    with Image.open(path) as image:
+        pixels = np.asarray(
+            image.convert("L").resize((32, 32), Image.Resampling.LANCZOS),
+            dtype=np.float32,
+        )
+    frequencies = np.abs(np.fft.fft2(pixels))[:8, :8].reshape(-1)
+    median = np.median(frequencies[1:])
+    value = 0
+    for bit in frequencies > median:
+        value = (value << 1) | int(bit)
+    return value
+
+
+def correlation(left: np.ndarray, right: np.ndarray) -> float:
+    a = left.reshape(-1)
+    b = right.reshape(-1)
+    if float(a.std()) < 1e-8 or float(b.std()) < 1e-8:
+        return 0.0
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+print("CGP_PHASE:SPLIT_DIAGNOSTIC_HASHING", flush=True)
+sha_cache: dict[str, str] = {}
+dhash_cache: dict[str, int] = {}
+phash_cache: dict[str, int] = {}
+structural_cache: dict[str, np.ndarray] = {}
+for index, sample in enumerate(samples, start=1):
+    key = str(sample.path)
+    sha_cache[key] = sha256_file(sample.path)
+    dhash_cache[key] = dhash_value(sample.path)
+    phash_cache[key] = phash_value(sample.path)
     if index % 500 == 0:
         print(f"CGP_DIAG_HASHED:{index}/{len(samples)}", flush=True)
+
+
+def structural_image(path: Path) -> np.ndarray:
+    key = str(path)
+    cached = structural_cache.get(key)
+    if cached is not None:
+        return cached
+    with Image.open(path) as image:
+        value = np.asarray(
+            image.convert("L").resize(
+                (STRUCTURAL_SIZE, STRUCTURAL_SIZE), Image.Resampling.LANCZOS
+            ),
+            dtype=np.float32,
+        ) / 255.0
+    structural_cache[key] = value
+    return value
+
+
+def structural_metrics(left: Path, right: Path) -> tuple[float, float, float]:
+    a = structural_image(left)
+    b = structural_image(right)
+    pixel_corr = correlation(a, b)
+    a_gradient = np.concatenate(
+        [np.diff(a, axis=0).reshape(-1), np.diff(a, axis=1).reshape(-1)]
+    )
+    b_gradient = np.concatenate(
+        [np.diff(b, axis=0).reshape(-1), np.diff(b, axis=1).reshape(-1)]
+    )
+    gradient_corr = correlation(a_gradient, b_gradient)
+    pixel_mae = float(np.mean(np.abs(a - b)))
+    return pixel_corr, gradient_corr, pixel_mae
 
 
 def audit(assignment: dict[str, list[Sample]]) -> dict:
@@ -193,14 +257,22 @@ def audit(assignment: dict[str, list[Sample]]) -> dict:
                     }
                 )
 
-    flat: list[tuple[str, Sample, str, int]] = []
+    flat: list[tuple[str, Sample, str, int, int]] = []
     for split_name, rows in assignment.items():
         for row in rows:
             key = str(row.path)
-            flat.append((split_name, row, sha_cache[key], dhash_cache[key]))
+            flat.append(
+                (
+                    split_name,
+                    row,
+                    sha_cache[key],
+                    dhash_cache[key],
+                    phash_cache[key],
+                )
+            )
 
     by_sha: dict[str, list[tuple[str, Sample]]] = {}
-    for split_name, row, digest, _dhash in flat:
+    for split_name, row, digest, _dhash, _phash in flat:
         by_sha.setdefault(digest, []).append((split_name, row))
     exact_cross = []
     for digest, entries in by_sha.items():
@@ -216,33 +288,63 @@ def audit(assignment: dict[str, list[Sample]]) -> dict:
             )
 
     near_cross = []
+    candidate_pairs = 0
     for index, left in enumerate(flat):
         for right in flat[index + 1 :]:
             if left[0] == right[0] or left[2] == right[2]:
                 continue
-            distance = (left[3] ^ right[3]).bit_count()
-            if distance <= NEAR_DUP_HAMMING:
-                near_cross.append(
-                    {
-                        "a": left[0],
-                        "b": right[0],
-                        "distance": distance,
-                        "a_name": left[1].path.name,
-                        "b_name": right[1].path.name,
-                        "a_patient": left[1].patient_id,
-                        "b_patient": right[1].patient_id,
-                    }
-                )
-                if len(near_cross) >= 100:
-                    break
+            dhash_distance = (left[3] ^ right[3]).bit_count()
+            phash_distance = (left[4] ^ right[4]).bit_count()
+            if (
+                dhash_distance > DHASH_CANDIDATE_HAMMING
+                and phash_distance > PHASH_CANDIDATE_HAMMING
+            ):
+                continue
+            candidate_pairs += 1
+            pixel_corr, gradient_corr, pixel_mae = structural_metrics(
+                left[1].path, right[1].path
+            )
+            if pixel_corr < PIXEL_CORR_MIN or gradient_corr < GRADIENT_CORR_MIN:
+                continue
+            near_cross.append(
+                {
+                    "a": left[0],
+                    "b": right[0],
+                    "dhash_distance": int(dhash_distance),
+                    "phash_distance": int(phash_distance),
+                    "pixel_corr": pixel_corr,
+                    "gradient_corr": gradient_corr,
+                    "pixel_mae": pixel_mae,
+                    "a_name": left[1].path.name,
+                    "b_name": right[1].path.name,
+                    "a_patient": left[1].patient_id,
+                    "b_patient": right[1].patient_id,
+                }
+            )
+            if len(near_cross) >= 100:
+                break
         if len(near_cross) >= 100:
             break
 
+    policy = {
+        "candidate_rule": "dhash64_hamming<=2 OR fft_phash64_hamming<=4",
+        "dhash_candidate_hamming_max": DHASH_CANDIDATE_HAMMING,
+        "phash_candidate_hamming_max": PHASH_CANDIDATE_HAMMING,
+        "confirmation_rule": "pixel_corr>=0.97 AND gradient_corr>=0.75",
+        "pixel_corr_min": PIXEL_CORR_MIN,
+        "gradient_corr_min": GRADIENT_CORR_MIN,
+        "structural_resize": [STRUCTURAL_SIZE, STRUCTURAL_SIZE],
+        "calibration_inventory_samples": 5232,
+        "calibration_exact_cross_patient_sha_groups": 0,
+        "calibration_max_observed_false_positive_pixel_corr": 0.9048865772067772,
+        "calibration_max_observed_false_positive_gradient_corr": 0.2820293799227516,
+    }
     return {
         "patient_overlap": patient_overlap,
         "exact_duplicate_cross_split": exact_cross,
         "near_duplicate_cross_split": near_cross,
-        "near_duplicate_hamming_threshold": NEAR_DUP_HAMMING,
+        "near_duplicate_candidate_pairs_checked": candidate_pairs,
+        "near_duplicate_policy": policy,
         "pass": not patient_overlap and not exact_cross and not near_cross,
     }
 
@@ -292,7 +394,7 @@ for attempt in range(MAX_ATTEMPTS):
         first_failures.append({"seed": seed, "audit": result})
 
 receipt = {
-    "schema_version": 1,
+    "schema_version": 2,
     "project": PROJECT,
     "stage": STAGE,
     "status": "PASS" if winning_assignment is not None else "FAIL",
