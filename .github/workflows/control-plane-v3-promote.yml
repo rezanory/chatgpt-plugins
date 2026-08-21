@@ -47,7 +47,6 @@ jobs:
             $batch=@(Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments?per_page=100&page=$page" -Headers $h -TimeoutSec 30)
             if($batch.Count -eq 0){break}
             $allComments += $batch
-            if($batch.Count -lt 100){break}
           }
           $passes=@($allComments | Where-Object {
             $_.user.login -eq 'github-actions[bot]' -and
