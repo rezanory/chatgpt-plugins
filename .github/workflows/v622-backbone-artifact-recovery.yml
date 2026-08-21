@@ -1,0 +1,83 @@
+name: v622-backbone-artifact-recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/v622-backbone-artifact-recovery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'v622: recover frozen backbone artifacts read-only'
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 20
+    env:
+      RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.RAW_CLOUDFLARE_ACCOUNT_ID }}
+      V622_CF_ACCOUNT_ID: ${{ secrets.V622_CF_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CGP_PROJECT_CONTROL_TOKEN: ${{ secrets.CGP_PROJECT_CONTROL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Deploy read-only collector, recover artifacts, and restore monitor
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $workerDir = Join-Path $env:GITHUB_WORKSPACE 'deploy/cloudflare-worker-free'
+          $accountId = ([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if (-not $accountId) { $accountId = ([string]$env:V622_CF_ACCOUNT_ID).Trim() }
+          if (-not $accountId) { throw 'Cloudflare account id is unavailable' }
+          if (-not ([string]$env:CLOUDFLARE_API_TOKEN).Trim()) { throw 'Cloudflare deploy token is unavailable' }
+          if (-not ([string]$env:CGP_PROJECT_CONTROL_TOKEN).Trim()) { throw 'Project control token is unavailable' }
+          $env:CLOUDFLARE_ACCOUNT_ID = $accountId
+          $resultFile = Join-Path $env:RUNNER_TEMP 'v622-backbone-artifact-recovery.json'
+          Push-Location $workerDir
+          try {
+            npm ci
+            npx --yes wrangler deploy src/v622-backbone-artifact-worker.ts --config wrangler.jsonc
+            $headers = @{ Authorization = "Bearer $($env:CGP_PROJECT_CONTROL_TOKEN)"; 'Content-Type' = 'application/json' }
+            $uri = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/backbone-artifacts'
+            $payload = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -TimeoutSec 90
+            $expected = @(
+              'BACKBONE_COMPARISON_RUN_INDEX.csv',
+              'BACKBONE_COMPARISON_SUMMARY.csv',
+              'BACKBONE_COMPARISON_MANIFEST.json',
+              'BACKBONE_INDIVIDUAL_OOF_RANKING.csv',
+              'BACKBONE_ENSEMBLE_OOF_PREDICTIONS.csv',
+              'BACKBONE_ENSEMBLE_COMBINATION_RANKING.csv',
+              'FROZEN_BACKBONE_ENSEMBLE_POLICY.json'
+            )
+            if ($payload.status -ne 'COMPLETE') { throw "Unexpected Kaggle status: $($payload.status)" }
+            $artifacts = @($payload.artifacts)
+            if ($artifacts.Count -ne $expected.Count) { throw "Expected $($expected.Count) artifacts; got $($artifacts.Count)" }
+            $actualNames = @($artifacts | ForEach-Object { [string]$_.artifact_name } | Sort-Object)
+            if (Compare-Object ($expected | Sort-Object) $actualNames) { throw 'Artifact name set mismatch' }
+            foreach ($artifact in $artifacts) {
+              $bytes = [Text.Encoding]::UTF8.GetBytes([string]$artifact.content)
+              $actual = ([Security.Cryptography.SHA256]::HashData($bytes) | ForEach-Object ToString x2) -join ''
+              if ($actual -ne [string]$artifact.sha256) { throw "SHA256 mismatch: $($artifact.artifact_name)" }
+            }
+            $payload | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $resultFile -Encoding utf8
+            Write-Host "RECOVERY_PASS artifacts=$($artifacts.Count)"
+          } finally {
+            npx --yes wrangler deploy src/v622-backbone-monitor-index.ts --config wrangler.jsonc
+            Pop-Location
+          }
+          Copy-Item -LiteralPath $resultFile -Destination (Join-Path $env:GITHUB_WORKSPACE 'v622-backbone-artifact-recovery.json')
+
+      - name: Upload recovered artifact package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v622-backbone-artifact-recovery
+          path: v622-backbone-artifact-recovery.json
+          if-no-files-found: warn
+          retention-days: 14
