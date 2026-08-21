@@ -94,6 +94,21 @@ function accountById(id: string): Account {
   return account;
 }
 function targetRef(account: Account): string { return `${account.owner}/${TARGET_SLUG}`; }
+function kernelRefFrom(value: Rec, account: Account, fallback: string): string {
+  const nested = [rec(value.kernel), rec(value.kernelInfo), rec(value.kernel_info), rec(value.result)];
+  const candidates = [value.ref, value.kernelRef, value.kernel_ref, value.kernelSlug, value.kernel_slug, ...nested.flatMap((x) => [x.ref, x.kernelRef, x.kernel_ref, x.slug])];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string' || !candidate.trim()) continue;
+    const raw = candidate.trim();
+    if (raw.includes('/')) return raw;
+    if (/^[A-Za-z0-9._-]+$/.test(raw)) return `${account.owner}/${raw}`;
+  }
+  return fallback;
+}
+function kernelSlug(ref: string): string {
+  const parts = ref.trim().split('/');
+  return parts.length === 2 ? parts[1] : ref.trim();
+}
 function authorized(request: Request, env: Env): boolean {
   const token = env.CGP_PROJECT_CONTROL_TOKEN?.trim();
   const run = request.headers.get('x-cgp-github-run') ?? '';
@@ -109,10 +124,15 @@ async function listExact(env: Env, account: Account): Promise<Rec[]> {
   const response = await kaggleCall(env, account, 'ListKernels', { group: 'PROFILE', sortBy: 'DATE_RUN', pageSize: 100, search: TARGET_SLUG });
   const kernels = Array.isArray(response.kernels) ? response.kernels.map(rec) : [];
   const expected = targetRef(account).toLowerCase();
-  return kernels.filter((row) => String(row.ref ?? '').toLowerCase() === expected);
+  const ownerPrefix = `${account.owner.toLowerCase()}/pneumonia-v6-2-3-p0-`;
+  return kernels.filter((row) => {
+    const ref = String(row.ref ?? '').toLowerCase();
+    const title = String(row.title ?? row.name ?? '').toLowerCase();
+    return ref === expected || (ref.startsWith(ownerPrefix) && title === TARGET_TITLE.toLowerCase());
+  });
 }
-async function status(env: Env, account: Account): Promise<string> {
-  const raw = await kaggleCall(env, account, 'GetKernelSessionStatus', { userName: account.owner, kernelSlug: TARGET_SLUG });
+async function status(env: Env, account: Account, ref: string = targetRef(account)): Promise<string> {
+  const raw = await kaggleCall(env, account, 'GetKernelSessionStatus', { userName: account.owner, kernelSlug: kernelSlug(ref) });
   return normalizedStatus(raw);
 }
 async function gpuRemainingHours(env: Env, account: Account): Promise<number | null> {
@@ -137,12 +157,12 @@ async function allowedOutputFetch(rawUrl: string): Promise<Response> {
   if (!response.ok) throw new Error(`output download HTTP ${response.status}`);
   return response;
 }
-async function outputs(env: Env, account: Account): Promise<Rec[]> {
-  const value = await kaggleCall(env, account, 'ListKernelSessionOutput', { userName: account.owner, kernelSlug: TARGET_SLUG, pageSize: 100 });
+async function outputs(env: Env, account: Account, ref: string = targetRef(account)): Promise<Rec[]> {
+  const value = await kaggleCall(env, account, 'ListKernelSessionOutput', { userName: account.owner, kernelSlug: kernelSlug(ref), pageSize: 100 });
   return Array.isArray(value.files) ? value.files.map(rec) : [];
 }
-async function validatedReceipt(env: Env, account: Account): Promise<Rec | null> {
-  const files = await outputs(env, account);
+async function validatedReceipt(env: Env, account: Account, ref: string = targetRef(account)): Promise<Rec | null> {
+  const files = await outputs(env, account, ref);
   const required = [
     'P0_RECEIPT.json', 'P0_SPLIT_RECEIPT.json',
     'P0_SEED_42_RECEIPT.json', 'P0_SEED_2026_RECEIPT.json',
@@ -170,17 +190,18 @@ async function validatedReceipt(env: Env, account: Account): Promise<Rec | null>
   ) throw new Error('P0 receipt leakage/identity/integrity mismatch');
   return value;
 }
-async function findExisting(env: Env): Promise<{ account: Account; status: string; receipt?: Rec } | null> {
-  const found: Array<{ account: Account; status: string; receipt?: Rec }> = [];
+async function findExisting(env: Env): Promise<{ account: Account; status: string; receipt?: Rec; kernelRef?: string } | null> {
+  const found: Array<{ account: Account; status: string; receipt?: Rec; kernelRef?: string }> = [];
   for (const account of ACCOUNTS) {
     if (!tokenFor(env, account.accountId)?.trim()) continue;
     const exact = await listExact(env, account);
     if (exact.length > 1) throw new Error(`multiple exact P0 kernels found for ${account.accountId}`);
     if (exact.length === 1) {
-      const s = await status(env, account);
-      const item: { account: Account; status: string; receipt?: Rec } = { account, status: s };
+      const kernelRef = String(exact[0].ref ?? targetRef(account));
+      const s = await status(env, account, kernelRef);
+      const item: { account: Account; status: string; receipt?: Rec; kernelRef?: string } = { account, status: s, kernelRef };
       if (s === 'COMPLETE') {
-        const r = await validatedReceipt(env, account);
+        const r = await validatedReceipt(env, account, kernelRef);
         if (r) item.receipt = r;
       }
       found.push(item);
@@ -222,19 +243,20 @@ async function saveKernel(env: Env, account: Account): Promise<Rec> {
 async function launch(env: Env): Promise<Rec> {
   const existing = await findExisting(env);
   if (existing) {
-    if (ACTIVE.has(existing.status)) return { action: 'existing_active', submitted: false, selected_account_id: existing.account.accountId, selected_owner: existing.account.owner, target_kernel_ref: targetRef(existing.account), status: existing.status };
-    if (existing.status === 'COMPLETE' && existing.receipt) return { action: 'existing_complete', submitted: false, selected_account_id: existing.account.accountId, selected_owner: existing.account.owner, target_kernel_ref: targetRef(existing.account), status: existing.status, receipt: existing.receipt };
+    if (ACTIVE.has(existing.status)) return { action: 'existing_active', submitted: false, selected_account_id: existing.account.accountId, selected_owner: existing.account.owner, target_kernel_ref: existing.kernelRef ?? targetRef(existing.account), status: existing.status };
+    if (existing.status === 'COMPLETE' && existing.receipt) return { action: 'existing_complete', submitted: false, selected_account_id: existing.account.accountId, selected_owner: existing.account.owner, target_kernel_ref: existing.kernelRef ?? targetRef(existing.account), status: existing.status, receipt: existing.receipt };
     if (existing.status === 'COMPLETE') throw new Error('existing COMPLETE P0 lacks validated receipt; duplicate launch forbidden');
     if (TERMINAL_BAD.has(existing.status)) throw new Error(`existing P0 terminal ${existing.status}; automatic rerun forbidden`);
     throw new Error(`existing P0 has ambiguous status ${existing.status}; automatic rerun forbidden`);
   }
   const selected = await chooseAccount(env);
   const result = await saveKernel(env, selected.account);
+  const submittedRef = kernelRefFrom(result, selected.account, targetRef(selected.account));
   return {
     action: 'created_and_submitted', submitted: true,
     selected_account_id: selected.account.accountId, selected_owner: selected.account.owner,
     gpu_remaining_hours_before_launch: selected.remaining, quota_observation: selected.quota,
-    target_kernel_ref: targetRef(selected.account), result,
+    target_kernel_ref: submittedRef, result,
     p0_script_sha256: P0_SCRIPT_SHA256, w16_notebook_sha256: W16_NOTEBOOK_SHA256, w16_source_zip_sha256: W16_SOURCE_ZIP_SHA256,
     locked_test_used: false, external_data_used: false, training: true, hpo: false, ensemble: false,
   };
@@ -254,11 +276,11 @@ export default {
       if (url.pathname === '/control/v6-2-3/p0/status' && request.method === 'POST') {
         const body = rec(await request.json());
         const account = accountById(String(body.account_id ?? ''));
-        const expectedRef = targetRef(account);
-        if (body.kernel_ref !== expectedRef) throw new Error('P0 status target mismatch');
-        const s = await status(env, account);
-        const receipt = s === 'COMPLETE' ? await validatedReceipt(env, account) : null;
-        return json({ project: 'PNEUMONIA V6.2.3-P0', account_id: account.accountId, target_kernel_ref: expectedRef, status: s, receipt, automatic_rerun_forbidden: true });
+        const requestedRef = String(body.kernel_ref ?? '');
+        if (!requestedRef || requestedRef.split('/')[0].toLowerCase() !== account.owner.toLowerCase()) throw new Error('P0 status target mismatch');
+        const s = await status(env, account, requestedRef);
+        const receipt = s === 'COMPLETE' ? await validatedReceipt(env, account, requestedRef) : null;
+        return json({ project: 'PNEUMONIA V6.2.3-P0', account_id: account.accountId, target_kernel_ref: requestedRef, status: s, receipt, automatic_rerun_forbidden: true });
       }
       return canonicalWorker.fetch(request, env, ctx);
     } catch (error) {
