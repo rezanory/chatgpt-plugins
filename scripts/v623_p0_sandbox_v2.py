@@ -154,8 +154,24 @@ def class_groups(samples: list[Sample], class_name: str) -> dict[str, list[Sampl
 
 
 def select_group_subset(groups: dict[str, list[Sample]], target: int, seed: int) -> tuple[list[str], int]:
-    selected, count = exact_group_subset(groups, target=target, seed=seed)
-    return list(selected), int(count)
+    # Deterministic bounded subset-sum over patient groups. The previous
+    # stochastic helper could miss an exact 240/60 target even when one
+    # existed, producing a false split-design failure after 40 attempts.
+    patient_ids = list(groups)
+    random.Random(seed).shuffle(patient_ids)
+    reachable: dict[int, tuple[str, ...]] = {0: ()}
+    for patient_id in patient_ids:
+        group_size = len(groups[patient_id])
+        if group_size > target:
+            continue
+        for total, chosen in list(reachable.items()):
+            candidate = total + group_size
+            if candidate <= target and candidate not in reachable:
+                reachable[candidate] = chosen + (patient_id,)
+        if target in reachable:
+            break
+    chosen = list(reachable.get(target, ()))
+    return chosen, target if chosen else 0
 
 
 _hash_cache: dict[str, str] = {}
