@@ -203,9 +203,11 @@ jobs:
           $uri='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-3/p0/status'
           $payload=@{account_id=$env:V623_P0_ACCOUNT;kernel_ref=$env:V623_P0_KERNEL_REF}|ConvertTo-Json -Compress
           $terminal=$null;$last=''
+          $pollInterval=5
+          $requestTimeout=10
           for($i=1;$i-le 720;$i++){
             try{
-              $v=Invoke-RestMethod -Uri $uri -Method Post -Headers $h -Body $payload -TimeoutSec 180
+              $v=Invoke-RestMethod -Uri $uri -Method Post -Headers $h -Body $payload -TimeoutSec $requestTimeout
               $s=([string]$v.status).ToUpperInvariant()
               Write-Host "P0 $i/720: $s"
               if($s-eq'COMPLETE'){
@@ -218,7 +220,7 @@ jobs:
               $last=$_.Exception.Message
               Write-Host "P0 transport/status $i/720: $last"
             }
-            Start-Sleep -Seconds 30
+            Start-Sleep -Seconds $pollInterval
           }
           if(-not $terminal){throw "P0 did not reach COMPLETE with validated receipt: $last"}
           $terminal.receipt|ConvertTo-Json -Depth 80|Set-Content -Encoding utf8 "$env:RUNNER_TEMP\v623-p0-receipt.json"
