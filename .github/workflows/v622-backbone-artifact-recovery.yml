@@ -12,7 +12,6 @@ permissions:
 
 jobs:
   recover:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'v622: recover frozen backbone artifacts read-only'
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 20
     env:
@@ -22,11 +21,9 @@ jobs:
       CGP_PROJECT_CONTROL_TOKEN: ${{ secrets.CGP_PROJECT_CONTROL_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
       - name: Deploy read-only collector, recover artifacts, and restore monitor
         shell: powershell
         run: |
@@ -72,7 +69,6 @@ jobs:
             Pop-Location
           }
           Copy-Item -LiteralPath $resultFile -Destination (Join-Path $env:GITHUB_WORKSPACE 'v622-backbone-artifact-recovery.json')
-
       - name: Upload recovered artifact package
         if: always()
         uses: actions/upload-artifact@v4
