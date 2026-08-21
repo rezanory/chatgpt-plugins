@@ -121,7 +121,7 @@ function authorized(request: Request, env: Env): boolean {
 }
 async function listExact(env: Env, account: Account): Promise<Rec[]> {
   if (!tokenFor(env, account.accountId)?.trim()) return [];
-  const response = await kaggleCall(env, account, 'ListKernels', { group: 'PROFILE', sortBy: 'DATE_RUN', pageSize: 100, search: TARGET_SLUG });
+  const response = await kaggleCall(env, account, 'ListKernels', { group: 'PROFILE', sortBy: 'DATE_RUN', pageSize: 100, search: 'pneumonia-v6-2-3-p0' });
   const kernels = Array.isArray(response.kernels) ? response.kernels.map(rec) : [];
   const expected = targetRef(account).toLowerCase();
   const ownerPrefix = `${account.owner.toLowerCase()}/pneumonia-v6-2-3-p0-`;
