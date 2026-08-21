@@ -94,14 +94,18 @@ function accountById(id: string): Account {
   return account;
 }
 function targetRef(account: Account): string { return `${account.owner}/${TARGET_SLUG}`; }
+function normalizeKernelRef(value: string, account: Account, fallback: string): string {
+  const raw = value.trim().replace(/^\\/code\\//i, '');
+  if (raw.includes('/')) return raw;
+  if (/^[A-Za-z0-9._-]+$/.test(raw)) return `${account.owner}/${raw}`;
+  return fallback;
+}
 function kernelRefFrom(value: Rec, account: Account, fallback: string): string {
   const nested = [rec(value.kernel), rec(value.kernelInfo), rec(value.kernel_info), rec(value.result)];
   const candidates = [value.ref, value.kernelRef, value.kernel_ref, value.kernelSlug, value.kernel_slug, ...nested.flatMap((x) => [x.ref, x.kernelRef, x.kernel_ref, x.slug])];
   for (const candidate of candidates) {
     if (typeof candidate !== 'string' || !candidate.trim()) continue;
-    const raw = candidate.trim();
-    if (raw.includes('/')) return raw;
-    if (/^[A-Za-z0-9._-]+$/.test(raw)) return `${account.owner}/${raw}`;
+    return normalizeKernelRef(candidate, account, fallback);
   }
   return fallback;
 }
@@ -197,7 +201,7 @@ async function findExisting(env: Env): Promise<{ account: Account; status: strin
     const exact = await listExact(env, account);
     if (exact.length > 1) throw new Error(`multiple exact P0 kernels found for ${account.accountId}`);
     if (exact.length === 1) {
-      const kernelRef = String(exact[0].ref ?? targetRef(account));
+      const kernelRef = normalizeKernelRef(String(exact[0].ref ?? ''), account, targetRef(account));
       const s = await status(env, account, kernelRef);
       const item: { account: Account; status: string; receipt?: Rec; kernelRef?: string } = { account, status: s, kernelRef };
       if (s === 'COMPLETE') {
@@ -276,7 +280,7 @@ export default {
       if (url.pathname === '/control/v6-2-3/p0/status' && request.method === 'POST') {
         const body = rec(await request.json());
         const account = accountById(String(body.account_id ?? ''));
-        const requestedRef = String(body.kernel_ref ?? '');
+        const requestedRef = normalizeKernelRef(String(body.kernel_ref ?? ''), account, '');
         if (!requestedRef || requestedRef.split('/')[0].toLowerCase() !== account.owner.toLowerCase()) throw new Error('P0 status target mismatch');
         const s = await status(env, account, requestedRef);
         const receipt = s === 'COMPLETE' ? await validatedReceipt(env, account, requestedRef) : null;
