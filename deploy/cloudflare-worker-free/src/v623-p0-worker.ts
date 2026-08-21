@@ -95,7 +95,7 @@ function accountById(id: string): Account {
 }
 function targetRef(account: Account): string { return `${account.owner}/${TARGET_SLUG}`; }
 function normalizeKernelRef(value: string, account: Account, fallback: string): string {
-  const raw = value.trim().replace(/^\\/code\\//i, '');
+  const raw = value.trim().replace(/^\/code\//i, '');
   if (raw.includes('/')) return raw;
   if (/^[A-Za-z0-9._-]+$/.test(raw)) return `${account.owner}/${raw}`;
   return fallback;
