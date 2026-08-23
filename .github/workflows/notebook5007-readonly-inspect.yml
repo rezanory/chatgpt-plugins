@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   inspect:
@@ -73,3 +73,25 @@ jobs:
           path: notebook5007-readonly-inspection.json
           if-no-files-found: warn
           retention-days: 1
+      - name: Publish run pointer
+        if: always()
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:GITHUB_WORKSPACE '.cgp'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $pointer = @{
+            run_id = [long]$env:GITHUB_RUN_ID
+            run_attempt = [int]$env:GITHUB_RUN_ATTEMPT
+            source_sha = $env:GITHUB_SHA
+            artifact_name = 'notebook5007-readonly-inspection'
+          } | ConvertTo-Json -Compress
+          [IO.File]::WriteAllText((Join-Path $dir 'notebook5007-inspection-run.json'), $pointer, [Text.UTF8Encoding]::new($false))
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .cgp/notebook5007-inspection-run.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m 'Record notebook5007 inspection run pointer'
+            git push origin HEAD:main
+          }
