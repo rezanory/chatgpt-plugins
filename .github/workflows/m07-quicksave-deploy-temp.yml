@@ -14,7 +14,7 @@ jobs:
       ${{ github.event.issue.number == 33 &&
           github.event.comment.user.id == 62356000 &&
           github.event.comment.body == 'M07_QUICKSAVE_DEPLOY' }}
-    runs-on: [self-hosted, windows, x64, v622]
+    runs-on: [self-hosted, windows, x64, online-visit]
     environment: cloudflare-production
     timeout-minutes: 15
     steps:
