@@ -6,6 +6,7 @@ on:
 
 permissions:
   id-token: write
+  actions: read
   contents: read
   issues: write
 
@@ -17,12 +18,42 @@ jobs:
           startsWith(github.event.comment.body, 'CONTROL_PLANE_V3_QUERY ') }}
     runs-on: [self-hosted, windows, x64, v622]
     environment: cloudflare-production
-    timeout-minutes: 10
+    timeout-minutes: 20
     concurrency:
       group: control-plane-v3-read-query-${{ github.event.comment.id }}
       cancel-in-progress: false
     steps:
-      - name: Validate repair2 query request
+      - name: Resolve exact v3 query implementation
+        id: resolve
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $r=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/git/ref/heads/feature/control-plane-v3" -Headers $h -TimeoutSec 30
+          $sha=[string]$r.object.sha
+          if($sha -notmatch '^[0-9a-f]{40}$'){throw 'Unable to resolve feature/control-plane-v3 SHA'}
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "CGP_QUERY_IMPL_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Publish query start marker
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $body="CONTROL PLANE V3 QUERY START | run=$env:GITHUB_RUN_ID | impl=$env:CGP_QUERY_IMPL_SHA | read_only=true | cloudflare_deploy=false | kaggle_compute=false"
+          $p=@{body=$body}|ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
+
+      - name: Checkout exact v3 query implementation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+
+      - name: Parse bounded read-only query payload
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -30,20 +61,17 @@ jobs:
           if([string]$event.repository.id -ne '1337215097'){throw 'repository id mismatch'}
           if([string]$event.comment.user.id -ne '62356000'){throw 'actor id mismatch'}
           $body=[string]$event.comment.body
-          if(-not $body.StartsWith('CONTROL_PLANE_V3_QUERY ')){throw 'query prefix mismatch'}
+          $prefix='CONTROL_PLANE_V3_QUERY '
+          if(-not $body.StartsWith($prefix)){throw 'query prefix mismatch'}
+          $raw=$body.Substring($prefix.Length).Trim()
+          if($raw.Length -lt 2 -or $raw.Length -gt 30000){throw 'query payload length invalid'}
+          $obj=$raw | ConvertFrom-Json
+          if(-not $obj.provider){throw 'query provider missing'}
+          $payload=Join-Path $env:RUNNER_TEMP 'control-plane-v3-query.json'
+          [IO.File]::WriteAllText($payload,$raw,[Text.UTF8Encoding]::new($false))
+          "CGP_QUERY_PAYLOAD=$payload" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Publish verification start marker
-        shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference='Stop'
-          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $body="M07 REPAIR2 VERIFY START | run=$env:GITHUB_RUN_ID | target=radlinaradlina/m07-postprocess-repair2 | read_only=true"
-          $p=@{body=$body}|ConvertTo-Json -Compress
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
-
-      - name: Request GitHub OIDC read identity
+      - name: Request GitHub OIDC read-broker identity
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -57,48 +85,75 @@ jobs:
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
-      - name: Inspect Repair2 directly and compact
+      - name: Execute provider read query
         shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           $ErrorActionPreference='Stop'
-          $h=@{Authorization="Bearer $env:CGP_OIDC_TOKEN"}
-          $r=Invoke-RestMethod -Uri 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/inspect/m07-postprocess-repair2' -Method Post -Headers $h -ContentType 'application/json' -Body '{}' -TimeoutSec 180
-          $log=[string]$r.log_tail
-          $files=@($r.files)
-          $wanted=@('M07_FINAL_REPORT.json','M07_LIGHTWEIGHT_HANDOFF.zip','M07_OOF_CONFUSION_MATRIX.png','M07_OOF_ROC.png','M07_OOF_PR.png','M07_POSTPROCESS_REPAIR_COMPLETE.json')
-          $names=@()
-          foreach($f in $files){
-            $n=if($f.fileName){[string]$f.fileName}elseif($f.name){[string]$f.name}else{''}
-            if($n){$names+=$n}
-          }
-          $present=@{}
-          foreach($w in $wanted){$present[$w]=[bool]($names -contains $w)}
-          $summary=[ordered]@{
-            ok=[bool]$r.ok
-            repair_ref=[string]$r.repair_ref
-            status=[string]$r.status.status
-            status_http=[int]$r.status.http_status
-            log_http=[int]$r.log_http_status
-            marker_complete=$log.Contains('M07 POSTPROCESS REPAIR COMPLETE')
-            marker_fold_rerun_false=$log.Contains('Fold training rerun: False')
-            marker_oof_recomputed_false=$log.Contains('OOF recomputed: False')
-            marker_locked_test_recomputed_false=$log.Contains('Locked Test recomputed: False')
-            marker_fixed_column=$log.Contains('Fixed column: prediction_global_threshold')
-            required_files=$present
-            file_count=$names.Count
-          }
-          $out=Join-Path $env:RUNNER_TEMP 'm07-repair2-verify-compact.json'
-          $summary | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 $out
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $out=Join-Path $env:RUNNER_TEMP 'control-plane-v3-query-result.json'
+          & $python scripts/control_plane_query.py --payload-file $env:CGP_QUERY_PAYLOAD --out $out
+          $code=$LASTEXITCODE
+          if(-not (Test-Path $out)){throw 'query result missing'}
           "CGP_QUERY_RESULT=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_QUERY_EXIT=$code" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          exit 0
 
-      - name: Publish Repair2 verification receipt
+      - name: Upload query receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-plane-v3-query-${{ github.run_id }}
+          path: ${{ env.CGP_QUERY_RESULT }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish sanitized query receipt
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference='Stop'
-          $raw=Get-Content -Raw $env:CGP_QUERY_RESULT
-          $body="## M07 REPAIR2 VERIFY PASS`n`n- Run: ``$env:GITHUB_RUN_ID```n- Read only: ``true```n- Target: ``radlinaradlina/m07-postprocess-repair2```n`n``````json`n$raw`n``````"
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, pathlib, urllib.request
+          raw=pathlib.Path(os.environ['CGP_QUERY_RESULT']).read_text(encoding='utf-8-sig')
+          if len(raw)>50000:
+              raw=raw[:50000]+'\n<truncated>'
+          status='PASS' if os.environ.get('CGP_QUERY_EXIT')=='0' else 'DIAGNOSTIC'
+          body=(f"## CONTROL PLANE V3 QUERY {status}\n\n"
+                f"- Run: `{os.environ['GITHUB_RUN_ID']}`\n"
+                f"- Query implementation: `{os.environ['CGP_QUERY_IMPL_SHA']}`\n"
+                "- Read only: `true`\n- Cloudflare deploy: `false`\n"
+                "- Kaggle compute launched: `false`\n\n```json\n"+raw+"\n```")
+          payload=json.dumps({'body':body},ensure_ascii=True).encode('utf-8')
+          url=f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/33/comments"
+          req=urllib.request.Request(url,data=payload,method='POST',headers={
+              'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],
+              'Accept':'application/vnd.github+json',
+              'X-GitHub-Api-Version':'2022-11-28',
+              'Content-Type':'application/json; charset=utf-8',
+              'User-Agent':'control-plane-v3-query-journal/1.0',
+          })
+          with urllib.request.urlopen(req,timeout=30) as response:
+              if response.status not in (200,201):
+                  raise SystemExit(f'journal HTTP {response.status}')
+          '@
+          $script | & $python -
+          if($LASTEXITCODE -ne 0){throw 'sanitized query receipt publish failed'}
+
+      - name: Publish query workflow diagnostic
+        if: failure()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $impl=if($env:CGP_QUERY_IMPL_SHA){$env:CGP_QUERY_IMPL_SHA}else{'unresolved'}
+          $body="## CONTROL PLANE V3 QUERY WORKFLOW DIAGNOSTIC`n`n- Run: ``$env:GITHUB_RUN_ID```n- Query implementation: ``$impl```n- Result: ``FAILED_BEFORE_SANITIZED_RECEIPT```n- Read only: ``true```n- Cloudflare deploy: ``false```n- Kaggle compute launched: ``false``"
           $p=@{body=$body}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
