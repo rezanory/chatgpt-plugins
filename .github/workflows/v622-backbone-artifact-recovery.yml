@@ -1,19 +1,18 @@
 name: v622-backbone-artifact-recovery
 
 on:
-  issue_comment:
-    types: [created]
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/v622-backbone-artifact-recovery.yml
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   recover:
-    if: >-
-      ${{ github.event.issue.number == 33 &&
-          github.event.comment.user.id == 62356000 &&
-          github.event.comment.body == 'V622_NOTEBOOK5007_INSPECT' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 20
     env:
       RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.RAW_CLOUDFLARE_ACCOUNT_ID }}
@@ -25,73 +24,56 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Deploy protected read-only notebook inspector, inspect, and restore monitor
-        shell: bash
+      - name: Deploy read-only collector, recover artifacts, and restore monitor
+        shell: powershell
         run: |
-          set -euo pipefail
-          worker_dir="$GITHUB_WORKSPACE/deploy/cloudflare-worker-free"
-          account_id="${RAW_CLOUDFLARE_ACCOUNT_ID:-}"
-          if [ -z "$account_id" ]; then account_id="${V622_CF_ACCOUNT_ID:-}"; fi
-          test -n "$account_id" || { echo 'Cloudflare account id unavailable'; exit 1; }
-          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'Cloudflare deploy token unavailable'; exit 1; }
-          test -n "${CGP_PROJECT_CONTROL_TOKEN:-}" || { echo 'Project control token unavailable'; exit 1; }
-          export CLOUDFLARE_ACCOUNT_ID="$account_id"
-          result_file="$RUNNER_TEMP/notebook5007-readonly-inspection.json"
-          cd "$worker_dir"
-          restore_monitor() {
-            npx --yes wrangler deploy src/v622-backbone-monitor-index.ts --config wrangler.jsonc || true
+          $ErrorActionPreference = 'Stop'
+          $workerDir = Join-Path $env:GITHUB_WORKSPACE 'deploy/cloudflare-worker-free'
+          $accountId = ([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if (-not $accountId) { $accountId = ([string]$env:V622_CF_ACCOUNT_ID).Trim() }
+          if (-not $accountId) { throw 'Cloudflare account id is unavailable' }
+          if (-not ([string]$env:CLOUDFLARE_API_TOKEN).Trim()) { throw 'Cloudflare deploy token is unavailable' }
+          if (-not ([string]$env:CGP_PROJECT_CONTROL_TOKEN).Trim()) { throw 'Project control token is unavailable' }
+          $env:CLOUDFLARE_ACCOUNT_ID = $accountId
+          $resultFile = Join-Path $env:RUNNER_TEMP 'v622-backbone-artifact-recovery.json'
+          Push-Location $workerDir
+          try {
+            npm ci
+            npx --yes wrangler deploy src/v622-backbone-artifact-worker.ts --config wrangler.jsonc
+            $headers = @{ Authorization = "Bearer $($env:CGP_PROJECT_CONTROL_TOKEN)"; 'Content-Type' = 'application/json' }
+            $uri = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/v6-2-2/backbone-artifacts'
+            $payload = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -TimeoutSec 90
+            $expected = @(
+              'BACKBONE_COMPARISON_RUN_INDEX.csv',
+              'BACKBONE_COMPARISON_SUMMARY.csv',
+              'BACKBONE_COMPARISON_MANIFEST.json',
+              'BACKBONE_INDIVIDUAL_OOF_RANKING.csv',
+              'BACKBONE_ENSEMBLE_OOF_PREDICTIONS.csv',
+              'BACKBONE_ENSEMBLE_COMBINATION_RANKING.csv',
+              'FROZEN_BACKBONE_ENSEMBLE_POLICY.json'
+            )
+            if ($payload.status -ne 'COMPLETE') { throw "Unexpected Kaggle status: $($payload.status)" }
+            $artifacts = @($payload.artifacts)
+            if ($artifacts.Count -ne $expected.Count) { throw "Expected $($expected.Count) artifacts; got $($artifacts.Count)" }
+            $actualNames = @($artifacts | ForEach-Object { [string]$_.artifact_name } | Sort-Object)
+            if (Compare-Object ($expected | Sort-Object) $actualNames) { throw 'Artifact name set mismatch' }
+            foreach ($artifact in $artifacts) {
+              $bytes = [Text.Encoding]::UTF8.GetBytes([string]$artifact.content)
+              $actual = ([Security.Cryptography.SHA256]::HashData($bytes) | ForEach-Object ToString x2) -join ''
+              if ($actual -ne [string]$artifact.sha256) { throw "SHA256 mismatch: $($artifact.artifact_name)" }
+            }
+            $payload | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $resultFile -Encoding utf8
+            Write-Host "RECOVERY_PASS artifacts=$($artifacts.Count)"
+          } finally {
+            npx --yes wrangler deploy src/v622-backbone-monitor-index.ts --config wrangler.jsonc
+            Pop-Location
           }
-          trap restore_monitor EXIT
-          npm ci
-          npx --yes wrangler deploy src/notebook5007-inspect-worker.ts --config wrangler.jsonc
-          http_code=$(curl -sS -o "$result_file" -w '%{http_code}' \
-            -X POST \
-            -H "Authorization: Bearer ${CGP_PROJECT_CONTROL_TOKEN}" \
-            -H 'Content-Type: application/json' \
-            --max-time 120 \
-            'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control/inspect/notebook5007')
-          echo "inspector_http=$http_code"
-          if [ "$http_code" != '200' ]; then
-            cat "$result_file" || true
-            exit 1
-          fi
-          python - "$result_file" <<'PY'
-          import json, pathlib, sys
-          p=pathlib.Path(sys.argv[1])
-          obj=json.loads(p.read_text(encoding='utf-8'))
-          if obj.get('ok') is False:
-              raise SystemExit(obj.get('error','inspector returned diagnostic'))
-          print('NOTEBOOK_INSPECTION_PASS', obj.get('kernel_ref'), 'source_chars=', obj.get('source_chars'), 'outputs=', obj.get('output_file_count_first_page'))
-          PY
-          cp "$result_file" "$GITHUB_WORKSPACE/notebook5007-readonly-inspection.json"
-      - name: Upload private inspection artifact
+          Copy-Item -LiteralPath $resultFile -Destination (Join-Path $env:GITHUB_WORKSPACE 'v622-backbone-artifact-recovery.json')
+      - name: Upload recovered artifact package
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: notebook5007-readonly-inspection
-          path: notebook5007-readonly-inspection.json
+          name: v622-backbone-artifact-recovery
+          path: v622-backbone-artifact-recovery.json
           if-no-files-found: warn
-          retention-days: 1
-      - name: Publish run pointer
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .cgp
-          python - <<'PY'
-          import json, os, pathlib
-          pathlib.Path('.cgp/notebook5007-inspection-run.json').write_text(json.dumps({
-              'run_id': int(os.environ['GITHUB_RUN_ID']),
-              'run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
-              'source_sha': os.environ['GITHUB_SHA'],
-              'artifact_name': 'notebook5007-readonly-inspection',
-              'trigger': 'V622_NOTEBOOK5007_INSPECT'
-          }, separators=(',',':')), encoding='utf-8')
-          PY
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .cgp/notebook5007-inspection-run.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'Record notebook5007 inspection run pointer'
-            git push origin HEAD:main
-          fi
+          retention-days: 14
