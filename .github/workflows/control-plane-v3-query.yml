@@ -103,14 +103,6 @@ jobs:
           "CGP_QUERY_EXIT=$code" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           exit 0
 
-      - name: Upload query receipt
-        uses: actions/upload-artifact@v4
-        with:
-          name: control-plane-v3-query-${{ github.run_id }}
-          path: ${{ env.CGP_QUERY_RESULT }}
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Publish sanitized query receipt
         shell: powershell
         env:
@@ -145,6 +137,14 @@ jobs:
           '@
           $script | & $python -
           if($LASTEXITCODE -ne 0){throw 'sanitized query receipt publish failed'}
+
+      - name: Upload query receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-plane-v3-query-${{ github.run_id }}
+          path: ${{ env.CGP_QUERY_RESULT }}
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Publish query workflow diagnostic
         if: failure()
