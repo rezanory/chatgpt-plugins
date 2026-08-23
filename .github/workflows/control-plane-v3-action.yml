@@ -24,7 +24,7 @@ jobs:
       ${{ github.event.issue.number == 33 &&
           github.event.comment.user.id == 62356000 &&
           startsWith(github.event.comment.body, 'CONTROL_PLANE_V3_ACTION ') }}
-    runs-on: [self-hosted, windows, x64, v622]
+    runs-on: [self-hosted, windows, x64, online-visit]
     environment: cloudflare-production
     timeout-minutes: 60
     concurrency:
