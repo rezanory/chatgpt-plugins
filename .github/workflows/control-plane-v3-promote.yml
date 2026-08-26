@@ -19,7 +19,7 @@ jobs:
       ${{ github.event.issue.number == 33 &&
           github.event.comment.user.id == 62356000 &&
           github.event.comment.body == 'CONTROL_PLANE_V3_PROMOTE' }}
-    runs-on: [self-hosted, windows, x64, v622]
+    runs-on: windows-latest
     environment: cloudflare-production
     timeout-minutes: 60
     steps:
