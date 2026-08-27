@@ -103,14 +103,10 @@ jobs:
           "CGP_QUERY_EXIT=$code" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           exit 0
 
-      - name: Upload query receipt
-        uses: actions/upload-artifact@v4
-        with:
-          name: control-plane-v3-query-${{ github.run_id }}
-          path: ${{ env.CGP_QUERY_RESULT }}
-          if-no-files-found: error
-          retention-days: 7
-
+      # The sanitized issue comment below is the durable read receipt.  Do not
+      # upload the same tiny file as an Actions artifact: the artifact service
+      # can leave a self-hosted runner blocked after reporting success, causing
+      # the whole read-only query job to consume its 20-minute timeout.
       - name: Publish sanitized query receipt
         shell: powershell
         env:
