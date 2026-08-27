@@ -25,10 +25,22 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $dir='control-plane-payloads/pneumonia-master-m07-gate'
-          $parts=Get-ChildItem $dir -Filter 'chunk-*.b64' | Sort-Object Name
-          if(@($parts).Count -ne 5){throw "expected 5 payload chunks, got $(@($parts).Count)"}
+          $names=@(
+            'chunk-00.b64',
+            'chunk-01.b64',
+            'gap-24000-28000.b64',
+            'chunk-02.b64',
+            'gap-48000-52000.b64',
+            'chunk-03.b64',
+            'chunk-04.b64'
+          )
           $b64=''
-          foreach($p in $parts){$b64 += ([IO.File]::ReadAllText($p.FullName)).Trim()}
+          foreach($name in $names){
+            $p=Join-Path $dir $name
+            if(-not (Test-Path $p)){throw "payload piece missing: $name"}
+            $b64 += ([IO.File]::ReadAllText($p)).Trim()
+          }
+          if($b64.Length -ne 91428){throw "payload base64 length mismatch: $($b64.Length)"}
           $gz=[Convert]::FromBase64String($b64)
           $input=[IO.MemoryStream]::new($gz)
           $zip=[IO.Compression.GZipStream]::new($input,[IO.Compression.CompressionMode]::Decompress)
@@ -65,7 +77,7 @@ jobs:
             $id=[string]$a.id
             $owner=[string]$a.owner
             $slug="$owner/pneumonia-master-m07-gate-224-20260828-v1"
-            $requestId="pneumonia-master-m07-gate-$id-20260828"
+            $requestId="pneumonia-master-m07-gate-$id-20260828-v2"
             try {
               if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
               $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
