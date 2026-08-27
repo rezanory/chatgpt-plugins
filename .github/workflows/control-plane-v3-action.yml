@@ -1,8 +1,8 @@
 name: control-plane-v3-action
 
 on:
-  push:
-    branches: [main]
+  issue_comment:
+    types: [created]
 
 permissions:
   id-token: write
@@ -11,100 +11,114 @@ permissions:
 
 jobs:
   action:
-    if: ${{ contains(github.event.head_commit.message, 'M07_NEAR_DUP_PUSH_LAUNCH') }}
-    runs-on: windows-latest
-    environment: cloudflare-production
-    timeout-minutes: 30
+    if: ${{ github.event.issue.number == 33 && startsWith(github.event.comment.body, 'PNEUMONIA_MASTER_M07_GATE_LAUNCH_ALL') }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 45
     steps:
-      - name: Checkout v3 payload source
+      - name: Checkout launch payload
         uses: actions/checkout@v4
         with:
-          ref: feature/control-plane-v3
+          ref: main
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Temporarily allow trusted push OIDC and deploy
-        shell: powershell
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          $ErrorActionPreference='Stop'
-          $p='deploy/cloudflare-worker-free/src/control-plane-v3-oidc.ts'
-          $c=[IO.File]::ReadAllText($p)
-          $old='if (workflowRef !== expectedWorkflow || ref !== TRUSTED_REF || eventName !== "issue_comment") {'
-          $new='if (workflowRef !== expectedWorkflow || ref !== TRUSTED_REF || !["issue_comment", "push"].includes(eventName)) {'
-          if(-not $c.Contains($old)){throw 'OIDC patch anchor missing'}
-          [IO.File]::WriteAllText($p,$c.Replace($old,$new),[Text.UTF8Encoding]::new($false))
-          $id=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
-          if(-not $id -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials missing'}
-          Write-Host "::add-mask::$id"
-          $env:CLOUDFLARE_ACCOUNT_ID=$id
-          Push-Location deploy/cloudflare-worker-free
-          try {
-            npm install --no-audit --no-fund
-            if($LASTEXITCODE -ne 0){throw 'npm install failed'}
-            npm run check
-            if($LASTEXITCODE -ne 0){throw 'temporary v3 typecheck failed'}
-            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway
-            if($LASTEXITCODE -ne 0){throw 'temporary v3 deploy failed'}
-          } finally { Pop-Location }
-
-      - name: Request push OIDC identity
+      - name: Assemble and validate exact notebook
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
-          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $uri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action"
-          $h=@{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
-          $r=Invoke-RestMethod -Uri $uri -Headers $h -TimeoutSec 30
-          $token=[string]$r.value
-          if($token.Length -lt 100){throw 'GitHub OIDC token unavailable'}
-          Write-Host "::add-mask::$token"
-          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+          $dir='control-plane-payloads/pneumonia-master-m07-gate'
+          $parts=Get-ChildItem $dir -Filter 'chunk-*.b64' | Sort-Object Name
+          if(@($parts).Count -ne 5){throw "expected 5 payload chunks, got $(@($parts).Count)"}
+          $b64=''
+          foreach($p in $parts){$b64 += ([IO.File]::ReadAllText($p.FullName)).Trim()}
+          $gz=[Convert]::FromBase64String($b64)
+          $input=[IO.MemoryStream]::new($gz)
+          $zip=[IO.Compression.GZipStream]::new($input,[IO.Compression.CompressionMode]::Decompress)
+          $out=Join-Path $env:RUNNER_TEMP 'PNEUMONIA_MASTER_M07_GATE.ipynb'
+          $output=[IO.File]::Create($out)
+          try {$zip.CopyTo($output)} finally {$output.Dispose();$zip.Dispose();$input.Dispose()}
+          $sha=(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          if($sha -ne 'e080e3e7491c6a28cd619dbf320ffba19b64d19dfae69d783b52f0c6475d0944'){throw "payload sha mismatch: $sha"}
+          $nb=[IO.File]::ReadAllText($out,[Text.Encoding]::UTF8)
+          if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'manual M07 gate flag is not locked false'}
+          if($nb -notlike '*896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9*'){throw 'frozen split fingerprint missing'}
+          if($nb -notlike '*reyhanehazad/notebook906d9e6ec9*'){throw 'required frozen split input ref missing'}
+          if($nb -notlike '*paultimothymooney/chest-xray-pneumonia*'){throw 'required raw Kermany input ref missing'}
+          if($nb -notlike '*__ACCOUNT_OWNER__*'){throw 'account owner placeholder missing'}
+          "CGP_NOTEBOOK_PATH=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_NOTEBOOK_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Submit M07 near-duplicate audit to Kaggle
+      - name: Launch M07 gate on all Kaggle accounts
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          $nb=[IO.File]::ReadAllText('control-plane-payloads/m07-near-dup-audit-v2.ipynb',[Text.Encoding]::UTF8)
-          if($nb -notlike '*896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9*'){throw 'M07 split fingerprint missing from payload'}
-          $obj=@{
-            request_id='m07-near-dup-audit-v4-kg03-20260826'
-            provider='kaggle'
-            operation_class='compute'
-            account_id='kg-03'
-            purpose='Run exact M07 frozen-split near-duplicate leakage audit only. No training, inference, threshold tuning, or model selection.'
-            service='kernels.KernelsApiService'
-            method='SaveKernel'
-            body=@{
-              slug='rezanory/m07-continuation-safe-v4'
-              newTitle='M07 Near Duplicate Leakage Audit V4'
-              text=$nb
-              language='PYTHON'
-              kernelType='NOTEBOOK'
-              isPrivate=$true
-              enableGpu=$false
-              enableInternet=$true
+          $accounts=@(
+            @{id='master';owner='azadka'},
+            @{id='kg-02';owner='radlinaradlina'},
+            @{id='kg-03';owner='rezanory'},
+            @{id='kg-04';owner='reyhanehazad'},
+            @{id='kg-05';owner='trickermark'},
+            @{id='kg-06';owner='msdenis'},
+            @{id='kg-07';owner='nisabulutmark'}
+          )
+          $template=[IO.File]::ReadAllText($env:CGP_NOTEBOOK_PATH,[Text.Encoding]::UTF8)
+          $results=@()
+          foreach($a in $accounts){
+            $id=[string]$a.id
+            $owner=[string]$a.owner
+            $slug="$owner/pneumonia-master-m07-gate-224-20260828-v1"
+            $requestId="pneumonia-master-m07-gate-$id-20260828"
+            try {
+              if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+              $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+              $oidcUri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action"
+              $oidc=Invoke-RestMethod -Uri $oidcUri -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+              $token=[string]$oidc.value
+              if($token.Length -lt 100){throw 'GitHub OIDC token unavailable'}
+              Write-Host "::add-mask::$token"
+              $nb=$template.Replace('__ACCOUNT_OWNER__',$owner)
+              if($nb -like '*__ACCOUNT_OWNER__*'){throw 'owner substitution incomplete'}
+              if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'gate flag changed during substitution'}
+              $obj=@{
+                request_id=$requestId
+                provider='kaggle'
+                operation_class='compute'
+                account_id=$id
+                purpose='Run PNEUMONIA MASTER M01-M12 with M07@224 manual gate first. UNLOCK_REMAINING_MODELS=False. Stop after M07 gate and wait for manual approval; no Phase-2 before approval.'
+                service='kernels.KernelsApiService'
+                method='SaveKernel'
+                body=@{
+                  slug=$slug
+                  newTitle="Pneumonia Master M07 Gate 224 - $owner"
+                  text=$nb
+                  language='PYTHON'
+                  kernelType='NOTEBOOK'
+                  isPrivate=$true
+                  enableGpu=$true
+                  enableInternet=$true
+                  datasetDataSources=@('paultimothymooney/chest-xray-pneumonia')
+                  kernelDataSources=@('reyhanehazad/notebook906d9e6ec9')
+                }
+              }
+              $json=$obj | ConvertTo-Json -Depth 40 -Compress
+              $r=Invoke-RestMethod -Uri 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle' -Method Post -Headers @{Authorization="Bearer $token"} -ContentType 'application/json' -Body $json -TimeoutSec 240
+              if(-not $r.ok){throw 'Control Plane returned ok=false'}
+              $providerRef=if($r.provider_ref){[string]$r.provider_ref}elseif($r.result -and $r.result.ref){[string]$r.result.ref}else{$slug}
+              $results += [pscustomobject]@{account_id=$id;owner=$owner;ok=$true;slug=$slug;provider_ref=$providerRef;request_id=$requestId}
+              Write-Host "LAUNCH PASS $id $slug"
+            } catch {
+              $msg=[string]$_.Exception.Message
+              if($msg.Length -gt 1000){$msg=$msg.Substring(0,1000)}
+              $results += [pscustomobject]@{account_id=$id;owner=$owner;ok=$false;slug=$slug;request_id=$requestId;error=$msg}
+              Write-Warning "LAUNCH FAIL $id $owner :: $msg"
             }
           }
-          $body=$obj | ConvertTo-Json -Depth 20 -Compress
-          $headers=@{Authorization="Bearer $env:CGP_ACTION_OIDC_TOKEN"}
-          try {
-            $r=Invoke-RestMethod -Uri 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle' -Method Post -Headers $headers -ContentType 'application/json' -Body $body -TimeoutSec 180
-            $raw=$r | ConvertTo-Json -Depth 30 -Compress
-            [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'm07-audit-launch.json'),$raw,[Text.UTF8Encoding]::new($false))
-            if(-not $r.ok){throw 'Kaggle action returned ok=false'}
-            "CGP_LAUNCH_OK=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          } catch {
-            $raw=@{ok=$false;error=$_.Exception.Message} | ConvertTo-Json -Compress
-            [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'm07-audit-launch.json'),$raw,[Text.UTF8Encoding]::new($false))
-            throw
-          }
+          $out=Join-Path $env:RUNNER_TEMP 'pneumonia-master-m07-gate-launch-results.json'
+          [IO.File]::WriteAllText($out,($results | ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+          $ok=@($results | Where-Object {$_.ok}).Count
+          $fail=@($results | Where-Object {-not $_.ok}).Count
+          "CGP_RESULTS_PATH=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_OK_COUNT=$ok" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_FAIL_COUNT=$fail" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "launch summary: ok=$ok fail=$fail"
 
       - name: Publish launch receipt
         if: always()
@@ -113,29 +127,43 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference='Stop'
-          $f=Join-Path $env:RUNNER_TEMP 'm07-audit-launch.json'
-          $raw=if(Test-Path $f){Get-Content -Raw $f}else{'{"ok":false,"error":"launch receipt missing"}'}
-          if($raw.Length -gt 20000){$raw=$raw.Substring(0,20000)+'<truncated>'}
-          $status=if($env:CGP_LAUNCH_OK -eq '1'){'PASS'}else{'DIAGNOSTIC'}
-          $msg="## M07 NEAR-DUP AUDIT LAUNCH $status`n`n- Request: ``m07-near-dup-audit-v4-kg03-20260826```n- Run: ``$env:GITHUB_RUN_ID```n`n``````json`n$raw`n``````"
+          $status=if($env:CGP_FAIL_COUNT -eq '0' -and $env:CGP_OK_COUNT -eq '7'){'ALL_PASS'}else{'PARTIAL_OR_FAILED'}
+          $rows=@()
+          if($env:CGP_RESULTS_PATH -and (Test-Path $env:CGP_RESULTS_PATH)){
+            $r=Get-Content -Raw $env:CGP_RESULTS_PATH | ConvertFrom-Json
+            foreach($x in @($r)){
+              $s=if($x.ok){'PASS'}else{'FAIL'}
+              $detail=if($x.ok){[string]$x.provider_ref}else{([string]$x.error).Replace('|','/')}
+              $rows += "| $($x.account_id) | $($x.owner) | $s | $($x.slug) | $detail |"
+            }
+          }
+          $table=($rows -join "`n")
+          $msg=@"
+          ## PNEUMONIA MASTER M07 GATE LAUNCH $status
+
+          - Run: ``$env:GITHUB_RUN_ID``
+          - Runner: ``$env:RUNNER_NAME``
+          - Notebook SHA256: ``$env:CGP_NOTEBOOK_SHA``
+          - ``UNLOCK_REMAINING_MODELS``: ``False``
+          - GPU requested: ``true``
+          - Frozen split input: ``reyhanehazad/notebook906d9e6ec9``
+          - Raw Kermany input: ``paultimothymooney/chest-xray-pneumonia``
+          - Successful launches: ``$env:CGP_OK_COUNT/7``
+          - Failed launches: ``$env:CGP_FAIL_COUNT/7``
+
+          | Account | Owner | Launch | Kernel | Detail |
+          |---|---|---|---|---|
+          $table
+          "@
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
           $payload=@{body=$msg}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $payload | Out-Null
 
-      - name: Restore standard issue-comment-only v3 Worker
+      - name: Fail closed on any launch failure
         if: always()
         shell: powershell
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          $ErrorActionPreference='Stop'
-          git checkout -- deploy/cloudflare-worker-free/src/control-plane-v3-oidc.ts
-          $id=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
-          Write-Host "::add-mask::$id"
-          $env:CLOUDFLARE_ACCOUNT_ID=$id
-          Push-Location deploy/cloudflare-worker-free
-          try {
-            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway
-            if($LASTEXITCODE -ne 0){throw 'standard v3 restore deploy failed'}
-          } finally { Pop-Location }
+          if($env:CGP_FAIL_COUNT -ne '0' -or $env:CGP_OK_COUNT -ne '7'){
+            throw "Kaggle launch incomplete: ok=$env:CGP_OK_COUNT fail=$env:CGP_FAIL_COUNT"
+          }
+          Write-Host 'All seven Kaggle M07 gate kernels launched.'
