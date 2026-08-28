@@ -1,0 +1,196 @@
+name: pneumonia-m07-frozen-realrun
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+jobs:
+  realrun:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_FROZEN_REALRUN_ALL' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout verified M07 payload commit
+        uses: actions/checkout@v4
+        with:
+          ref: de6a7f30b341584cef4f993a9289560efed475df
+
+      - name: Assemble and validate exact locked M07 notebook
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir='control-plane-payloads/pneumonia-master-m07-gate'
+          $names=@(
+            'chunk-00.b64',
+            'chunk-01.b64',
+            'gap-24000-28000.b64',
+            'chunk-02.b64',
+            'gap-48000-52000.b64',
+            'chunk-03.b64',
+            'chunk-04.b64'
+          )
+          $b64=''
+          foreach($name in $names){
+            $p=Join-Path $dir $name
+            if(-not (Test-Path $p)){throw "payload piece missing: $name"}
+            $b64 += ([IO.File]::ReadAllText($p)).Trim()
+          }
+          if($b64.Length -ne 91428){throw "verified payload base64 length mismatch: $($b64.Length)"}
+          $gz=[Convert]::FromBase64String($b64)
+          $input=[IO.MemoryStream]::new($gz)
+          $zip=[IO.Compression.GZipStream]::new($input,[IO.Compression.CompressionMode]::Decompress)
+          $out=Join-Path $env:RUNNER_TEMP 'PNEUMONIA_MASTER_M07_GATE_FROZEN_REALRUN.ipynb'
+          $output=[IO.File]::Create($out)
+          try {$zip.CopyTo($output)} finally {$output.Dispose();$zip.Dispose();$input.Dispose()}
+          $sha=(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          if($sha -ne 'e080e3e7491c6a28cd619dbf320ffba19b64d19dfae69d783b52f0c6475d0944'){throw "payload sha mismatch: $sha"}
+          $nb=[IO.File]::ReadAllText($out,[Text.Encoding]::UTF8)
+          if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'M07 gate is not locked'}
+          if($nb -notlike '*896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9*'){throw 'frozen split fingerprint missing'}
+          if($nb -notlike '*reyhanehazad/notebook906d9e6ec9*'){throw 'frozen split input missing'}
+          if($nb -notlike '*paultimothymooney/chest-xray-pneumonia*'){throw 'raw Kermany input missing'}
+          if($nb -notlike '*__ACCOUNT_OWNER__*'){throw 'account owner placeholder missing'}
+          "CGP_NOTEBOOK_PATH=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_NOTEBOOK_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Submit explicit Save and Run All on seven Kaggle accounts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $accounts=@(
+            @{id='master';owner='azadka'},
+            @{id='kg-02';owner='radlinaradlina'},
+            @{id='kg-03';owner='rezanory'},
+            @{id='kg-04';owner='reyhanehazad'},
+            @{id='kg-05';owner='trickermark'},
+            @{id='kg-06';owner='msdenis'},
+            @{id='kg-07';owner='nisabulutmark'}
+          )
+          $template=[IO.File]::ReadAllText($env:CGP_NOTEBOOK_PATH,[Text.Encoding]::UTF8)
+          $results=@()
+          foreach($a in $accounts){
+            $id=[string]$a.id
+            $owner=[string]$a.owner
+            $kernelSlug='pneumonia-master-m07-gate-224-frozen-realrun-20260828-v1'
+            $kernelRef="$owner/$kernelSlug"
+            $requestId="pneumonia-master-m07-frozen-realrun-$id-20260828-v1"
+            try {
+              if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+              $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+              $oidcUri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action"
+              $oidc=Invoke-RestMethod -Uri $oidcUri -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+              $token=[string]$oidc.value
+              if($token.Length -lt 100){throw 'GitHub OIDC token unavailable'}
+              Write-Host "::add-mask::$token"
+
+              $nb=$template.Replace('__ACCOUNT_OWNER__',$owner)
+              if($nb -like '*__ACCOUNT_OWNER__*'){throw 'owner substitution incomplete'}
+              if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'gate flag changed during substitution'}
+
+              $obj=@{
+                request_id=$requestId
+                provider='kaggle'
+                operation_class='compute'
+                account_id=$id
+                purpose='Execute locked M07@224 confirmation gate only. Explicit Save and Run All. Frozen split notebook and raw Kermany attached. Phase-2 remains locked pending manual approval.'
+                service='kernels.KernelsApiService'
+                method='SaveKernel'
+                body=@{
+                  slug=$kernelRef
+                  newTitle="Pneumonia Master M07 Gate 224 FROZEN REALRUN - $owner"
+                  text=$nb
+                  language='PYTHON'
+                  kernelType='NOTEBOOK'
+                  kernelExecutionType='SAVE_AND_RUN_ALL'
+                  isPrivate=$true
+                  enableGpu=$true
+                  enableInternet=$true
+                  datasetDataSources=@('paultimothymooney/chest-xray-pneumonia')
+                  kernelDataSources=@('reyhanehazad/notebook906d9e6ec9')
+                }
+              }
+              $json=$obj | ConvertTo-Json -Depth 40 -Compress
+              $r=Invoke-RestMethod -Uri 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle' -Method Post -Headers @{Authorization="Bearer $token"} -ContentType 'application/json' -Body $json -TimeoutSec 240
+              if(-not $r.ok){throw 'Control Plane returned ok=false'}
+              $providerRef=if($r.provider_ref){[string]$r.provider_ref}elseif($r.result -and $r.result.ref){[string]$r.result.ref}else{$kernelRef}
+              $providerJson=($r | ConvertTo-Json -Depth 12 -Compress)
+              if($providerJson.Length -gt 3000){$providerJson=$providerJson.Substring(0,3000)}
+              Write-Host "SAVE_AND_RUN_ALL SUBMITTED $id $kernelRef :: $providerJson"
+              $results += [pscustomobject]@{
+                account_id=$id
+                owner=$owner
+                submitted=$true
+                kernel_ref=$kernelRef
+                provider_ref=$providerRef
+                request_id=$requestId
+                execution_type='SAVE_AND_RUN_ALL'
+              }
+            } catch {
+              $msg=[string]$_.Exception.Message
+              if($msg.Length -gt 1200){$msg=$msg.Substring(0,1200)}
+              Write-Warning "FROZEN REALRUN SUBMIT FAIL $id $owner :: $msg"
+              $results += [pscustomobject]@{account_id=$id;owner=$owner;submitted=$false;kernel_ref=$kernelRef;request_id=$requestId;error=$msg}
+            }
+          }
+          $out=Join-Path $env:RUNNER_TEMP 'pneumonia-m07-frozen-realrun-results.json'
+          [IO.File]::WriteAllText($out,($results | ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+          $ok=@($results | Where-Object {$_.submitted}).Count
+          $fail=@($results | Where-Object {-not $_.submitted}).Count
+          "CGP_RESULTS_PATH=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_OK_COUNT=$ok" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_FAIL_COUNT=$fail" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "frozen realrun submission summary: submitted=$ok failed=$fail"
+
+      - name: Publish truthful frozen submission receipt
+        if: always()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $state=if($env:CGP_FAIL_COUNT -eq '0' -and $env:CGP_OK_COUNT -eq '7'){'ALL_SUBMITTED'}else{'PARTIAL_OR_FAILED'}
+          $rows=@()
+          if($env:CGP_RESULTS_PATH -and (Test-Path $env:CGP_RESULTS_PATH)){
+            $r=Get-Content -Raw $env:CGP_RESULTS_PATH | ConvertFrom-Json
+            foreach($x in @($r)){
+              $s=if($x.submitted){'SAVE_AND_RUN_ALL_SUBMITTED'}else{'FAILED'}
+              $detail=if($x.submitted){[string]$x.provider_ref}else{([string]$x.error).Replace('|','/')}
+              $rows += "| $($x.account_id) | $($x.owner) | $s | $($x.kernel_ref) | $detail |"
+            }
+          }
+          $table=($rows -join "`n")
+          $msg=@"
+          ## PNEUMONIA M07 FROZEN REALRUN $state
+
+          - Run: ``$env:GITHUB_RUN_ID``
+          - Runner: ``$env:RUNNER_NAME``
+          - Notebook SHA256: ``$env:CGP_NOTEBOOK_SHA``
+          - Execution type: ``SAVE_AND_RUN_ALL``
+          - ``UNLOCK_REMAINING_MODELS``: ``False``
+          - Frozen split input: ``reyhanehazad/notebook906d9e6ec9``
+          - Raw Kermany input: ``paultimothymooney/chest-xray-pneumonia``
+          - Successful submissions: ``$env:CGP_OK_COUNT/7``
+          - Failed submissions: ``$env:CGP_FAIL_COUNT/7``
+          - Important: ``SUBMITTED`` is not reported as ``RUNNING`` until Kaggle session telemetry or UI confirms an active session.
+
+          | Account | Owner | State | Kernel | Provider detail |
+          |---|---|---|---|---|
+          $table
+          "@
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $payload=@{body=$msg}|ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $payload | Out-Null
+
+      - name: Fail closed on any frozen submission failure
+        if: always()
+        shell: powershell
+        run: |
+          if($env:CGP_FAIL_COUNT -ne '0' -or $env:CGP_OK_COUNT -ne '7'){
+            throw "M07 frozen realrun submission incomplete: submitted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT"
+          }
+          Write-Host 'All seven frozen-input Save and Run All requests were submitted. Phase-2 remains locked.'
