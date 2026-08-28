@@ -257,39 +257,23 @@ def resolve_kaggle_kernel_ref(payload: dict[str, Any]) -> dict[str, Any]:
         raise QueryError("kernel_ref owner does not match account_id")
 
     kernels = _kaggle_kernels(account_id)
-    exact = [
-        item
-        for item in kernels
-        if str(item.get("ref", "")).lower() == requested_ref.lower()
-    ]
+    exact = [item for item in kernels if str(item.get("ref", "")).lower() == requested_ref.lower()]
 
     title = str(payload.get("kernel_title", "")).strip()
     if not title and requested_slug == "m07-gate-224-pkg-v1":
         title = f"M07 Gate 224 Package - {owner}"
     title_matches: list[dict[str, Any]] = []
     if not exact and title:
-        title_matches = [
-            item
-            for item in kernels
-            if str(item.get("title", "")).strip().lower() == title.lower()
-        ]
+        title_matches = [item for item in kernels if str(item.get("title", "")).strip().lower() == title.lower()]
 
     candidates = exact or title_matches
     not_before = str(payload.get("not_before", "")).strip()
     if not_before:
-        candidates = [
-            item
-            for item in candidates
-            if str(item.get("lastRunTime", "")) >= not_before
-        ]
+        candidates = [item for item in candidates if str(item.get("lastRunTime", "")) >= not_before]
 
     if not candidates:
         recent = [
-            {
-                "ref": str(item.get("ref", "")),
-                "title": str(item.get("title", "")),
-                "lastRunTime": str(item.get("lastRunTime", "")),
-            }
+            {"ref": str(item.get("ref", "")), "title": str(item.get("title", "")), "lastRunTime": str(item.get("lastRunTime", ""))}
             for item in kernels[:8]
         ]
         raise QueryError(
@@ -332,13 +316,7 @@ def resolve_kaggle_executable() -> str | None:
         candidate = Path(scripts) / "kaggle.exe"
         if candidate.exists():
             return str(candidate)
-    user_scripts = (
-        Path(os.environ.get("APPDATA", ""))
-        / "Python"
-        / f"Python{sys.version_info.major}{sys.version_info.minor}"
-        / "Scripts"
-        / "kaggle.exe"
-    )
+    user_scripts = Path(os.environ.get("APPDATA", "")) / "Python" / f"Python{sys.version_info.major}{sys.version_info.minor}" / "Scripts" / "kaggle.exe"
     return str(user_scripts) if user_scripts.exists() else None
 
 
@@ -349,45 +327,24 @@ def local_kaggle_kernel_status(payload: dict[str, Any]) -> Any:
     kernel_ref = str(payload.get("kernel_ref", ""))
     if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", kernel_ref):
         raise QueryError("invalid kernel_ref")
-    completed = subprocess.run(
-        [executable, "kernels", "status", kernel_ref],
-        capture_output=True,
-        text=True,
-        timeout=90,
-        check=False,
-    )
+    completed = subprocess.run([executable, "kernels", "status", kernel_ref], capture_output=True, text=True, timeout=90, check=False)
     output = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
     if completed.returncode != 0:
         raise QueryError(f"local Kaggle status failed: {sanitize(output.strip())}")
-    return {
-        "transport": "local_kaggle_cli",
-        "kernel_ref": kernel_ref,
-        "output": output.strip(),
-    }
+    return {"transport": "local_kaggle_cli", "kernel_ref": kernel_ref, "output": output.strip()}
 
 
 def kaggle_query(payload: dict[str, Any]) -> Any:
     action = str(payload.get("action", "kernel_status"))
+    if action in {"live_log", "kernel_status", "phase_probe"}:
+        return resolved_kaggle_telemetry(payload, action)
     if action == "resolved_live_log":
         return resolved_kaggle_telemetry(payload, "live_log")
     if action == "resolved_kernel_status":
         return resolved_kaggle_telemetry(payload, "kernel_status")
     if action == "resolved_phase_probe":
         return resolved_kaggle_telemetry(payload, "phase_probe")
-    try:
-        return worker_kaggle_read(payload)
-    except QueryError as worker_error:
-        if action != "kernel_status":
-            raise
-        try:
-            local = local_kaggle_kernel_status(payload)
-            return {"worker_read_error": str(worker_error), "fallback": local}
-        except QueryError as local_error:
-            message = (
-                f"Kaggle read unavailable: worker={worker_error}; "
-                f"local={local_error}"
-            )
-            raise QueryError(message) from local_error
+    return worker_kaggle_read(payload)
 
 
 def execute(payload: dict[str, Any]) -> dict[str, Any]:
@@ -401,13 +358,7 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
         result = kaggle_query(payload)
     else:
         raise QueryError("provider must be github, cloudflare, or kaggle")
-    return {
-        "ok": True,
-        "request_id": request_id,
-        "provider": provider,
-        "read_only": True,
-        "result": bounded(result),
-    }
+    return {"ok": True, "request_id": request_id, "provider": provider, "read_only": True, "result": bounded(result)}
 
 
 def main() -> int:
@@ -428,15 +379,8 @@ def main() -> int:
             "read_only": True,
             "error": str(sanitize(str(exc)))[:4000],
         }
-    Path(args.out).write_text(
-        json.dumps(result, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    print(
-        json.dumps(
-            {"ok": result.get("ok"), "provider": result.get("provider"), "out": args.out}
-        )
-    )
+    Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps({"ok": result.get("ok"), "provider": result.get("provider"), "out": args.out}))
     return 0 if result.get("ok") else 2
 
 
