@@ -215,6 +215,114 @@ def worker_kaggle_read(payload: dict[str, Any]) -> Any:
     )
 
 
+def _kaggle_kernels(account_id: str) -> list[dict[str, Any]]:
+    owner = ACCOUNTS.get(account_id)
+    if not owner:
+        raise QueryError("unknown Kaggle account_id")
+    response = worker_kaggle_read(
+        {
+            "provider": "kaggle",
+            "action": "raw_read",
+            "account_id": account_id,
+            "service": "kernels.KernelsApiService",
+            "method": "ListKernels",
+            "body": {
+                "group": "PROFILE",
+                "user": owner,
+                "sortBy": "DATE_RUN",
+                "page": 1,
+                "pageSize": 100,
+            },
+        }
+    )
+    if not isinstance(response, dict) or not response.get("ok"):
+        raise QueryError("Kaggle ListKernels read did not return ok=true")
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise QueryError("Kaggle ListKernels result missing")
+    kernels = result.get("kernels")
+    if not isinstance(kernels, list):
+        raise QueryError("Kaggle ListKernels kernels list missing")
+    return [item for item in kernels if isinstance(item, dict)]
+
+
+def resolve_kaggle_kernel_ref(payload: dict[str, Any]) -> dict[str, Any]:
+    account_id = str(payload.get("account_id", ""))
+    owner = ACCOUNTS.get(account_id)
+    requested_ref = str(payload.get("kernel_ref", "")).strip()
+    if not owner or "/" not in requested_ref:
+        raise QueryError("kernel resolver requires valid account_id and kernel_ref")
+    requested_owner, requested_slug = requested_ref.split("/", 1)
+    if requested_owner.lower() != owner.lower() or not requested_slug:
+        raise QueryError("kernel_ref owner does not match account_id")
+
+    kernels = _kaggle_kernels(account_id)
+    exact = [
+        item
+        for item in kernels
+        if str(item.get("ref", "")).lower() == requested_ref.lower()
+    ]
+
+    title = str(payload.get("kernel_title", "")).strip()
+    if not title and requested_slug == "m07-gate-224-pkg-v1":
+        title = f"M07 Gate 224 Package - {owner}"
+    title_matches: list[dict[str, Any]] = []
+    if not exact and title:
+        title_matches = [
+            item
+            for item in kernels
+            if str(item.get("title", "")).strip().lower() == title.lower()
+        ]
+
+    candidates = exact or title_matches
+    not_before = str(payload.get("not_before", "")).strip()
+    if not_before:
+        candidates = [
+            item
+            for item in candidates
+            if str(item.get("lastRunTime", "")) >= not_before
+        ]
+
+    if not candidates:
+        recent = [
+            {
+                "ref": str(item.get("ref", "")),
+                "title": str(item.get("title", "")),
+                "lastRunTime": str(item.get("lastRunTime", "")),
+            }
+            for item in kernels[:8]
+        ]
+        raise QueryError(
+            "CURRENT_PACKAGE_NOT_FOUND: no exact Kaggle kernel object matched "
+            f"requested_ref={requested_ref!r}, title={title!r}, not_before={not_before!r}; "
+            f"recent_candidates={json.dumps(recent, ensure_ascii=False, separators=(',', ':'))}"
+        )
+
+    candidates.sort(key=lambda item: str(item.get("lastRunTime", "")), reverse=True)
+    chosen = candidates[0]
+    resolved_ref = str(chosen.get("ref", "")).strip()
+    if "/" not in resolved_ref:
+        raise QueryError("resolved Kaggle kernel ref invalid")
+    return {
+        "requested_ref": requested_ref,
+        "resolved_ref": resolved_ref,
+        "matched_by": "exact_ref" if exact else "exact_title",
+        "title": str(chosen.get("title", "")),
+        "lastRunTime": str(chosen.get("lastRunTime", "")),
+    }
+
+
+def resolved_kaggle_telemetry(payload: dict[str, Any], target_action: str) -> Any:
+    resolution = resolve_kaggle_kernel_ref(payload)
+    forwarded = dict(payload)
+    forwarded["action"] = target_action
+    forwarded["kernel_ref"] = resolution["resolved_ref"]
+    forwarded.pop("kernel_title", None)
+    forwarded.pop("not_before", None)
+    result = worker_kaggle_read(forwarded)
+    return {"resolution": resolution, "telemetry": result}
+
+
 def resolve_kaggle_executable() -> str | None:
     executable = shutil.which("kaggle") or shutil.which("kaggle.exe")
     if executable:
@@ -260,6 +368,12 @@ def local_kaggle_kernel_status(payload: dict[str, Any]) -> Any:
 
 def kaggle_query(payload: dict[str, Any]) -> Any:
     action = str(payload.get("action", "kernel_status"))
+    if action == "resolved_live_log":
+        return resolved_kaggle_telemetry(payload, "live_log")
+    if action == "resolved_kernel_status":
+        return resolved_kaggle_telemetry(payload, "kernel_status")
+    if action == "resolved_phase_probe":
+        return resolved_kaggle_telemetry(payload, "phase_probe")
     try:
         return worker_kaggle_read(payload)
     except QueryError as worker_error:
