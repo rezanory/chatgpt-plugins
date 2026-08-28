@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   action:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_GATE_LAUNCH_ALL EXACT_PACKAGE_V1' }}
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_GATE_LAUNCH_ALL EXACT_PACKAGE_V2' }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 45
     steps:
@@ -77,7 +77,7 @@ jobs:
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
-      - name: Submit M07 to all seven Kaggle accounts concurrently
+      - name: Save and Run All M07 on seven Kaggle accounts concurrently
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -105,7 +105,7 @@ jobs:
                   'Authorization':'Bearer '+OIDC,
                   'Content-Type':'application/json',
                   'Accept':'application/json',
-                  'User-Agent':'pneumonia-m07-exact-package-seven/1.0',
+                  'User-Agent':'pneumonia-m07-exact-package-seven/2.0',
               })
               try:
                   with urllib.request.urlopen(req,timeout=240) as r:
@@ -117,7 +117,7 @@ jobs:
 
           def submit(item):
               aid,owner=item
-              slug=f'{owner}/pneumonia-master-m07-gate-224-exactpkg-20260828-v3'
+              slug=f'{owner}/pneumonia-master-m07-gate-224-exactpkg-20260828-v4'
               row={'account_id':aid,'owner':owner,'kernel_ref':slug,'master_owner':'azadka'}
               nb=TEMPLATE.replace('__ACCOUNT_OWNER__',owner)
               if '__ACCOUNT_OWNER__' in nb:
@@ -125,11 +125,11 @@ jobs:
               if 'UNLOCK_REMAINING_MODELS = False' not in nb or 'UNLOCK_REMAINING_MODELS = True' in nb:
                   row.update(submitted=False,error='GATE_INVARIANT_FAILED'); return row
               payload={
-                  'request_id':f'pneumonia-m07-exactpkg-{aid}-20260828-v3',
+                  'request_id':f'pneumonia-m07-exactpkg-{aid}-20260828-v4',
                   'provider':'kaggle',
                   'operation_class':'compute',
                   'account_id':aid,
-                  'purpose':'Execute exact package M07@224 gate only; azadka is master/controller; Phase-2 remains locked.',
+                  'purpose':'Execute exact package M07@224 gate only; explicit Save and Run All; azadka is master/controller; Phase-2 remains locked.',
                   'service':'kernels.KernelsApiService',
                   'method':'SaveKernel',
                   'body':{
@@ -138,6 +138,7 @@ jobs:
                       'text':nb,
                       'language':'PYTHON',
                       'kernelType':'NOTEBOOK',
+                      'kernelExecutionType':'SAVE_AND_RUN_ALL',
                       'isPrivate':True,
                       'enableGpu':True,
                       'enableInternet':True,
@@ -149,7 +150,7 @@ jobs:
                   http,result=broker(payload)
                   if not isinstance(result,dict) or not result.get('ok'):
                       raise RuntimeError('Control Plane returned ok=false')
-                  row.update(submitted=True,http_status=http,provider_ref=result.get('provider_ref'),requested_ref=result.get('requested_ref'),broker_run_id=result.get('broker_run_id'))
+                  row.update(submitted=True,http_status=http,provider_ref=result.get('provider_ref'),requested_ref=result.get('requested_ref'),broker_run_id=result.get('broker_run_id'),execution_type='SAVE_AND_RUN_ALL')
               except Exception as exc:
                   row.update(submitted=False,error=f'{type(exc).__name__}: {exc}'[:1600])
               return row
@@ -161,11 +162,11 @@ jobs:
           ok=sum(1 for r in results if r.get('submitted'))
           fail=7-ok
           master=next(r for r in results if r['account_id']=='master')
-          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'m07-exact-package-seven-results.json'
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'m07-exact-package-seven-v2-results.json'
           out.write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
               f.write(f'CGP_RESULTS_PATH={out}\nCGP_OK_COUNT={ok}\nCGP_FAIL_COUNT={fail}\nCGP_MASTER_OK={1 if master.get("submitted") else 0}\n')
-          print(json.dumps({'master_submitted':bool(master.get('submitted')),'submitted':ok,'failed':fail,'parallel_all_7':True,'phase2_locked':True}))
+          print(json.dumps({'master_submitted':bool(master.get('submitted')),'submitted':ok,'failed':fail,'parallel_all_7':True,'execution_type':'SAVE_AND_RUN_ALL','phase2_locked':True}))
           '@
           $script | & $python -
           if($LASTEXITCODE -ne 0){throw 'seven-account broker submission script failed'}
@@ -181,7 +182,7 @@ jobs:
           if($env:CGP_RESULTS_PATH -and (Test-Path $env:CGP_RESULTS_PATH)){
             $r=Get-Content -Raw $env:CGP_RESULTS_PATH | ConvertFrom-Json
             foreach($x in @($r)){
-              $state=if($x.submitted){'SAVEKERNEL_ACCEPTED'}else{'FAILED'}
+              $state=if($x.submitted){'SAVE_AND_RUN_ALL_ACCEPTED'}else{'FAILED'}
               $detail=if($x.submitted){if($x.provider_ref){[string]$x.provider_ref}else{'Control Plane ok=true'}}else{([string]$x.error).Replace('|','/')}
               $rows += "| $($x.account_id) | $($x.owner) | $state | $($x.kernel_ref) | $detail |"
             }
@@ -189,19 +190,20 @@ jobs:
           $table=($rows -join "`n")
           $state=if($env:CGP_OK_COUNT -eq '7' -and $env:CGP_MASTER_OK -eq '1'){'ALL_7_ACCEPTED'}else{'PARTIAL_OR_FAILED'}
           $msg=@"
-          ## PNEUMONIA M07 EXACT PACKAGE TRUSTED ACTION $state
+          ## PNEUMONIA M07 EXACT PACKAGE SAVE_AND_RUN $state
           - Run: ``$env:GITHUB_RUN_ID``
           - Master/controller: ``azadka``
           - Source package notebook SHA256: ``8bb444a03d26014a7e87cf5582302c7d1987bdefea98d7b47444ce03d03e04c0``
           - Operational launch payload SHA256: ``$env:CGP_NOTEBOOK_SHA``
           - Scientific gate: ``M07@224 first``
+          - Execution type: ``SAVE_AND_RUN_ALL``
           - ``UNLOCK_REMAINING_MODELS``: ``False``
           - Phase-2 auto-launch: ``disabled``
           - Submission topology: ``7 accounts concurrently``
           - Master accepted: ``$env:CGP_MASTER_OK``
           - Submitted/accepted: ``$env:CGP_OK_COUNT/7``
           - Failed: ``$env:CGP_FAIL_COUNT/7``
-          - RUNNING is not claimed by this receipt; it records authoritative SaveKernel acceptance only.
+          - RUNNING is not claimed until Kaggle session telemetry confirms it.
 
           | Account | Owner | State | Kernel | Detail |
           |---|---|---|---|---|
@@ -215,6 +217,6 @@ jobs:
         shell: powershell
         run: |
           if($env:CGP_OK_COUNT -ne '7' -or $env:CGP_FAIL_COUNT -ne '0' -or $env:CGP_MASTER_OK -ne '1'){
-            throw "M07 exact-package launch incomplete: accepted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT master=$env:CGP_MASTER_OK"
+            throw "M07 exact-package Save and Run incomplete: accepted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT master=$env:CGP_MASTER_OK"
           }
-          Write-Host 'All seven exact-package M07 SaveKernel calls accepted; azadka is master/controller; Phase-2 remains locked.'
+          Write-Host 'All seven exact-package M07 Save and Run All calls accepted; azadka is master/controller; Phase-2 remains locked.'
