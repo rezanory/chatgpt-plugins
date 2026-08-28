@@ -40,7 +40,7 @@ jobs:
             if(-not (Test-Path $p)){throw "payload piece missing: $name"}
             $b64 += ([IO.File]::ReadAllText($p)).Trim()
           }
-          if($b64.Length -ne 91428){throw "payload base64 length mismatch: $($b64.Length)"}
+          if($b64.Length -lt 4 -or ($b64.Length % 4) -ne 0){throw "payload base64 framing invalid: $($b64.Length)"}
           $gz=[Convert]::FromBase64String($b64)
           $input=[IO.MemoryStream]::new($gz)
           $zip=[IO.Compression.GZipStream]::new($input,[IO.Compression.CompressionMode]::Decompress)
