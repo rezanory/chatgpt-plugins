@@ -26,13 +26,7 @@ jobs:
           $ErrorActionPreference='Stop'
           $dir='control-plane-payloads/pneumonia-master-m07-gate'
           $names=@(
-            'chunk-00.b64',
-            'chunk-01.b64',
-            'gap-24000-28000.b64',
-            'chunk-02.b64',
-            'gap-48000-52000.b64',
-            'chunk-03.b64',
-            'chunk-04.b64'
+            'chunk-00.b64'
           )
           $b64=''
           foreach($name in $names){
@@ -40,7 +34,7 @@ jobs:
             if(-not (Test-Path $p)){throw "payload piece missing: $name"}
             $b64 += ([IO.File]::ReadAllText($p)).Trim()
           }
-          if($b64.Length -ne 91428){throw "payload base64 length mismatch: $($b64.Length)"}
+          if($b64.Length -ne 96232){throw "payload base64 length mismatch: $($b64.Length)"}
           $gz=[Convert]::FromBase64String($b64)
           $input=[IO.MemoryStream]::new($gz)
           $zip=[IO.Compression.GZipStream]::new($input,[IO.Compression.CompressionMode]::Decompress)
@@ -48,7 +42,7 @@ jobs:
           $output=[IO.File]::Create($out)
           try {$zip.CopyTo($output)} finally {$output.Dispose();$zip.Dispose();$input.Dispose()}
           $sha=(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
-          if($sha -ne 'e080e3e7491c6a28cd619dbf320ffba19b64d19dfae69d783b52f0c6475d0944'){throw "payload sha mismatch: $sha"}
+          if($sha -ne '27cef412d8891b63330d1da36c6c5209f025c98887ee725b169aa3edce116565'){throw "payload sha mismatch: $sha"}
           $nb=[IO.File]::ReadAllText($out,[Text.Encoding]::UTF8)
           if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'manual M07 gate flag is not locked false'}
           if($nb -notlike '*896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9*'){throw 'frozen split fingerprint missing'}
@@ -77,7 +71,7 @@ jobs:
             $id=[string]$a.id
             $owner=[string]$a.owner
             $slug="$owner/pneumonia-master-m07-gate-224-20260828-v1"
-            $requestId="pneumonia-master-m07-gate-$id-20260828-v2"
+            $requestId="pneumonia-master-m07-gate-$id-20260828-v3"
             try {
               if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
               $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
