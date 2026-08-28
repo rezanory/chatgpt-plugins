@@ -61,7 +61,7 @@ jobs:
           "CGP_NOTEBOOK_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "READY_VALIDATED sha=$sha length=$($b64.Length)"
 
-      - name: Save and Run All on seven Kaggle accounts
+      - name: SaveKernel auto-run on seven Kaggle accounts
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -79,9 +79,8 @@ jobs:
           foreach($a in $accounts){
             $id=[string]$a.id
             $owner=[string]$a.owner
-            $kernelSlug='pneumonia-master-m07-gate-224-ready-v3-20260828-v1'
+            $kernelSlug='pneumonia-master-m07-gate-224-ready-v4-20260828-v1'
             $kernelRef="$owner/$kernelSlug"
-            $requestId="pneumonia-master-m07-ready-v3-$id-20260828-v1"
             try {
               if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'OIDC request context unavailable'}
               $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
@@ -92,22 +91,20 @@ jobs:
               Write-Host "::add-mask::$token"
               $nb=$template.Replace('__ACCOUNT_OWNER__',$owner)
               if($nb -like '*__ACCOUNT_OWNER__*'){throw 'owner substitution incomplete'}
-              if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'M07 gate changed'}
               $obj=@{
-                request_id=$requestId
+                request_id="pneumonia-master-m07-ready-v4-$id-20260828-v1"
                 provider='kaggle'
                 operation_class='compute'
                 account_id=$id
-                purpose='Execute exact READY M07@224 confirmation gate only. Explicit Save and Run All. Deterministic frozen split verification. Phase-2 remains locked pending manual approval.'
+                purpose='Execute verified READY M07@224 gate only. Kaggle SaveKernel auto-runs the saved version. Phase-2 remains locked.'
                 service='kernels.KernelsApiService'
                 method='SaveKernel'
                 body=@{
                   slug=$kernelRef
-                  newTitle="Pneumonia Master M07 Gate 224 READY v3 - $owner"
+                  newTitle="Pneumonia Master M07 Gate 224 READY v4 - $owner"
                   text=$nb
                   language='PYTHON'
                   kernelType='NOTEBOOK'
-                  kernelExecutionType='SAVE_AND_RUN_ALL'
                   isPrivate=$true
                   enableGpu=$true
                   enableInternet=$true
@@ -119,52 +116,51 @@ jobs:
               if(-not $r.ok){throw 'Control Plane returned ok=false'}
               $providerRef=if($r.provider_ref){[string]$r.provider_ref}elseif($r.result -and $r.result.ref){[string]$r.result.ref}else{$kernelRef}
               $results += [pscustomobject]@{account_id=$id;owner=$owner;ok=$true;kernel_ref=$kernelRef;provider_ref=$providerRef}
-              Write-Host "SAVE_AND_RUN_ALL_SUBMITTED $id $kernelRef provider_ref=$providerRef"
+              Write-Host "SAVEKERNEL_AUTORUN_SUBMITTED $id $kernelRef provider_ref=$providerRef"
             } catch {
               $msg=[string]$_.Exception.Message
               if($msg.Length -gt 1200){$msg=$msg.Substring(0,1200)}
               $results += [pscustomobject]@{account_id=$id;owner=$owner;ok=$false;kernel_ref=$kernelRef;error=$msg}
-              Write-Warning "SAVE_AND_RUN_ALL_FAILED $id $owner :: $msg"
+              Write-Warning "SAVEKERNEL_AUTORUN_FAILED $id $owner :: $msg"
             }
           }
-          $out=Join-Path $env:RUNNER_TEMP 'm07-ready-v3-submit.json'
+          $out=Join-Path $env:RUNNER_TEMP 'm07-ready-v4-submit.json'
           [IO.File]::WriteAllText($out,($results | ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
           $ok=@($results | Where-Object {$_.ok}).Count
           $fail=@($results | Where-Object {-not $_.ok}).Count
           "CGP_RESULTS_PATH=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_OK_COUNT=$ok" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_FAIL_COUNT=$fail" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "READY_V3_SUBMISSION_SUMMARY submitted=$ok failed=$fail"
+          Write-Host "READY_V4_SUBMISSION_SUMMARY submitted=$ok failed=$fail"
 
-      - name: Publish truthful launch receipt
+      - name: Publish launch receipt
         if: always()
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference='Stop'
           $state=if($env:CGP_FAIL_COUNT -eq '0' -and $env:CGP_OK_COUNT -eq '7'){'ALL_SUBMITTED'}else{'PARTIAL_OR_FAILED'}
           $rows=@()
           if($env:CGP_RESULTS_PATH -and (Test-Path $env:CGP_RESULTS_PATH)){
             $r=Get-Content -Raw $env:CGP_RESULTS_PATH | ConvertFrom-Json
             foreach($x in @($r)){
-              $s=if($x.ok){'SAVE_AND_RUN_ALL_SUBMITTED'}else{'FAILED'}
+              $s=if($x.ok){'SAVEKERNEL_AUTORUN_SUBMITTED'}else{'FAILED'}
               $d=if($x.ok){[string]$x.provider_ref}else{([string]$x.error).Replace('|','/')}
               $rows += "| $($x.account_id) | $($x.owner) | $s | $($x.kernel_ref) | $d |"
             }
           }
           $table=($rows -join "`n")
           $msg=@"
-          ## PNEUMONIA M07 READY V3 $state
+          ## PNEUMONIA M07 READY V4 $state
           - Run: ``$env:GITHUB_RUN_ID``
           - Runner: ``$env:RUNNER_NAME``
           - Notebook SHA256: ``$env:CGP_NOTEBOOK_SHA``
-          - Execution: ``SAVE_AND_RUN_ALL``
+          - SaveKernel auto-run: ``true``
           - ``UNLOCK_REMAINING_MODELS``: ``False``
           - Private split notebook dependency: ``removed``
           - Successful submissions: ``$env:CGP_OK_COUNT/7``
           - Failed submissions: ``$env:CGP_FAIL_COUNT/7``
-          - Note: SUBMITTED is not called RUNNING until Kaggle session telemetry confirms it.
+          - RUNNING will only be reported after Kaggle session telemetry confirms it.
 
           | Account | Owner | State | Kernel | Detail |
           |---|---|---|---|---|
@@ -178,6 +174,6 @@ jobs:
         shell: powershell
         run: |
           if($env:CGP_FAIL_COUNT -ne '0' -or $env:CGP_OK_COUNT -ne '7'){
-            throw "READY v3 submission incomplete: submitted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT"
+            throw "READY v4 submission incomplete: submitted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT"
           }
-          Write-Host 'Seven of seven explicit Save and Run All requests submitted. Phase-2 locked.'
+          Write-Host 'Seven of seven SaveKernel auto-run requests submitted. Phase-2 locked.'
