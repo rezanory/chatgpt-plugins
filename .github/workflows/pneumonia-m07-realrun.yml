@@ -11,52 +11,54 @@ permissions:
 
 jobs:
   realrun:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_GATE_REALRUN_ALL' }}
+    if: ${{ github.event.issue.number == 33 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_GATE_READY_RUN_ALL' }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 45
     steps:
-      - name: Checkout exact M07 payload
+      - name: Checkout READY M07 payload
         uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Assemble and validate exact locked M07 notebook
+      - name: Assemble and validate READY locked M07 notebook
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          $dir='control-plane-payloads/pneumonia-master-m07-gate'
+          $dir='control-plane-payloads/pneumonia-master-m07-gate-ready'
           $names=@(
-            'chunk-00.b64',
-            'chunk-01.b64',
-            'gap-24000-28000.b64',
-            'chunk-02.b64',
-            'gap-48000-52000.b64',
-            'chunk-03.b64',
-            'chunk-04.b64'
+            'part-00.b64','part-01.b64','part-02.b64','part-03.b64','part-04.b64',
+            'part-05.b64','part-06.b64','part-07.b64','part-08.b64','part-09.b64','part-10.b64'
           )
           $b64=''
           foreach($name in $names){
             $p=Join-Path $dir $name
-            if(-not (Test-Path $p)){throw "payload piece missing: $name"}
-            $b64 += ([IO.File]::ReadAllText($p)).Trim()
+            if(-not (Test-Path $p)){throw "READY payload piece missing: $name"}
+            $piece=([IO.File]::ReadAllText($p)).Trim()
+            if(-not $piece){throw "READY payload piece empty: $name"}
+            $b64 += $piece
           }
-          if($b64.Length -lt 4 -or ($b64.Length % 4) -ne 0){throw "payload base64 framing invalid: $($b64.Length)"}
+          if($b64.Length -ne 101048){throw "READY payload base64 length mismatch: $($b64.Length)"}
+          if(($b64.Length % 4) -ne 0){throw "READY payload base64 framing invalid: $($b64.Length)"}
           $gz=[Convert]::FromBase64String($b64)
           $input=[IO.MemoryStream]::new($gz)
           $zip=[IO.Compression.GZipStream]::new($input,[IO.Compression.CompressionMode]::Decompress)
-          $out=Join-Path $env:RUNNER_TEMP 'PNEUMONIA_MASTER_M07_GATE_REALRUN.ipynb'
+          $out=Join-Path $env:RUNNER_TEMP 'PNEUMONIA_MASTER_M01_M12_M07_GATE_READY.ipynb'
           $output=[IO.File]::Create($out)
           try {$zip.CopyTo($output)} finally {$output.Dispose();$zip.Dispose();$input.Dispose()}
           $sha=(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
-          if($sha -ne 'e080e3e7491c6a28cd619dbf320ffba19b64d19dfae69d783b52f0c6475d0944'){throw "payload sha mismatch: $sha"}
+          if($sha -ne 'eb8a53d6e7ad6dc687411cc999f3218e548b2ad0abee07e990c3bfb4670848eb'){throw "READY notebook sha mismatch: $sha"}
           $nb=[IO.File]::ReadAllText($out,[Text.Encoding]::UTF8)
-          if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'M07 gate is not locked'}
+          if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'M07 gate is not locked false'}
           if($nb -notlike '*896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9*'){throw 'frozen split fingerprint missing'}
-          if($nb -notlike '*reyhanehazad/notebook906d9e6ec9*'){throw 'frozen split input missing'}
           if($nb -notlike '*paultimothymooney/chest-xray-pneumonia*'){throw 'raw Kermany input missing'}
+          if($nb -notlike '*AUTO_REBUILT_SPLIT_HASH_MISMATCH*'){throw 'deterministic split fail-closed guard missing'}
           if($nb -notlike '*__ACCOUNT_OWNER__*'){throw 'account owner placeholder missing'}
+          if($nb -like '*reyhanehazad/notebook906d9e6ec9*'){throw 'private split notebook dependency still present'}
+          if($nb -like '*radlinaradlina/m07-frozen-split-clone*'){throw 'private split clone dependency still present'}
+          if($nb -like '*kaggle kernels output*'){throw 'private kernel-output fallback still present'}
           "CGP_NOTEBOOK_PATH=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_NOTEBOOK_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "READY_NOTEBOOK_VALIDATED sha=$sha b64_length=$($b64.Length)"
 
       - name: Submit explicit Save and Run All on seven Kaggle accounts
         shell: powershell
@@ -76,9 +78,9 @@ jobs:
           foreach($a in $accounts){
             $id=[string]$a.id
             $owner=[string]$a.owner
-            $kernelSlug='pneumonia-master-m07-gate-224-realrun-20260828-v1'
+            $kernelSlug='pneumonia-master-m07-gate-224-ready-20260828-v1'
             $kernelRef="$owner/$kernelSlug"
-            $requestId="pneumonia-master-m07-realrun-$id-20260828-v1"
+            $requestId="pneumonia-master-m07-ready-$id-20260828-v1"
             try {
               if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
               $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
@@ -90,19 +92,20 @@ jobs:
 
               $nb=$template.Replace('__ACCOUNT_OWNER__',$owner)
               if($nb -like '*__ACCOUNT_OWNER__*'){throw 'owner substitution incomplete'}
-              if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'gate flag changed during substitution'}
+              if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'gate flag changed during owner substitution'}
+              if($nb -like '*reyhanehazad/notebook906d9e6ec9*'){throw 'private split dependency reappeared'}
 
               $obj=@{
                 request_id=$requestId
                 provider='kaggle'
                 operation_class='compute'
                 account_id=$id
-                purpose='Execute locked M07@224 confirmation gate only. Explicit Save and Run All. Phase-2 remains locked pending manual approval.'
+                purpose='Execute READY locked M07@224 confirmation gate only. Save and Run All. Rebuild frozen split deterministically from public raw Kermany only if not mounted; verify frozen hashes/fingerprint; Phase-2 remains locked pending manual approval.'
                 service='kernels.KernelsApiService'
                 method='SaveKernel'
                 body=@{
                   slug=$kernelRef
-                  newTitle="Pneumonia Master M07 Gate 224 REALRUN - $owner"
+                  newTitle="Pneumonia Master M07 Gate 224 READY - $owner"
                   text=$nb
                   language='PYTHON'
                   kernelType='NOTEBOOK'
@@ -111,7 +114,6 @@ jobs:
                   enableGpu=$true
                   enableInternet=$true
                   datasetDataSources=@('paultimothymooney/chest-xray-pneumonia')
-                  kernelDataSources=@('reyhanehazad/notebook906d9e6ec9')
                 }
               }
               $json=$obj | ConvertTo-Json -Depth 40 -Compress
@@ -133,20 +135,20 @@ jobs:
             } catch {
               $msg=[string]$_.Exception.Message
               if($msg.Length -gt 1200){$msg=$msg.Substring(0,1200)}
-              Write-Warning "REALRUN SUBMIT FAIL $id $owner :: $msg"
+              Write-Warning "READY REALRUN SUBMIT FAIL $id $owner :: $msg"
               $results += [pscustomobject]@{account_id=$id;owner=$owner;submitted=$false;kernel_ref=$kernelRef;request_id=$requestId;error=$msg}
             }
           }
-          $out=Join-Path $env:RUNNER_TEMP 'pneumonia-m07-realrun-results.json'
+          $out=Join-Path $env:RUNNER_TEMP 'pneumonia-m07-ready-realrun-results.json'
           [IO.File]::WriteAllText($out,($results | ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
           $ok=@($results | Where-Object {$_.submitted}).Count
           $fail=@($results | Where-Object {-not $_.submitted}).Count
           "CGP_RESULTS_PATH=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_OK_COUNT=$ok" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_FAIL_COUNT=$fail" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "realrun submission summary: submitted=$ok failed=$fail"
+          Write-Host "READY realrun submission summary: submitted=$ok failed=$fail"
 
-      - name: Publish truthful submission receipt
+      - name: Publish truthful READY submission receipt
         if: always()
         shell: powershell
         env:
@@ -165,13 +167,16 @@ jobs:
           }
           $table=($rows -join "`n")
           $msg=@"
-          ## PNEUMONIA M07 REALRUN $state
+          ## PNEUMONIA M07 READY REALRUN $state
 
           - Run: ``$env:GITHUB_RUN_ID``
           - Runner: ``$env:RUNNER_NAME``
+          - Notebook: ``PNEUMONIA_MASTER_M01_M12_M07_GATE_READY.ipynb``
           - Notebook SHA256: ``$env:CGP_NOTEBOOK_SHA``
           - Execution type: ``SAVE_AND_RUN_ALL``
           - ``UNLOCK_REMAINING_MODELS``: ``False``
+          - Private clean-split notebook dependency: ``removed``
+          - Raw Kermany dataset attached: ``paultimothymooney/chest-xray-pneumonia``
           - Successful submissions: ``$env:CGP_OK_COUNT/7``
           - Failed submissions: ``$env:CGP_FAIL_COUNT/7``
           - Important: ``SUBMITTED`` is not reported as ``RUNNING`` until Kaggle session telemetry or UI confirms an active session.
@@ -184,11 +189,11 @@ jobs:
           $payload=@{body=$msg}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $payload | Out-Null
 
-      - name: Fail closed on any submission failure
+      - name: Fail closed on any READY submission failure
         if: always()
         shell: powershell
         run: |
           if($env:CGP_FAIL_COUNT -ne '0' -or $env:CGP_OK_COUNT -ne '7'){
-            throw "M07 realrun submission incomplete: submitted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT"
+            throw "M07 READY realrun submission incomplete: submitted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT"
           }
-          Write-Host 'All seven explicit Save and Run All requests were submitted. Phase-2 remains locked.'
+          Write-Host 'All seven READY Save and Run All requests were submitted. Phase-2 remains locked.'
