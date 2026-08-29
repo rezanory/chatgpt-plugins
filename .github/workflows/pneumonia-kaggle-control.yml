@@ -1,0 +1,64 @@
+name: Pneumonia Kaggle Control
+
+on:
+  push:
+    branches:
+      - ops/pneumonia-kaggle-control
+    paths:
+      - '.github/workflows/pneumonia-kaggle-control.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pneumonia-kaggle-control
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, windows, x64]
+    timeout-minutes: 8
+    steps:
+      - name: Inspect Kaggle control plane safely
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Write-Host "MACHINE=$env:COMPUTERNAME"
+          Write-Host "RUNNER_NAME=$env:RUNNER_NAME"
+          Write-Host "USER=$env:USERNAME"
+          Write-Host "USERPROFILE=$env:USERPROFILE"
+          Write-Host '--- KAGGLE ROOT ---'
+          if (Test-Path 'C:\kaggle') {
+            Get-ChildItem -LiteralPath 'C:\kaggle' -Force -ErrorAction SilentlyContinue |
+              Select-Object Mode,Name,Length,LastWriteTime | Format-Table -AutoSize
+          } else { Write-Host 'C:\kaggle missing' }
+
+          Write-Host '--- LIKELY ORCHESTRATION DIRECTORIES ---'
+          $bases = @('C:\kaggle','C:\Users\Public',$env:USERPROFILE,'C:\Temp','D:\','E:\') |
+            Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+          $hits = New-Object System.Collections.Generic.List[string]
+          foreach ($base in $bases) {
+            Get-ChildItem -LiteralPath $base -Directory -Recurse -Depth 5 -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match '(?i)kaggle|orchestrat|pneumonia|v622|m07' } |
+              ForEach-Object { $hits.Add($_.FullName) }
+          }
+          $hits | Select-Object -Unique | ForEach-Object { Write-Host $_ }
+
+          Write-Host '--- CONTROL/STATE/LOG FILES (paths only) ---'
+          foreach ($base in ($hits | Select-Object -Unique)) {
+            if (-not (Test-Path $base)) { continue }
+            Get-ChildItem -LiteralPath $base -File -Recurse -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Name -match '(?i)control_plane_query\.py|orchestrator.*\.(py|ps1|cmd|bat)$|launch.*\.(py|ps1|cmd|bat)$|status.*\.(py|json|log|txt)$|state.*\.(json|log|txt)$|worker.*\.(json|log|txt)$|account.*\.(json|log|txt)$|.*m07.*\.(py|ipynb|json|log|txt)$' -and
+                $_.Name -notmatch '(?i)credential|secret|token|password|kaggle\.json|\.env'
+              } |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 250 FullName,Length,LastWriteTime |
+              Format-Table -AutoSize
+          }
+
+          Write-Host '--- CLI RUNTIME ---'
+          try { python --version } catch { Write-Host 'python unavailable' }
+          try { kaggle --version } catch { Write-Host 'kaggle cli unavailable' }
+          try { py -0p } catch { Write-Host 'py launcher unavailable' }
