@@ -10,21 +10,21 @@ permissions:
   issues: write
 
 concurrency:
-  group: pneumonia-m07-uploaded-zip-seven
+  group: pneumonia-m07-runfix-v3-seven
   cancel-in-progress: false
 
 jobs:
-  launch-uploaded-zip:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_RUN_UPLOADED_ZIP_V1' }}
+  launch-m07-runfix-v3:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_RUNFIX_V3' }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 45
     steps:
-      - name: Checkout exact uploaded-package payload
+      - name: Checkout payload
         uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Reconstruct and validate operational-safe notebook
+      - name: Reconstruct base and apply deterministic frozen-split runfix
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -43,18 +43,44 @@ jobs:
           if($b64.Length -ne 93120){throw "base64 length mismatch $($b64.Length)"}
           $input=[IO.MemoryStream]::new([Convert]::FromBase64String($b64))
           $zip=[IO.Compression.GZipStream]::new($input,[IO.Compression.CompressionMode]::Decompress)
-          $out=Join-Path $env:RUNNER_TEMP 'M07_UPLOADED_ZIP_OPERATIONAL_SAFE.ipynb'
+          $out=Join-Path $env:RUNNER_TEMP 'M07_RUNFIX_V3.ipynb'
           $output=[IO.File]::Create($out)
           try{$zip.CopyTo($output)}finally{$output.Dispose();$zip.Dispose();$input.Dispose()}
+          $baseSha=(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          if($baseSha -ne '234b87dec5ad3bbc564956025496411f272ed94b7efdb4719f56a1f762bdcc3c'){throw "base operational sha mismatch $baseSha"}
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $patch=@'
+          import base64,gzip,json,os,pathlib
+          p=pathlib.Path(os.environ['RUNNER_TEMP'])/'M07_RUNFIX_V3.ipynb'
+          nb=json.loads(p.read_text(encoding='utf-8'))
+          cell4=gzip.decompress(base64.b64decode('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')).decode('utf-8')
+          if len(nb.get('cells',[])) < 5: raise RuntimeError('unexpected notebook shape')
+          whole=json.dumps(nb,ensure_ascii=False)
+          for needle in ['UNLOCK_REMAINING_MODELS = False','__ACCOUNT_OWNER__','896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9']:
+              if needle not in whole: raise RuntimeError('base invariant missing: '+needle)
+          nb['cells'][4]['source']=cell4.splitlines(keepends=True)
+          nb['cells'][4]['outputs']=[]
+          nb['cells'][4]['execution_count']=None
+          nb.setdefault('metadata',{})['cgp_runfix']={
+              'schema':'m07.runfix.v3',
+              'source_sha256':'8bb444a03d26014a7e87cf5582302c7d1987bdefea98d7b47444ce03d03e04c0',
+              'base_operational_sha256':'234b87dec5ad3bbc564956025496411f272ed94b7efdb4719f56a1f762bdcc3c',
+              'fix':'remove private split-kernel dependency; deterministic exact split rebuild verified by frozen hashes',
+              'phase2_locked':True,
+          }
+          p.write_text(json.dumps(nb,ensure_ascii=False,indent=1),encoding='utf-8')
+          text=p.read_text(encoding='utf-8')
+          if 'radlinaradlina/m07-frozen-split-clone' in text: raise RuntimeError('private split dependency remains')
+          if 'def _rebuild_exact_frozen_split()' not in text: raise RuntimeError('runfix missing')
+          if 'UNLOCK_REMAINING_MODELS = True' in text: raise RuntimeError('phase2 unlock found')
+          '@
+          $patch|&$python -
+          if($LASTEXITCODE-ne 0){throw 'runfix patch failed'}
           $sha=(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
-          if($sha -ne '234b87dec5ad3bbc564956025496411f272ed94b7efdb4719f56a1f762bdcc3c'){throw "operational sha mismatch $sha"}
-          $nb=[IO.File]::ReadAllText($out,[Text.Encoding]::UTF8)
-          if($nb -notlike '*UNLOCK_REMAINING_MODELS = False*'){throw 'M07 gate not locked'}
-          if($nb -like '*UNLOCK_REMAINING_MODELS = True*'){throw 'Phase2 unlock found'}
-          if($nb -notlike '*896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9*'){throw 'split fingerprint missing'}
-          if($nb -notlike '*__ACCOUNT_OWNER__*'){throw 'owner placeholder missing'}
           "CGP_NOTEBOOK_PATH=$out"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_NOTEBOOK_SHA=$sha"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "RunFix notebook SHA=$sha"
 
       - name: Request trusted action OIDC
         shell: powershell
@@ -68,7 +94,7 @@ jobs:
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
-      - name: SAVE_AND_RUN_ALL uploaded M07 on seven accounts
+      - name: SAVE_AND_RUN_ALL M07 RunFix V3 on seven accounts
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -81,7 +107,7 @@ jobs:
           template=pathlib.Path(os.environ['CGP_NOTEBOOK_PATH']).read_text(encoding='utf-8')
           accounts=[('master','azadka'),('kg-02','radlinaradlina'),('kg-03','rezanory'),('kg-04','reyhanehazad'),('kg-05','trickermark'),('kg-06','msdenis'),('kg-07','nisabulutmark')]
           def call(payload):
-              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-uploaded-zip-run/2.0'})
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-runfix-v3/1.0'})
               try:
                   with urllib.request.urlopen(req,timeout=240) as r:
                       raw=r.read().decode('utf-8','replace');return json.loads(raw) if raw else {}
@@ -89,36 +115,34 @@ jobs:
                   raw=e.read(5000).decode('utf-8','replace');raise RuntimeError(f'HTTP {e.code}: {raw[:1800]}')
           def submit(item):
               aid,owner=item
-              kernel_slug='m07-gate-224-zip-v2-20260829'
+              kernel_slug='m07-gate-224-runfix-v3-20260830'
               kernel_ref=f'{owner}/{kernel_slug}'
               row={'account_id':aid,'owner':owner,'kernel_ref':kernel_ref}
               nb=template.replace('__ACCOUNT_OWNER__',owner)
               payload={
-                  'request_id':f'm07-uploaded-zip-{aid}-20260829-v2',
+                  'request_id':f'm07-runfix-v3-{aid}-20260830',
                   'provider':'kaggle','operation_class':'compute','account_id':aid,
-                  'purpose':'Execute the user-uploaded M07@224 gate package now. Explicit SAVE_AND_RUN_ALL. Master azadka. Stop after M07. Phase2 remains locked.',
+                  'purpose':'Execute user M07@224 package with operational RunFix V3: exact frozen split deterministic rebuild fallback; Phase2 locked.',
                   'service':'kernels.KernelsApiService','method':'SaveKernel',
                   'body':{
                       'slug':kernel_ref,
-                      'newTitle':f'M07 Gate 224 ZIP V2 20260829 - {owner}',
+                      'newTitle':f'M07 Gate 224 RunFix V3 20260830 - {owner}',
                       'text':nb,
-                      'language':'PYTHON','kernelType':'NOTEBOOK',
-                      'kernelExecutionType':'SAVE_AND_RUN_ALL',
+                      'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL',
                       'isPrivate':True,'enableGpu':True,'enableInternet':True,
-                      'datasetDataSources':['paultimothymooney/chest-xray-pneumonia'],
-                      'kernelDataSources':['reyhanehazad/notebook906d9e6ec9']
+                      'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']
                   }
               }
               try:
                   r=call(payload)
-                  if not r.get('ok'):raise RuntimeError('broker ok=false')
-                  row.update(ok=True,provider_ref=r.get('provider_ref') or (r.get('result') or {}).get('ref'),raw=json.dumps(r,ensure_ascii=False,separators=(',',':'))[:1800])
+                  if not r.get('ok'): raise RuntimeError('broker ok=false')
+                  row.update(ok=True,provider_ref=r.get('provider_ref') or (r.get('result') or {}).get('ref'))
               except Exception as e:
                   row.update(ok=False,error=f'{type(e).__name__}: {e}'[:1800])
               return row
           with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
               results=list(ex.map(submit,accounts))
-          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'m07-uploaded-zip-results.json'
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'m07-runfix-v3-results.json'
           out.write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
           ok=sum(1 for r in results if r.get('ok'));master=next(r for r in results if r['account_id']=='master')
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
@@ -128,7 +152,7 @@ jobs:
           $script|&$python -
           if($LASTEXITCODE-ne 0){throw 'submission script failed'}
 
-      - name: Publish truthful execution receipt
+      - name: Publish RunFix V3 receipt
         if: always()
         shell: powershell
         env:
@@ -140,18 +164,17 @@ jobs:
             foreach($x in @($r)){
               $state=if($x.ok){'SAVE_AND_RUN_ALL_ACCEPTED'}else{'FAILED'}
               $detail=if($x.ok){[string]$x.provider_ref}else{([string]$x.error).Replace('|','/')}
-              if($detail.Length -gt 900){$detail=$detail.Substring(0,900)}
               $rows+="| $($x.account_id) | $($x.owner) | $state | $($x.kernel_ref) | $detail |"
             }
           }
-          $state=if($env:CGP_OK_COUNT-eq'7'-and$env:CGP_MASTER_OK-eq'1'){'ALL_7_SAVE_AND_RUN_ACCEPTED'}else{'PARTIAL_OR_FAILED'}
-          $msg="## PNEUMONIA M07 UPLOADED ZIP $state`n- Run: ``$env:GITHUB_RUN_ID```n- Master/controller: ``azadka```n- Uploaded source SHA256: ``8bb444a03d26014a7e87cf5582302c7d1987bdefea98d7b47444ce03d03e04c0```n- Operational-safe SHA256: ``$env:CGP_NOTEBOOK_SHA```n- Execution type: ``SAVE_AND_RUN_ALL```n- M07@224 only: ``true```n- UNLOCK_REMAINING_MODELS: ``False```n- Phase-2: ``disabled```n- Parallel: ``7 accounts```n- Accepted: ``$env:CGP_OK_COUNT/7```n- Failed: ``$env:CGP_FAIL_COUNT/7```n- Important: accepted means execution request accepted; RUNNING is confirmed separately from Kaggle telemetry.`n`n| Account | Owner | State | Kernel | Detail |`n|---|---|---|---|---|`n$($rows-join"`n")"
+          $state=if($env:CGP_OK_COUNT-eq'7'-and$env:CGP_MASTER_OK-eq'1'){'ALL_7_ACCEPTED'}else{'PARTIAL_OR_FAILED'}
+          $msg="## PNEUMONIA M07 RUNFIX V3 $state`n- Run: ``$env:GITHUB_RUN_ID```n- Master: ``azadka```n- Source ZIP notebook SHA: ``8bb444a03d26014a7e87cf5582302c7d1987bdefea98d7b47444ce03d03e04c0```n- RunFix notebook SHA: ``$env:CGP_NOTEBOOK_SHA```n- Split fingerprint: ``896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9```n- Private split-kernel dependency: ``removed```n- Execution: ``SAVE_AND_RUN_ALL```n- M07@224 only: ``true```n- Phase2: ``locked```n- Accepted: ``$env:CGP_OK_COUNT/7```n- Failed: ``$env:CGP_FAIL_COUNT/7```n`n| Account | Owner | State | Kernel | Detail |`n|---|---|---|---|---|`n$($rows-join"`n")"
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body (@{body=$msg}|ConvertTo-Json -Compress)|Out-Null
 
-      - name: Fail closed unless all seven Save and Run requests accepted
+      - name: Fail closed unless all seven accepted
         if: always()
         shell: powershell
         run: |
-          if($env:CGP_OK_COUNT-ne'7'-or$env:CGP_FAIL_COUNT-ne'0'-or$env:CGP_MASTER_OK-ne'1'){throw "M07 execution incomplete accepted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT master=$env:CGP_MASTER_OK"}
-          Write-Host 'All seven explicit SAVE_AND_RUN_ALL requests accepted; Phase2 locked.'
+          if($env:CGP_OK_COUNT-ne'7'-or$env:CGP_FAIL_COUNT-ne'0'-or$env:CGP_MASTER_OK-ne'1'){throw "M07 RunFix V3 incomplete accepted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT master=$env:CGP_MASTER_OK"}
+          Write-Host 'All seven M07 RunFix V3 SAVE_AND_RUN_ALL requests accepted; Phase2 locked.'
