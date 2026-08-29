@@ -10,8 +10,8 @@ permissions:
   issues: write
 
 concurrency:
-  group: pneumonia-m07-continuation-v3-r8
-  cancel-in-progress: true
+  group: pneumonia-m07-continuation-v3-${{ github.event.comment.id }}
+  cancel-in-progress: false
 
 jobs:
   launch:
@@ -90,8 +90,8 @@ jobs:
           import json,os,pathlib,urllib.request,urllib.error
           endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
           text=pathlib.Path(os.environ['CGP_NOTEBOOK_PATH']).read_text(encoding='utf-8')
-          payload={'request_id':'m07-continuation-v3-kg04-20260830-r8b','provider':'kaggle','operation_class':'compute','account_id':'kg-04','purpose':'Resume canonical M07@224 from durable Fold 1-3 state; train missing Fold 4-5 only; compute OOF; first Locked Test once; Phase2 remains locked.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':'reyhanehazad/m07-resume-fold4-continuation-v3-20260830','newTitle':'M07 Resume Fold4 Continuation V3 20260830','text':text,'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':True,'enableInternet':True,'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}}
-          req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['CGP_ACTION_OIDC_TOKEN'].strip(),'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-continuation-v3/1.8'})
+          payload={'request_id':'m07-continuation-v3-kg04-20260830-r9','provider':'kaggle','operation_class':'compute','account_id':'kg-04','purpose':'Resume canonical M07@224 from durable Fold 1-3 state; train missing Fold 4-5 only; compute OOF; first Locked Test once; Phase2 remains locked.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':'reyhanehazad/m07-resume-fold4-continuation-v3-20260830','newTitle':'M07 Resume Fold4 Continuation V3 20260830','text':text,'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':True,'enableInternet':True,'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}}
+          req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['CGP_ACTION_OIDC_TOKEN'].strip(),'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-continuation-v3/1.9'})
           try:
               with urllib.request.urlopen(req,timeout=240) as r:
                   response_text=r.read().decode('utf-8','replace'); result=json.loads(response_text) if response_text else {}
