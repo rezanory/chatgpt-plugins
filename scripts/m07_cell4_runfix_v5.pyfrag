@@ -1,0 +1,342 @@
+# ============================================================
+# 2) LOCATE OR EXACTLY REBUILD + VERIFY FROZEN SPLIT (M07 SAFE FALLBACK)
+#    NO USER "ADD INPUT" IS REQUIRED
+# ============================================================
+EXPECTED_MANIFEST_HASHES = {
+    "08_clean_master_manifest.csv": "ab5b4cbf111109868fdc2b89d267eb849316904d783b9dcabf2563e895b5d5b8",
+    "09_clean_partition_master.csv": "cf76d06ecc2a5b1eca2cbb873ce6d2841a9e8e3c8b28862c0cd2343de1eb3bee",
+    "10_development_manifest.csv": "8d6daa8d93f2bfdecd3bd18f47d2b0b4a0119360d9656a23767f4a1dece14711",
+    "11_locked_test_manifest.csv": "0da162edb47a85314e62d6cd987363262486312a0999e868c50e709879b4c744",
+    "12_development_patients.csv": "b8042210c5e067e57be8fe9bf8267580a7ef48983cca5a610edc315755fa0e5e",
+    "13_locked_test_patients.csv": "7e20d8a50b99a8eae5b150a028086dc97f047cdd753d71f3198dcfe02294a91d",
+    "14_development_with_fold_assignments.csv": "f1ad389c3c6fc145461a81a4c60a31c1cb0d18c0a6e4f53dc504403f3b99ef02",
+    "15_fold_statistics.csv": "e86680053ec52672df05a77bf9b54545a9974e625fa0dd2f4e82dfa4957ad513",
+    "fold_1_train.csv": "916219bc195ab4cb6c2f0f9be0f25d660abdd5c57443f10a1f17f6714c511c4d",
+    "fold_2_train.csv": "e2df3ccab6c20bd6c6839d10a6994ff91170dace62d616d3906acf6d1120432c",
+    "fold_3_train.csv": "3761fe59d7ab63267fbeaeb2dd955f3521e9427924ff680627f66e501b7771ca",
+    "fold_4_train.csv": "5d08f5e0398326ce71433ebe0e639254c13705d032446321e62d23a7b11bab1d",
+    "fold_5_train.csv": "218f081841429cfb2b0d3d4e68de44d431449e7b91cd5cc035fe2d40e8ea4e83",
+    "fold_1_val.csv": "dff214ee67a1a45d1c657b1b126c88a378c60e353ee4ca0fc04d4ed40050b101",
+    "fold_2_val.csv": "daca7171c0b894f95282fa46d999a818f39d4392f079bc7bfa10c5800bf3e60e",
+    "fold_3_val.csv": "ca398675345c9a3f0565d994fac0f3cd3ed2233f4a19e52c8eae0adc11c1c3b4",
+    "fold_4_val.csv": "36fe0a399ce5dbd44560e725b9ce1b6296bda6619b5ba9fef86a65b1a12cb127",
+    "fold_5_val.csv": "f4fdd4795fe6bd5cdb443db9033d11cff73c3b77f99980001b2721796e2ba",
+}
+
+def file_sha256(path: Path, chunk=1024*1024) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(chunk)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+def _is_kermany_root(p: Path) -> bool:
+    return all((p/s/l).is_dir() for s in ("train", "val", "test") for l in ("NORMAL", "PNEUMONIA"))
+
+def _locate_raw_for_rebuild() -> Path:
+    base = Path("/kaggle/input")
+    if base.exists():
+        likely = base / "datasets" / "paultimothymooney" / "chest-xray-pneumonia" / "chest_xray"
+        if _is_kermany_root(likely):
+            return likely
+        for p in base.rglob("chest_xray"):
+            if p.is_dir() and _is_kermany_root(p):
+                return p
+
+    import importlib.util, subprocess
+    if importlib.util.find_spec("kagglehub") is None:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "kagglehub"])
+    import kagglehub
+    dl = Path(kagglehub.dataset_download("paultimothymooney/chest-xray-pneumonia"))
+    for p in [dl, dl/"chest_xray", dl/"chest_xray"/"chest_xray"]:
+        if _is_kermany_root(p):
+            return p
+    for p in dl.rglob("chest_xray"):
+        if _is_kermany_root(p):
+            return p
+    raise FileNotFoundError("Raw Kermany/Mooney dataset not found.")
+
+def _patient_id(filename: str, label: str):
+    stem = Path(filename).stem
+    if label == "PNEUMONIA":
+        m = re.match(r"(?i)^person(\d+)(?:_|$)", stem)
+        if m:
+            return f"PNEU_person{int(m.group(1))}"
+    if label == "NORMAL":
+        m = re.search(r"(?i)(?:NORMAL2-)?IM-(\d+)", stem)
+        if m:
+            return f"NORMAL_IM-{int(m.group(1)):04d}"
+    return None
+
+def _subtype(filename: str, label: str):
+    if label != "PNEUMONIA":
+        return ""
+    n = filename.lower()
+    if "_bacteria_" in n:
+        return "BACTERIA"
+    if "_virus_" in n:
+        return "VIRUS"
+    return "PNEUMONIA_UNSPECIFIED"
+
+def _rebuild_exact_frozen_split() -> Path:
+    from sklearn.model_selection import train_test_split, StratifiedGroupKFold
+
+    root = _locate_raw_for_rebuild()
+    out = WORK / "_AUTO_REBUILT_FROZEN_SPLIT"
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    print("Frozen split package not attached.")
+    print("Rebuilding the SAME deterministic frozen split from raw data...")
+    print("RAW ROOT:", root)
+
+    rows = []
+    IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
+    for legacy_split in ("train", "val", "test"):
+        for label in ("NORMAL", "PNEUMONIA"):
+            folder = root / legacy_split / label
+            for p in sorted(folder.iterdir()):
+                if not p.is_file() or p.suffix.lower() not in IMG_EXTS or p.name.startswith("._"):
+                    continue
+                pid = _patient_id(p.name, label)
+                rows.append({
+                    "filename": p.name,
+                    "relative_path": str(p.relative_to(root)),
+                    "absolute_path": str(p),
+                    "legacy_split": legacy_split,
+                    "model_label": label,
+                    "pneumonia_subtype": _subtype(p.name, label),
+                    "patient_id": pid,
+                    "file_size_bytes": p.stat().st_size,
+                    "sha256": file_sha256(p),
+                    "image_ok": True,
+                })
+
+    inv = pd.DataFrame(rows)
+    assert len(inv) == 5856
+    assert (inv["model_label"] == "NORMAL").sum() == 1583
+    assert (inv["model_label"] == "PNEUMONIA").sum() == 4273
+    assert inv["patient_id"].notna().all()
+
+    cleaning = inv.copy()
+    cleaning["cleaning_action"] = "KEEP"
+    cleaning["cleaning_reason"] = "UNIQUE_OR_CANONICAL_REPRESENTATIVE"
+    cleaning["duplicate_group_id"] = ""
+    cleaning["representative_relative_path"] = ""
+
+    group_num = 0
+    for sha, g in cleaning.groupby("sha256", sort=True):
+        if len(g) <= 1:
+            continue
+        group_num += 1
+        gid = f"EXACT_{group_num:05d}"
+        idxs = list(g.index)
+        pids = sorted(g["patient_id"].unique())
+        labels = sorted(g["model_label"].unique())
+        cleaning.loc[idxs, "duplicate_group_id"] = gid
+
+        if len(labels) > 1:
+            cleaning.loc[idxs, "cleaning_action"] = "QUARANTINE"
+            cleaning.loc[idxs, "cleaning_reason"] = "EXACT_DUPLICATE_LABEL_CONFLICT"
+            representative = ""
+        elif len(pids) > 1:
+            cleaning.loc[idxs, "cleaning_action"] = "QUARANTINE"
+            cleaning.loc[idxs, "cleaning_reason"] = "EXACT_DUPLICATE_PATIENT_ID_CONFLICT"
+            representative = ""
+        else:
+            representative = sorted(g["relative_path"].tolist())[0]
+            for idx in idxs:
+                if cleaning.at[idx, "relative_path"] == representative:
+                    cleaning.at[idx, "cleaning_action"] = "KEEP"
+                    cleaning.at[idx, "cleaning_reason"] = "EXACT_DUPLICATE_CANONICAL_REPRESENTATIVE"
+                else:
+                    cleaning.at[idx, "cleaning_action"] = "EXCLUDE"
+                    cleaning.at[idx, "cleaning_reason"] = "EXACT_DUPLICATE_REDUNDANT"
+            cleaning.loc[idxs, "representative_relative_path"] = representative
+
+    clean_master = cleaning[cleaning["cleaning_action"] == "KEEP"].copy()
+    clean_master = clean_master.sort_values(["patient_id", "model_label", "relative_path"]).reset_index(drop=True)
+    assert len(clean_master) == 5823
+    assert clean_master["patient_id"].nunique() == 2789
+    assert clean_master["sha256"].is_unique
+    clean_master.to_csv(out/"08_clean_master_manifest.csv", index=False)
+
+    patient_table = (
+        clean_master.groupby("patient_id")
+        .agg(model_label=("model_label", "first"), n_images=("relative_path", "size"))
+        .reset_index().sort_values("patient_id").reset_index(drop=True)
+    )
+
+    dev_patients, test_patients = train_test_split(
+        patient_table,
+        test_size=0.10,
+        random_state=42,
+        shuffle=True,
+        stratify=patient_table["model_label"],
+    )
+    dev_ids = set(dev_patients["patient_id"])
+    test_ids = set(test_patients["patient_id"])
+
+    split_master = clean_master.copy()
+    split_master["final_partition"] = np.where(
+        split_master["patient_id"].isin(test_ids), "TEST_LOCKED", "DEVELOPMENT"
+    )
+    development = split_master[split_master["final_partition"] == "DEVELOPMENT"].copy()
+    locked_test = split_master[split_master["final_partition"] == "TEST_LOCKED"].copy()
+
+    assert len(development) == 5209 and len(locked_test) == 614
+    assert development["patient_id"].nunique() == 2510
+    assert locked_test["patient_id"].nunique() == 279
+    assert set(development["patient_id"]).isdisjoint(set(locked_test["patient_id"]))
+    assert set(development["sha256"]).isdisjoint(set(locked_test["sha256"]))
+
+    split_master.to_csv(out/"09_clean_partition_master.csv", index=False)
+    development.to_csv(out/"10_development_manifest.csv", index=False)
+    locked_test.to_csv(out/"11_locked_test_manifest.csv", index=False)
+    dev_patients.sort_values("patient_id").to_csv(out/"12_development_patients.csv", index=False)
+    test_patients.sort_values("patient_id").to_csv(out/"13_locked_test_patients.csv", index=False)
+
+    sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+    dev = development.sort_values(["patient_id", "relative_path"]).reset_index(drop=True).copy()
+    dev["fold_id"] = -1
+    X_dummy = np.zeros((len(dev), 1))
+    y = dev["model_label"].to_numpy()
+    groups = dev["patient_id"].to_numpy()
+    for fold_id, (_, val_idx) in enumerate(sgkf.split(X_dummy, y, groups), start=1):
+        dev.loc[val_idx, "fold_id"] = fold_id
+    assert (dev["fold_id"] >= 1).all()
+    dev.to_csv(out/"14_development_with_fold_assignments.csv", index=False)
+
+    fold_stats = []
+    for fold in range(1, 6):
+        val = dev[dev["fold_id"] == fold].copy()
+        train = dev[dev["fold_id"] != fold].copy()
+        train_ids_fold = set(train["patient_id"])
+        val_ids_fold = set(val["patient_id"])
+        locked_ids = set(locked_test["patient_id"])
+        assert train_ids_fold.isdisjoint(val_ids_fold)
+        assert train_ids_fold.isdisjoint(locked_ids)
+        assert val_ids_fold.isdisjoint(locked_ids)
+        assert set(train["sha256"]).isdisjoint(set(val["sha256"]))
+        assert set(train["sha256"]).isdisjoint(set(locked_test["sha256"]))
+        assert set(val["sha256"]).isdisjoint(set(locked_test["sha256"]))
+        train.to_csv(out/f"fold_{fold}_train.csv", index=False)
+        val.to_csv(out/f"fold_{fold}_val.csv", index=False)
+        fold_stats.append({
+            "fold_id": fold,
+            "train_images": len(train),
+            "val_images": len(val),
+            "train_patients": len(train_ids_fold),
+            "val_patients": len(val_ids_fold),
+            "train_NORMAL": int((train["model_label"] == "NORMAL").sum()),
+            "train_PNEUMONIA": int((train["model_label"] == "PNEUMONIA").sum()),
+            "val_NORMAL": int((val["model_label"] == "NORMAL").sum()),
+            "val_PNEUMONIA": int((val["model_label"] == "PNEUMONIA").sum()),
+            "train_val_patient_overlap": len(train_ids_fold & val_ids_fold),
+            "val_test_patient_overlap": len(val_ids_fold & locked_ids),
+            "train_test_patient_overlap": len(train_ids_fold & locked_ids),
+        })
+    pd.DataFrame(fold_stats).to_csv(out/"15_fold_statistics.csv", index=False)
+
+    mismatches = []
+    for name, expected in EXPECTED_MANIFEST_HASHES.items():
+        actual = file_sha256(out/name)
+        if actual != expected:
+            mismatches.append((name, expected, actual))
+    if mismatches:
+        print("\n❌ AUTO-REBUILD DOES NOT MATCH THE FROZEN SPLIT.")
+        for name, expected, actual in mismatches:
+            print(name, "\n expected:", expected, "\n actual  :", actual)
+        raise RuntimeError("AUTO_REBUILT_SPLIT_HASH_MISMATCH — training blocked.")
+
+    hashes = {name: file_sha256(out/name) for name in EXPECTED_MANIFEST_HASHES}
+    frozen_policy = {
+        "schema": "kermany.clean.split.v1",
+        "dataset_slug": "paultimothymooney/chest-xray-pneumonia",
+        "seed": 42,
+        "test_size": 0.10,
+        "n_folds": 5,
+        "patient_id_policy": {
+            "PNEUMONIA": "personXXXX from filename",
+            "NORMAL": "IM-XXXX from filename",
+        },
+        "class_policy": {"BACTERIA": "PNEUMONIA", "VIRUS": "PNEUMONIA", "NORMAL": "NORMAL"},
+        "exact_duplicate_policy": {
+            "same_patient_same_label": "keep one lexicographically smallest relative_path",
+            "different_patient_ids": "quarantine entire exact-duplicate group",
+            "different_labels": "quarantine entire exact-duplicate group",
+        },
+        "near_duplicate_policy": "audit only; no automatic removal because no strong SSIM>=0.95 evidence",
+        "split_policy": "patient-wise stratified 90/10, random_state=42",
+        "validation_policy": "5-fold StratifiedGroupKFold, group=patient_id, shuffle=True, random_state=42",
+        "manifest_hashes": hashes,
+    }
+    blob = json.dumps(frozen_policy, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    frozen_policy["split_package_fingerprint_sha256"] = hashlib.sha256(blob).hexdigest()
+    (out/"17_FROZEN_SPLIT_POLICY_AND_HASHES.json").write_text(
+        json.dumps(frozen_policy, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    assert frozen_policy["split_package_fingerprint_sha256"] == EXPECTED_SPLIT_FINGERPRINT
+
+    print("✅ SAME frozen split rebuilt automatically.")
+    print("✅ All manifest hashes match the previously frozen values.")
+    print("✅ Fingerprint:", frozen_policy["split_package_fingerprint_sha256"])
+    return out
+
+def locate_split_root() -> Path:
+    search_roots = [Path("/kaggle/input"), Path("/kaggle/working")]
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for hit in root.rglob("17_FROZEN_SPLIT_POLICY_AND_HASHES.json"):
+            try:
+                payload = json.loads(hit.read_text(encoding="utf-8"))
+                if payload.get("split_package_fingerprint_sha256") == EXPECTED_SPLIT_FINGERPRINT:
+                    print("Using attached frozen split:", hit.parent)
+                    return hit.parent
+            except Exception:
+                pass
+
+    zip_candidates = []
+    for root in search_roots:
+        if root.exists():
+            zip_candidates.extend(root.rglob("KERMANY_CLEAN_SPLIT_V1_FROZEN.zip"))
+    for zpath in zip_candidates:
+        extract_root = WORK / "_frozen_split_extracted"
+        if extract_root.exists():
+            shutil.rmtree(extract_root)
+        extract_root.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zpath, "r") as z:
+            z.extractall(extract_root)
+        for hit in extract_root.rglob("17_FROZEN_SPLIT_POLICY_AND_HASHES.json"):
+            payload = json.loads(hit.read_text(encoding="utf-8"))
+            if payload.get("split_package_fingerprint_sha256") == EXPECTED_SPLIT_FINGERPRINT:
+                print("Using frozen ZIP:", zpath)
+                return hit.parent
+
+    return _rebuild_exact_frozen_split()
+
+SPLIT_ROOT = locate_split_root()
+POLICY_PATH = SPLIT_ROOT / "17_FROZEN_SPLIT_POLICY_AND_HASHES.json"
+policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+actual_fp = policy["split_package_fingerprint_sha256"]
+
+print("\nSPLIT_ROOT:", SPLIT_ROOT)
+print("Expected fingerprint:", EXPECTED_SPLIT_FINGERPRINT)
+print("Actual fingerprint  :", actual_fp)
+assert actual_fp == EXPECTED_SPLIT_FINGERPRINT, "WRONG SPLIT — TRAINING BLOCKED"
+
+for name, expected_hash in EXPECTED_MANIFEST_HASHES.items():
+    path = SPLIT_ROOT / name
+    assert path.is_file(), f"Missing manifest: {name}"
+    assert file_sha256(path) == expected_hash, f"Frozen manifest mismatch: {name}"
+
+print("\n✅ FROZEN SPLIT VERIFIED")
+print("✅ All manifest hashes match the split you already froze")
+print("✅ Development = 5209 images / 2510 patients")
+print("✅ Locked Test = 614 images / 279 patients")
+print("✅ M07 is allowed to continue")
