@@ -1,0 +1,188 @@
+name: control-plane-v3-action-v4
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: pneumonia-m07-runfix-v4-seven
+  cancel-in-progress: false
+
+jobs:
+  launch-m07-runfix-v4:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_RUNFIX_V4' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout payload
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Reconstruct base and apply canonical SHA correction
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $names=@(
+            'docs/pneumonia-v6-2-2-m07-exact-part-00.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-01.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-02.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-03.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-04.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-05.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-06.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-07.b64'
+          )
+          $b64=''
+          foreach($name in $names){if(-not(Test-Path $name)){throw "missing $name"};$b64+=([IO.File]::ReadAllText($name)).Trim()}
+          if($b64.Length -ne 93120){throw "base64 length mismatch $($b64.Length)"}
+          $input=[IO.MemoryStream]::new([Convert]::FromBase64String($b64))
+          $zip=[IO.Compression.GZipStream]::new($input,[IO.Compression.CompressionMode]::Decompress)
+          $out=Join-Path $env:RUNNER_TEMP 'M07_RUNFIX_V4.ipynb'
+          $output=[IO.File]::Create($out)
+          try{$zip.CopyTo($output)}finally{$output.Dispose();$zip.Dispose();$input.Dispose()}
+          $baseSha=(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          if($baseSha -ne '234b87dec5ad3bbc564956025496411f272ed94b7efdb4719f56a1f762bdcc3c'){throw "base operational sha mismatch $baseSha"}
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $patch=@'
+          import base64,gzip,json,os,pathlib,re
+          root=pathlib.Path.cwd()
+          previous=(root/'.github/workflows/control-plane-v3-action.yml').read_text(encoding='utf-8')
+          m=re.search(r"cell4=gzip\.decompress\(base64\.b64decode\('([^']+)'\)\)\.decode\('utf-8'\)",previous)
+          if not m: raise RuntimeError('V3 split patch payload not found')
+          cell4=gzip.decompress(base64.b64decode(m.group(1))).decode('utf-8')
+          bad='f4fdd4795fe6bd5cdb443db9033d11cff73c3b77f99980001b2721796e2ba'
+          good='f4fdd4795fe6bd5cdb7cb443db9033d11cff73c3b77f99980001b2721796e2ba'
+          if bad not in cell4: raise RuntimeError('expected V3 typo not found')
+          cell4=cell4.replace(bad,good).replace('✅ M01 is allowed to continue','✅ M07 is allowed to continue')
+          compile(cell4,'<m07-runfix-v4-cell4>','exec')
+          p=pathlib.Path(os.environ['RUNNER_TEMP'])/'M07_RUNFIX_V4.ipynb'
+          nb=json.loads(p.read_text(encoding='utf-8'))
+          if len(nb.get('cells',[])) < 5: raise RuntimeError('unexpected notebook shape')
+          whole=json.dumps(nb,ensure_ascii=False)
+          for needle in ['UNLOCK_REMAINING_MODELS = False','__ACCOUNT_OWNER__','896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9']:
+              if needle not in whole: raise RuntimeError('base invariant missing: '+needle)
+          nb['cells'][4]['source']=cell4.splitlines(keepends=True)
+          nb['cells'][4]['outputs']=[]
+          nb['cells'][4]['execution_count']=None
+          nb.setdefault('metadata',{})['cgp_runfix']={
+              'schema':'m07.runfix.v4',
+              'source_sha256':'8bb444a03d26014a7e87cf5582302c7d1987bdefea98d7b47444ce03d03e04c0',
+              'base_operational_sha256':'234b87dec5ad3bbc564956025496411f272ed94b7efdb4719f56a1f762bdcc3c',
+              'canonical_fold_5_val_sha256':good,
+              'phase2_locked':True
+          }
+          p.write_text(json.dumps(nb,ensure_ascii=False,indent=1),encoding='utf-8')
+          text=p.read_text(encoding='utf-8')
+          if 'radlinaradlina/m07-frozen-split-clone' in text: raise RuntimeError('private split dependency remains')
+          if 'UNLOCK_REMAINING_MODELS = True' in text: raise RuntimeError('phase2 unlock found')
+          if good not in text: raise RuntimeError('canonical fold5 hash missing')
+          '@
+          $patch|&$python -
+          if($LASTEXITCODE-ne 0){throw 'V4 patch failed'}
+          $sha=(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          "CGP_NOTEBOOK_PATH=$out"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_NOTEBOOK_SHA=$sha"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "RunFix V4 notebook SHA=$sha"
+
+      - name: Request trusted action OIDC
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'OIDC context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'OIDC unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: SAVE_AND_RUN_ALL M07 RunFix V4 on seven accounts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import concurrent.futures,json,os,pathlib,urllib.request,urllib.error
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+          oidc=os.environ['CGP_ACTION_OIDC_TOKEN'].strip()
+          template=pathlib.Path(os.environ['CGP_NOTEBOOK_PATH']).read_text(encoding='utf-8')
+          accounts=[('master','azadka'),('kg-02','radlinaradlina'),('kg-03','rezanory'),('kg-04','reyhanehazad'),('kg-05','trickermark'),('kg-06','msdenis'),('kg-07','nisabulutmark')]
+          def call(payload):
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-runfix-v4/1.0'})
+              try:
+                  with urllib.request.urlopen(req,timeout=240) as r:
+                      raw=r.read().decode('utf-8','replace');return json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as e:
+                  raw=e.read(5000).decode('utf-8','replace');raise RuntimeError(f'HTTP {e.code}: {raw[:1800]}')
+          def submit(item):
+              aid,owner=item
+              kernel_slug='m07-gate-224-runfix-v4-20260830'
+              kernel_ref=f'{owner}/{kernel_slug}'
+              row={'account_id':aid,'owner':owner,'kernel_ref':kernel_ref}
+              text=template.replace('__ACCOUNT_OWNER__',owner)
+              payload={
+                  'request_id':f'm07-runfix-v4-{aid}-20260830',
+                  'provider':'kaggle','operation_class':'compute','account_id':aid,
+                  'purpose':'Execute M07@224 RunFix V4; deterministic frozen split exact rebuild with canonical hashes; Phase2 locked.',
+                  'service':'kernels.KernelsApiService','method':'SaveKernel',
+                  'body':{
+                      'slug':kernel_ref,'newTitle':f'M07 Gate 224 RunFix V4 20260830 - {owner}',
+                      'text':text,'language':'PYTHON','kernelType':'NOTEBOOK',
+                      'kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,
+                      'enableGpu':True,'enableInternet':True,
+                      'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']
+                  }
+              }
+              try:
+                  r=call(payload)
+                  if not r.get('ok'): raise RuntimeError('broker ok=false')
+                  row.update(ok=True,provider_ref=r.get('provider_ref') or (r.get('result') or {}).get('ref'))
+              except Exception as e:
+                  row.update(ok=False,error=f'{type(e).__name__}: {e}'[:1800])
+              return row
+          with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
+              results=list(ex.map(submit,accounts))
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'m07-runfix-v4-results.json'
+          out.write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
+          ok=sum(1 for r in results if r.get('ok')); master=next(r for r in results if r['account_id']=='master')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write(f'CGP_RESULTS_PATH={out}\nCGP_OK_COUNT={ok}\nCGP_FAIL_COUNT={7-ok}\nCGP_MASTER_OK={1 if master.get("ok") else 0}\n')
+          print(json.dumps({'save_and_run_all_accepted':ok,'failed':7-ok,'master':bool(master.get('ok')),'parallel':True}))
+          '@
+          $script|&$python -
+          if($LASTEXITCODE-ne 0){throw 'submission script failed'}
+
+      - name: Publish RunFix V4 receipt
+        if: always()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $rows=@()
+          if($env:CGP_RESULTS_PATH-and(Test-Path $env:CGP_RESULTS_PATH)){
+            $r=Get-Content -Raw $env:CGP_RESULTS_PATH|ConvertFrom-Json
+            foreach($x in @($r)){
+              $state=if($x.ok){'SAVE_AND_RUN_ALL_ACCEPTED'}else{'FAILED'}
+              $detail=if($x.ok){[string]$x.provider_ref}else{([string]$x.error).Replace('|','/')}
+              $rows+="| $($x.account_id) | $($x.owner) | $state | $($x.kernel_ref) | $detail |"
+            }
+          }
+          $state=if($env:CGP_OK_COUNT-eq'7'-and$env:CGP_MASTER_OK-eq'1'){'ALL_7_ACCEPTED'}else{'PARTIAL_OR_FAILED'}
+          $msg="## PNEUMONIA M07 RUNFIX V4 $state`n- Run: ``$env:GITHUB_RUN_ID```n- Master: ``azadka```n- Source ZIP SHA: ``8bb444a03d26014a7e87cf5582302c7d1987bdefea98d7b47444ce03d03e04c0```n- RunFix SHA: ``$env:CGP_NOTEBOOK_SHA```n- Split fingerprint target: ``896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9```n- Canonical fold_5_val SHA: ``f4fdd4795fe6bd5cdb7cb443db9033d11cff73c3b77f99980001b2721796e2ba```n- Phase2: ``locked```n- Accepted: ``$env:CGP_OK_COUNT/7```n- Failed: ``$env:CGP_FAIL_COUNT/7```n`n| Account | Owner | State | Kernel | Detail |`n|---|---|---|---|---|`n$($rows-join"`n")"
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body (@{body=$msg}|ConvertTo-Json -Compress)|Out-Null
+
+      - name: Fail closed unless all seven accepted
+        if: always()
+        shell: powershell
+        run: |
+          if($env:CGP_OK_COUNT-ne'7'-or$env:CGP_FAIL_COUNT-ne'0'-or$env:CGP_MASTER_OK-ne'1'){throw "M07 RunFix V4 incomplete accepted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT master=$env:CGP_MASTER_OK"}
+          Write-Host 'All seven M07 RunFix V4 SAVE_AND_RUN_ALL requests accepted; Phase2 locked.'
