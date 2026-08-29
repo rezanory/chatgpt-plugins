@@ -8,6 +8,7 @@ import {
 } from "./kaggle";
 import { v622ValidationWaveResults } from "./metrics";
 import { v622ProjectPlan } from "./project-plan";
+import { v622WavePlan } from "./matrix-run";
 
 type RunKind = "train" | "hpo" | "confirm" | "finalization";
 
@@ -37,6 +38,16 @@ const RECOVERY_TARGETS: readonly RecoveryTarget[] = [
   { id: "CONFIRM-C02", kind: "confirm", accountId: "kg-05", ownerSlug: "trickermark", kernelRef: "trickermark/pneumonia-v6-2-2-confirm-c02" },
   { id: "CONFIRM-C03", kind: "confirm", accountId: "kg-06", ownerSlug: "msdenis", kernelRef: "msdenis/pneumonia-v6-2-2-confirm-c03" },
 ] as const;
+
+// The finalization handoff is a single canonical kernel. Keeping this identity
+// explicit avoids an additional seven-account inventory fan-out on the aggregate
+// status route, which must stay below Cloudflare's 50-subrequest limit.
+const FINALIZATION_TARGET = {
+  accountId: "master" as const,
+  ownerSlug: "azadka",
+  kernelRef: "azadka/pneumonia-v6-2-w01-strict-handoff-merge-s13",
+  title: "Pneumonia V6.2 W01 strict handoff merge S13",
+} as const;
 
 const ALL_ACCOUNTS: readonly AccountId[] = ["master", "kg-02", "kg-03", "kg-04", "kg-05", "kg-06", "kg-07"];
 const ARCHITECTURE_TERMS = ["convnext", "efficientnet", "resnet", "densenet", "mobilenet", "swin", "maxvit", "coatnet", "regnet", "seresnet", "vision transformer", "vit"] as const;
@@ -115,40 +126,31 @@ function kernelField(value: unknown, field: "ref" | "title"): string {
 }
 
 async function finalizationCandidates(env: WorkerEnv): Promise<Array<Record<string, unknown>>> {
-  const found: Array<{ accountId: AccountId; ref: string; title: string }> = [];
-  const seen = new Set<string>();
-  const matcher = /(merge|champion|ensemble|selection)/i;
-  const inventories = await Promise.all(
-    ALL_ACCOUNTS.map(async (accountId) => {
-      try {
-        return { accountId, kernels: await listKernels(env, accountId, "pneumonia-v6-2-2", 100) };
-      } catch {
-        return { accountId, kernels: [] as unknown[] };
-      }
-    }),
-  );
-  for (const inventory of inventories) {
-    for (const kernel of inventory.kernels) {
-      const ref = kernelField(kernel, "ref");
-      const title = kernelField(kernel, "title");
-      if (!ref || !matcher.test(`${ref} ${title}`) || seen.has(ref)) continue;
-      seen.add(ref);
-      found.push({ accountId: inventory.accountId, ref, title });
-      if (found.length >= 8) break;
-    }
-    if (found.length >= 8) break;
+  const candidate = FINALIZATION_TARGET;
+  try {
+    const payload = await kernelStatus(env, candidate.accountId, candidate.kernelRef);
+    const status = normalizeStatus(payload);
+    return [{
+      kind: "finalization",
+      account_id: candidate.accountId,
+      kernel_ref: candidate.kernelRef,
+      title: candidate.title,
+      status,
+      lifecycle: lifecycle(status),
+      discovery: "canonical_manifest",
+    }];
+  } catch (error) {
+    return [{
+      kind: "finalization",
+      account_id: candidate.accountId,
+      kernel_ref: candidate.kernelRef,
+      title: candidate.title,
+      status: "PROBE_ERROR",
+      lifecycle: "needs_repair",
+      discovery: "canonical_manifest",
+      error: error instanceof Error ? error.message.slice(0, 500) : "unknown error",
+    }];
   }
-  return Promise.all(
-    found.map(async (candidate) => {
-      try {
-        const payload = await kernelStatus(env, candidate.accountId, candidate.ref);
-        const status = normalizeStatus(payload);
-        return { kind: "finalization", account_id: candidate.accountId, kernel_ref: candidate.ref, title: candidate.title, status, lifecycle: lifecycle(status) };
-      } catch (error) {
-        return { kind: "finalization", account_id: candidate.accountId, kernel_ref: candidate.ref, title: candidate.title, status: "PROBE_ERROR", lifecycle: "needs_repair", error: error instanceof Error ? error.message.slice(0, 500) : "unknown error" };
-      }
-    }),
-  );
 }
 
 interface MatrixCandidate {
@@ -159,6 +161,67 @@ interface MatrixCandidate {
   workerNumber: number;
   modelId: string;
   resolution: number;
+}
+
+function canonicalMatrixTargets(): MatrixCandidate[] {
+  const recovered = RECOVERY_TARGETS
+    .filter((target) => target.kind === "train" && target.modelCode && target.resolution)
+    .map((target) => ({
+      accountId: target.accountId,
+      ownerSlug: target.ownerSlug,
+      kernelRef: target.kernelRef,
+      workerId: target.id,
+      workerNumber: Number(target.id.slice(1)),
+      modelId: target.modelCode!,
+      resolution: target.resolution!,
+    }));
+  const planned = [2, 3, 4, 5, 6].flatMap((wave) =>
+    v622WavePlan(wave).map((task) => ({
+      accountId: task.accountId,
+      ownerSlug: task.ownerSlug,
+      kernelRef: task.kernelRef,
+      workerId: task.workerId,
+      workerNumber: Number(task.workerId.slice(1)),
+      modelId: task.modelId,
+      resolution: task.resolution,
+    })),
+  );
+  return [...recovered, ...planned].sort((a, b) => a.workerNumber - b.workerNumber);
+}
+
+async function canonicalMatrixRuns(env: WorkerEnv): Promise<Array<Record<string, unknown>>> {
+  return Promise.all(
+    canonicalMatrixTargets().map(async (candidate) => {
+      try {
+        const payload = await kernelStatus(env, candidate.accountId, candidate.kernelRef);
+        const status = normalizeStatus(payload);
+        return {
+          worker_id: candidate.workerId,
+          worker_number: candidate.workerNumber,
+          account_id: candidate.accountId,
+          owner_slug: candidate.ownerSlug,
+          kernel_ref: candidate.kernelRef,
+          model_id: candidate.modelId,
+          resolution: candidate.resolution,
+          status,
+          lifecycle: lifecycle(status),
+        };
+      } catch (error) {
+        return {
+          worker_id: candidate.workerId,
+          worker_number: candidate.workerNumber,
+          account_id: candidate.accountId,
+          owner_slug: candidate.ownerSlug,
+          kernel_ref: candidate.kernelRef,
+          model_id: candidate.modelId,
+          resolution: candidate.resolution,
+          status: "PROBE_ERROR",
+          lifecycle: "needs_repair",
+          error: error instanceof Error ? error.message.slice(0, 500) : "unknown error",
+        };
+      }
+    }),
+  );
 }
 
 async function dynamicMatrixRuns(env: WorkerEnv): Promise<Array<Record<string, unknown>>> {
@@ -348,9 +411,35 @@ export async function v622ShardArtifacts(env: WorkerEnv, shardId: string): Promi
 }
 
 export async function v622RecoveryStatus(env: WorkerEnv): Promise<Record<string, unknown>> {
-  const runs = await Promise.all(RECOVERY_TARGETS.map((target) => targetStatus(env, target)));
-  const finalization = await finalizationCandidates(env);
-  const matrixRuns = await dynamicMatrixRuns(env);
+  // Keep this aggregate probe under Cloudflare's 50-subrequest ceiling. The
+  // canonical matrix has 36 status calls, the eight HPO/confirmation targets
+  // add eight, and the single finalization handoff adds one (45 total). The
+  // dynamic inventory probe remains available through the dedicated PROGRESS
+  // route, where it is not combined with these historical checks.
+  const [matrixRuns, historicalNonTrain, finalization] = await Promise.all([
+    canonicalMatrixRuns(env),
+    Promise.all(
+      RECOVERY_TARGETS
+        .filter((target) => target.kind !== "train")
+        .map((target) => targetStatus(env, target)),
+    ),
+    finalizationCandidates(env),
+  ]);
+  const historicalTrain = matrixRuns
+    .filter((run) => Number(run.worker_number) <= 6)
+    .map((run) => ({
+      id: run.worker_id,
+      kind: "train",
+      account_id: run.account_id,
+      owner_slug: run.owner_slug,
+      kernel_ref: run.kernel_ref,
+      model_code: run.model_id,
+      resolution: run.resolution,
+      model_hints: run.model_id ? [run.model_id] : [],
+      status: run.status,
+      lifecycle: run.lifecycle,
+    }));
+  const runs = [...historicalTrain, ...historicalNonTrain];
   const matrixComplete = matrixRuns.filter((run) => run.lifecycle === "complete");
   const matrixInProgress = matrixRuns.filter((run) => run.lifecycle === "in_progress");
   const matrixNeedsRepair = matrixRuns.filter((run) => run.lifecycle === "needs_repair");
