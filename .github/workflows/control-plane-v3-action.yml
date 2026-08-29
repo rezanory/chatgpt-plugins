@@ -81,7 +81,7 @@ jobs:
           template=pathlib.Path(os.environ['CGP_NOTEBOOK_PATH']).read_text(encoding='utf-8')
           accounts=[('master','azadka'),('kg-02','radlinaradlina'),('kg-03','rezanory'),('kg-04','reyhanehazad'),('kg-05','trickermark'),('kg-06','msdenis'),('kg-07','nisabulutmark')]
           def call(payload):
-              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-uploaded-zip-run/1.0'})
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-uploaded-zip-run/2.0'})
               try:
                   with urllib.request.urlopen(req,timeout=240) as r:
                       raw=r.read().decode('utf-8','replace');return json.loads(raw) if raw else {}
@@ -89,18 +89,18 @@ jobs:
                   raw=e.read(5000).decode('utf-8','replace');raise RuntimeError(f'HTTP {e.code}: {raw[:1800]}')
           def submit(item):
               aid,owner=item
-              kernel_slug='m07-gate-224-zip-v1'
+              kernel_slug='m07-gate-224-zip-v2-20260829'
               kernel_ref=f'{owner}/{kernel_slug}'
               row={'account_id':aid,'owner':owner,'kernel_ref':kernel_ref}
               nb=template.replace('__ACCOUNT_OWNER__',owner)
               payload={
-                  'request_id':f'm07-uploaded-zip-{aid}-20260828-v1',
+                  'request_id':f'm07-uploaded-zip-{aid}-20260829-v2',
                   'provider':'kaggle','operation_class':'compute','account_id':aid,
                   'purpose':'Execute the user-uploaded M07@224 gate package now. Explicit SAVE_AND_RUN_ALL. Master azadka. Stop after M07. Phase2 remains locked.',
                   'service':'kernels.KernelsApiService','method':'SaveKernel',
                   'body':{
                       'slug':kernel_ref,
-                      'newTitle':f'M07 Gate 224 ZIP V1 - {owner}',
+                      'newTitle':f'M07 Gate 224 ZIP V2 20260829 - {owner}',
                       'text':nb,
                       'language':'PYTHON','kernelType':'NOTEBOOK',
                       'kernelExecutionType':'SAVE_AND_RUN_ALL',
