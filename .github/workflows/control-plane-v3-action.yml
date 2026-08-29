@@ -10,12 +10,12 @@ permissions:
   issues: write
 
 concurrency:
-  group: pneumonia-m07-runfix-v5-seven
+  group: pneumonia-m07-runfix-v6-seven
   cancel-in-progress: false
 
 jobs:
-  launch-m07-runfix-v5:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_RUNFIX_V5' }}
+  launch-m07-runfix-v6:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_RUNFIX_V6' }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 45
     steps:
@@ -51,13 +51,17 @@ jobs:
           if(-not(Test-Path 'scripts/m07_cell4_runfix_v5.pyfrag')){throw 'repair fragment missing'}
           $env:CGP_BASE_NB=$base
           $env:CGP_PATCH_PATH=(Resolve-Path 'scripts/m07_cell4_runfix_v5.pyfrag').Path
-          $env:CGP_OUT_NB=(Join-Path $env:RUNNER_TEMP 'M07_RUNFIX_V5.ipynb')
+          $env:CGP_OUT_NB=(Join-Path $env:RUNNER_TEMP 'M07_RUNFIX_V6.ipynb')
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           @'
           import json,os,pathlib,hashlib
           base=pathlib.Path(os.environ['CGP_BASE_NB'])
           patch=pathlib.Path(os.environ['CGP_PATCH_PATH']).read_text(encoding='utf-8')
+          bad='f4fdd4795fe6bd5cdb443db9033d11cff73c3b77f99980001b2721796e2ba'
+          good='f4fdd4795fe6bd5cdb7cb443db9033d11cff73c3b77f99980001b2721796e2ba'
+          assert bad in patch
+          patch=patch.replace(bad,good)
           nb=json.loads(base.read_text(encoding='utf-8'))
           nb['cells'][4]['source']=patch.splitlines(True)
           for c in nb['cells']:
@@ -70,9 +74,9 @@ jobs:
           assert 'UNLOCK_REMAINING_MODELS = False' in txt
           assert 'UNLOCK_REMAINING_MODELS = True' not in txt
           assert 'm07-frozen-split-clone' not in txt
+          assert good in txt and bad not in txt
           assert '896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9' in txt
-          assert 'AUTO_REBUILT_SPLIT_HASH_MISMATCH' in txt
-          print('RUNFIX_SHA256='+hashlib.sha256(out.read_bytes()).hexdigest())
+          print('RUNFIX_V6_SHA256='+hashlib.sha256(out.read_bytes()).hexdigest())
           '@ | & $python -
           if($LASTEXITCODE-ne 0){throw 'notebook patch failed'}
           "CGP_NOTEBOOK_PATH=$env:CGP_OUT_NB"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
@@ -89,7 +93,7 @@ jobs:
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
-      - name: SAVE_AND_RUN_ALL repaired M07 on seven accounts
+      - name: SAVE_AND_RUN_ALL repaired M07 V6 on seven accounts
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -102,35 +106,31 @@ jobs:
           template=pathlib.Path(os.environ['CGP_NOTEBOOK_PATH']).read_text(encoding='utf-8')
           accounts=[('master','azadka'),('kg-02','radlinaradlina'),('kg-03','rezanory'),('kg-04','reyhanehazad'),('kg-05','trickermark'),('kg-06','msdenis'),('kg-07','nisabulutmark')]
           def call(payload):
-              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-runfix-v5/1.0'})
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-runfix-v6/1.0'})
               try:
-                  with urllib.request.urlopen(req,timeout=240) as r:
-                      return json.loads(r.read().decode('utf-8','replace') or '{}')
-              except urllib.error.HTTPError as e:
-                  raise RuntimeError(f'HTTP {e.code}: '+e.read(4000).decode('utf-8','replace'))
+                  with urllib.request.urlopen(req,timeout=240) as r: return json.loads(r.read().decode('utf-8','replace') or '{}')
+              except urllib.error.HTTPError as e: raise RuntimeError(f'HTTP {e.code}: '+e.read(4000).decode('utf-8','replace'))
           def submit(item):
               aid,owner=item
-              slug='m07-gate-224-runfix-v5-20260830'
+              slug='m07-gate-224-runfix-v6-20260830'
               ref=f'{owner}/{slug}'
               nb=template.replace('__ACCOUNT_OWNER__',owner)
-              payload={'request_id':f'm07-runfix-v5-{aid}-20260830','provider':'kaggle','operation_class':'compute','account_id':aid,'purpose':'Run repaired M07@224. Deterministic exact frozen-split rebuild; verify fixed hashes/fingerprint; Phase2 locked.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':ref,'newTitle':f'M07 Gate 224 RunFix V5 - {owner}','text':nb,'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':True,'enableInternet':True,'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}}
+              payload={'request_id':f'm07-runfix-v6-{aid}-20260830','provider':'kaggle','operation_class':'compute','account_id':aid,'purpose':'Run repaired M07@224 V6 with corrected frozen fold5 hash. Deterministic exact rebuild. Phase2 locked.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':ref,'newTitle':f'M07 Gate 224 RunFix V6 - {owner}','text':nb,'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':True,'enableInternet':True,'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}}
               try:
                   r=call(payload)
                   if not r.get('ok'): raise RuntimeError('broker ok=false')
                   return {'account_id':aid,'owner':owner,'kernel_ref':ref,'ok':True,'provider_ref':r.get('provider_ref') or (r.get('result') or {}).get('ref')}
-              except Exception as e:
-                  return {'account_id':aid,'owner':owner,'kernel_ref':ref,'ok':False,'error':repr(e)[:1500]}
-          with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
-              rows=list(ex.map(submit,accounts))
+              except Exception as e: return {'account_id':aid,'owner':owner,'kernel_ref':ref,'ok':False,'error':repr(e)[:1500]}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex: rows=list(ex.map(submit,accounts))
           print(json.dumps(rows,ensure_ascii=False))
           ok=sum(1 for r in rows if r['ok'])
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write(f'CGP_OK_COUNT={ok}\n')
           if ok!=7: raise SystemExit(2)
           '@ | & $python -
-          if($LASTEXITCODE-ne 0){throw "M07 V5 launch incomplete accepted=$env:CGP_OK_COUNT/7"}
+          if($LASTEXITCODE-ne 0){throw "M07 V6 launch incomplete accepted=$env:CGP_OK_COUNT/7"}
 
       - name: Confirm launch acceptance
         shell: powershell
         run: |
           if($env:CGP_OK_COUNT-ne'7'){throw "accepted=$env:CGP_OK_COUNT/7"}
-          Write-Host '7/7 repaired M07 SAVE_AND_RUN_ALL accepted; Phase2 remains locked.'
+          Write-Host '7/7 repaired M07 V6 SAVE_AND_RUN_ALL accepted; Phase2 remains locked.'
