@@ -1,0 +1,101 @@
+name: pneumonia-m07-v3-repair
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: pneumonia-m07-v3-repair-seven
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_RUN_V3_REPAIR' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Reconstruct and patch M07 notebook
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $names=@(
+            'docs/pneumonia-v6-2-2-m07-exact-part-00.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-01.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-02.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-03.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-04.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-05.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-06.b64',
+            'docs/pneumonia-v6-2-2-m07-exact-part-07.b64'
+          )
+          $b64=''; foreach($n in $names){$b64+=([IO.File]::ReadAllText($n)).Trim()}
+          $input=[IO.MemoryStream]::new([Convert]::FromBase64String($b64))
+          $zip=[IO.Compression.GZipStream]::new($input,[IO.Compression.CompressionMode]::Decompress)
+          $base=Join-Path $env:RUNNER_TEMP 'M07_BASE.ipynb'; $o=[IO.File]::Create($base)
+          try{$zip.CopyTo($o)}finally{$o.Dispose();$zip.Dispose();$input.Dispose()}
+          $baseSha=(Get-FileHash $base -Algorithm SHA256).Hash.ToLower()
+          if($baseSha -ne '234b87dec5ad3bbc564956025496411f272ed94b7efdb4719f56a1f762bdcc3c'){throw "base sha mismatch $baseSha"}
+          $patchB64='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'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source; if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $env:PATCH_B64=$patchB64; $env:BASE_NB=$base; $out=Join-Path $env:RUNNER_TEMP 'M07_V3_REPAIRED.ipynb'; $env:OUT_NB=$out
+          @'
+          import os,json,gzip,base64,pathlib,hashlib
+          p=pathlib.Path(os.environ['BASE_NB']); nb=json.loads(p.read_text(encoding='utf-8'))
+          patch=gzip.decompress(base64.b64decode(os.environ['PATCH_B64'])).decode('utf-8')
+          nb['cells'][4]['source']=patch.splitlines(True)
+          for c in nb['cells']:
+              if c.get('cell_type')=='code': c['execution_count']=None; c['outputs']=[]
+          out=pathlib.Path(os.environ['OUT_NB']); out.write_text(json.dumps(nb,ensure_ascii=False),encoding='utf-8')
+          txt=out.read_text(encoding='utf-8')
+          assert 'UNLOCK_REMAINING_MODELS = False' in txt and 'UNLOCK_REMAINING_MODELS = True' not in txt
+          assert 'm07-frozen-split-clone' not in txt
+          assert '896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9' in txt
+          print('patched_sha256='+hashlib.sha256(out.read_bytes()).hexdigest())
+          '@ | & $python -
+          "CGP_NOTEBOOK_PATH=$out"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Request OIDC
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'; $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value; if($token.Length-lt100){throw 'OIDC unavailable'}; Write-Host "::add-mask::$token"; [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Launch repaired M07 on seven Kaggle accounts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'; $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source; if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          @'
+          import concurrent.futures,json,os,pathlib,urllib.request,urllib.error
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'; oidc=os.environ['CGP_ACTION_OIDC_TOKEN'].strip(); template=pathlib.Path(os.environ['CGP_NOTEBOOK_PATH']).read_text(encoding='utf-8')
+          accounts=[('master','azadka'),('kg-02','radlinaradlina'),('kg-03','rezanory'),('kg-04','reyhanehazad'),('kg-05','trickermark'),('kg-06','msdenis'),('kg-07','nisabulutmark')]
+          def call(payload):
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-v3-repair/1.0'})
+              try:
+                  with urllib.request.urlopen(req,timeout=240) as r: return json.loads(r.read().decode('utf-8','replace') or '{}')
+              except urllib.error.HTTPError as e: raise RuntimeError(f'HTTP {e.code}: '+e.read(4000).decode('utf-8','replace'))
+          def submit(x):
+              aid,owner=x; slug='m07-gate-224-v3-repair-20260830'; ref=f'{owner}/{slug}'; nb=template.replace('__ACCOUNT_OWNER__',owner)
+              payload={'request_id':f'm07-v3-repair-{aid}-20260830','provider':'kaggle','operation_class':'compute','account_id':aid,'purpose':'Run repaired M07@224. Deterministic frozen split rebuild with exact hash/fingerprint verification. Phase2 locked.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':ref,'newTitle':f'M07 Gate 224 V3 Repair - {owner}','text':nb,'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':True,'enableInternet':True,'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}}
+              try:
+                  r=call(payload); return {'account_id':aid,'owner':owner,'ref':ref,'ok':bool(r.get('ok')),'provider_ref':r.get('provider_ref') or (r.get('result') or {}).get('ref'),'raw':str(r)[:1000]}
+              except Exception as e: return {'account_id':aid,'owner':owner,'ref':ref,'ok':False,'error':repr(e)[:1500]}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex: rows=list(ex.map(submit,accounts))
+          print(json.dumps(rows,ensure_ascii=False)); ok=sum(r['ok'] for r in rows)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write(f'CGP_OK_COUNT={ok}\n')
+          if ok!=7: raise SystemExit(2)
+          '@ | & $python -
+
+      - name: Confirm all seven submissions accepted
+        shell: powershell
+        run: |
+          if($env:CGP_OK_COUNT-ne'7'){throw "accepted=$env:CGP_OK_COUNT/7"}; Write-Host '7/7 repaired M07 SAVE_AND_RUN_ALL accepted.'
