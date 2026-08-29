@@ -32,7 +32,7 @@ jobs:
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           $script=@'
-          import base64,gzip,hashlib,json,os,pathlib,urllib.request
+          import base64,gzip,hashlib,json,os,pathlib,re,urllib.request
           commit='e0317df918cfb801fbe463efc1a66f788cab2052'
           path='docs/m07-resume-fold4-continuation-v3-20260830.b64'
           url=f'https://api.github.com/repos/rezanory/chatgpt-plugins/contents/{path}?ref={commit}'
@@ -41,9 +41,15 @@ jobs:
               meta=json.loads(r.read().decode('utf-8'))
           encoded_file=''.join(meta['content'].splitlines())
           file_text=base64.b64decode(encoded_file).decode('utf-8-sig')
-          b64=''.join(file_text.split())
-          packed=base64.b64decode(b64,validate=True)
-          raw=gzip.decompress(packed)
+          start=file_text.find('H4sI')
+          if start < 0: raise RuntimeError('gzip/base64 signature H4sI not found in canonical payload file')
+          candidate=file_text[start:]
+          b64=''.join(ch for ch in candidate if ch in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
+          try:
+              packed=base64.b64decode(b64,validate=True)
+              raw=gzip.decompress(packed)
+          except Exception as e:
+              raise RuntimeError(f'canonical payload decode failed after extraction: {type(e).__name__}: {e}')
           sha=hashlib.sha256(raw).hexdigest()
           expected='7208afd5c63fd3ca9241b037c96fa7cda3461d4ed50ec5e060ac127a8d0e4ae5'
           if sha != expected: raise RuntimeError(f'continuation canonical SHA mismatch {sha}')
@@ -65,7 +71,7 @@ jobs:
           out=pathlib.Path(os.environ['RUNNER_TEMP'])/'M07_CONTINUE_FOLD4_V3.ipynb'
           out.write_bytes(raw)
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
-              f.write(f'CGP_NOTEBOOK_PATH={out}\nCGP_NOTEBOOK_SHA={sha}\nCGP_TRANSPORT=github-api-pinned-commit\n')
+              f.write(f'CGP_NOTEBOOK_PATH={out}\nCGP_NOTEBOOK_SHA={sha}\nCGP_TRANSPORT=github-api-pinned-commit-extracted\n')
           print(json.dumps({'validated':True,'commit':commit,'sha256':sha,'bytes':len(raw),'cells':len(nb.get('cells',[]))}))
           '@
           $script|&$python -
@@ -93,8 +99,8 @@ jobs:
           import json,os,pathlib,urllib.request,urllib.error
           endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
           text=pathlib.Path(os.environ['CGP_NOTEBOOK_PATH']).read_text(encoding='utf-8')
-          payload={'request_id':'m07-continuation-v3-kg04-20260830-r6','provider':'kaggle','operation_class':'compute','account_id':'kg-04','purpose':'Resume canonical M07@224 from durable Fold 1-3 state; train missing Fold 4-5 only; compute OOF; first Locked Test once; Phase2 remains locked.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':'reyhanehazad/m07-resume-fold4-continuation-v3-20260830','newTitle':'M07 Resume Fold4 Continuation V3 20260830','text':text,'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':True,'enableInternet':True,'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}}
-          req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['CGP_ACTION_OIDC_TOKEN'].strip(),'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-continuation-v3/1.5'})
+          payload={'request_id':'m07-continuation-v3-kg04-20260830-r7','provider':'kaggle','operation_class':'compute','account_id':'kg-04','purpose':'Resume canonical M07@224 from durable Fold 1-3 state; train missing Fold 4-5 only; compute OOF; first Locked Test once; Phase2 remains locked.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':'reyhanehazad/m07-resume-fold4-continuation-v3-20260830','newTitle':'M07 Resume Fold4 Continuation V3 20260830','text':text,'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':True,'enableInternet':True,'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}}
+          req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['CGP_ACTION_OIDC_TOKEN'].strip(),'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-continuation-v3/1.6'})
           try:
               with urllib.request.urlopen(req,timeout=240) as r:
                   response_text=r.read().decode('utf-8','replace'); result=json.loads(response_text) if response_text else {}
