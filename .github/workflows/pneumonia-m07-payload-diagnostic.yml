@@ -1,0 +1,34 @@
+name: pneumonia-m07-payload-diagnostic
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+jobs:
+  check:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_M07_PAYLOAD_DIAGNOSTIC' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Exact part hashes
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import hashlib,json,pathlib
+          expected={0:('b0b1d4fe6f28f1ae73b3d223708eedea513eda39678d14d88b1b85ad0acb496c',12000),1:('4f9737548d361612155a3fe4fee8041cd3269b4558b4b92cc8a5948a3f4ffd5a',12000),2:('6aa08a269762b24c474efad0aeaff6bf0ea4eaaf5c43540a027587b99dea81ac',12000),3:('56a47971e8f05bf7f86d230c9b187e4243be191fed95414356a76942258ae774',5528)}
+          rows=[]
+          for i in range(4):
+              p=pathlib.Path(f'docs/m07-cont-v3-part-{i:02d}.b64')
+              b=p.read_bytes(); h=hashlib.sha256(b).hexdigest(); exp,sz=expected[i]
+              rows.append({'part':i,'bytes':len(b),'sha256':h,'expected':exp,'ok':len(b)==sz and h==exp})
+          print('M07_PAYLOAD_DIAGNOSTIC='+json.dumps(rows,separators=(',',':')))
+          if not all(r['ok'] for r in rows): raise SystemExit(2)
+          '@
+          $script|&$python -
