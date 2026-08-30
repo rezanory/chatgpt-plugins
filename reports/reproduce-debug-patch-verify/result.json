@@ -1,0 +1,40 @@
+{
+  "skill": "reproduce-debug-patch-verify",
+  "project": "PNEUMONIA V6.2.2 Cloudflare recovery gateway",
+  "source_fingerprint": "git:5b4af62f688538e16f0b08164df730829f2d98fc; recovery.ts:4935ffa3cb0330acfb0a947d6854c51400040808b1d41c19734112b12ec8afde",
+  "execution_status": "completed",
+  "verdict": "resolved",
+  "artifacts": [
+    {
+      "path": "deploy/cloudflare-worker-free/src/recovery.ts",
+      "sha256": "4935ffa3cb0330acfb0a947d6854c51400040808b1d41c19734112b12ec8afde",
+      "description": "Aggregate recovery probe uses 36 canonical matrix status calls, eight historical non-train status calls, and one finalization status call (45 total); dynamic inventory remains on PROGRESS."
+    },
+    {
+      "path": "Cloudflare deployment",
+      "sha256": "ad3781f2-465c-425c-b4c7-6acd2e902ffd",
+      "description": "Deployed Worker version containing the fix."
+    }
+  ],
+  "evidence": [
+    {
+      "type": "source",
+      "reference": "git commit 06aa09531049765fee7951b8f8506e6e87407b1f",
+      "finding": "Replaced aggregate inventory fan-out with a bounded canonical manifest probe."
+    },
+    {
+      "type": "test",
+      "reference": "npm run check; npm run deploy:dry; Python312 -m pytest -q; scripts/security_gate.py",
+      "finding": "TypeScript check, Wrangler dry-run, 41 pytest tests, and security gate all passed."
+    },
+    {
+      "type": "runtime",
+      "reference": "GET https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/recovery/v6-2-2/status",
+      "finding": "Live canonical_matrix_summary is discovered=36, complete=36, needs_repair=0, unknown=0, remaining_not_created=0; finalization is COMPLETE; write_enabled=false."
+    }
+  ],
+  "known_gaps": [
+    "The fix branch is deployed, while the repository main branch and generic deployment workflow remain frozen; a future promotion from main must include this commit to prevent regression."
+  ],
+  "next_boundary": "Keep the live read-only deployment under the existing 10-minute monitor; promote or merge the fix branch only through the project's approved release gate."
+}

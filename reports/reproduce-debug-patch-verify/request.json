@@ -1,0 +1,23 @@
+{
+  "skill": "reproduce-debug-patch-verify",
+  "project": "PNEUMONIA V6.2.2 Cloudflare recovery gateway",
+  "objective": "Remove the false aggregate PROBE_ERROR caused by Cloudflare subrequest exhaustion without starting or rerunning Kaggle compute.",
+  "source_fingerprint": "git:5b4af62f688538e16f0b08164df730829f2d98fc; recovery.ts:4935ffa3cb0330acfb0a947d6854c51400040808b1d41c19734112b12ec8afde",
+  "constraints": [
+    "Read-only Kaggle recovery; CGP_WRITE_ENABLED remains 0.",
+    "Do not expose credentials or tokens.",
+    "Keep the aggregate route below Cloudflare's 50-subrequest limit.",
+    "Do not launch, rerun, cancel, or delete Kaggle kernels."
+  ],
+  "profile_inputs": {
+    "error_log": "Live /recovery/v6-2-2/status reported 21 needs_repair rows with Too many subrequests by single Worker invocation; wave-status independently reported all 36 kernels COMPLETE.",
+    "source_path": "deploy/cloudflare-worker-free/src/recovery.ts",
+    "runtime_environment": "Cloudflare Workers Free; Worker chatgpt-kaggle-gateway; direct Kaggle HTTPS read transport",
+    "expected_behavior": "Aggregate status returns canonical_matrix_summary discovered=36, complete=36, needs_repair=0, unknown=0, remaining_not_created=0.",
+    "known_good_version": "Cloudflare Worker version ad3781f2-465c-425c-b4c7-6acd2e902ffd"
+  },
+  "evidence": {
+    "directory": "reports/reproduce-debug-patch-verify/",
+    "immutable_baseline": true
+  }
+}
