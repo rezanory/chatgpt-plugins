@@ -19,20 +19,28 @@ jobs:
         include:
           - account_id: kg-01
             environment_name: kaggle-01
+            owner_slug: azadka
           - account_id: kg-02
             environment_name: kaggle-02
+            owner_slug: radlinaradlina
           - account_id: kg-03
             environment_name: kaggle-03
+            owner_slug: rezanory
           - account_id: kg-04
             environment_name: kaggle-04
+            owner_slug: reyhanehazad
           - account_id: kg-05
             environment_name: kaggle-05
+            owner_slug: trickermark
           - account_id: kg-06
             environment_name: kaggle-06
+            owner_slug: msdenis
           - account_id: kg-07
             environment_name: kaggle-07
+            owner_slug: nisabulutmark
           - account_id: kg-08
             environment_name: kaggle-08
+            owner_slug: unknown
     runs-on: [self-hosted, windows, x64, v622]
     environment: ${{ matrix.environment_name }}
     timeout-minutes: 10
@@ -44,37 +52,33 @@ jobs:
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
           ACCOUNT_ID: ${{ matrix.account_id }}
           ENVIRONMENT_NAME: ${{ matrix.environment_name }}
+          OWNER_SLUG: ${{ matrix.owner_slug }}
         run: |
           $ErrorActionPreference = 'Stop'
           $python = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if (-not $python) { $python = (Get-Command python -ErrorAction Stop).Source }
           $script = @'
-          import json, os, re, urllib.request, urllib.error
+          import base64, json, os, re, urllib.request, urllib.error
 
           endpoint = 'https://api.kaggle.com/v1/kernels.KernelsApiService/GetAcceleratorQuotaStatistics'
           account = os.environ['ACCOUNT_ID']
           environment = os.environ['ENVIRONMENT_NAME']
+          owner = os.environ.get('OWNER_SLUG', '').strip()
           token = (os.environ.get('KAGGLE_API_TOKEN') or '').strip()
 
           def seconds(value):
-              if value is None:
-                  return None
-              if isinstance(value, (int, float)):
-                  return float(value)
+              if value is None: return None
+              if isinstance(value, (int, float)): return float(value)
               if isinstance(value, dict):
                   return float(value.get('seconds', 0) or 0) + float(value.get('nanos', 0) or 0) / 1e9
               text = str(value).strip()
               match = re.fullmatch(r'(-?[0-9]+(?:\.[0-9]+)?)s', text)
-              if match:
-                  return float(match.group(1))
-              try:
-                  return float(text)
-              except Exception:
-                  return None
+              if match: return float(match.group(1))
+              try: return float(text)
+              except Exception: return None
 
           def quota(obj):
-              if not isinstance(obj, dict):
-                  return None
+              if not isinstance(obj, dict): return None
               used = seconds(obj.get('timeUsed') if 'timeUsed' in obj else obj.get('time_used'))
               total = seconds(obj.get('totalTimeAllowed') if 'totalTimeAllowed' in obj else obj.get('total_time_allowed'))
               if used is None or total is None:
@@ -85,57 +89,55 @@ jobs:
                   'total_hours': round(total / 3600, 3),
               }
 
-          result = {
-              'account_id': account,
-              'environment': environment,
-              'read_only': True,
-              'no_kaggle_compute_launched': True,
-          }
+          result = {'account_id': account, 'environment': environment, 'owner_slug': owner,
+                    'read_only': True, 'no_kaggle_compute_launched': True}
           if not token:
               result.update({'status': 'TOKEN_NOT_IN_ENV', 'gpu': None, 'tpu': None})
           else:
-              req = urllib.request.Request(
-                  endpoint,
-                  data=b'{}',
-                  method='POST',
-                  headers={
-                      'Authorization': f'Bearer {token}',
+              if token.startswith('KGAT_'):
+                  authorization = 'Bearer ' + token
+                  auth_mode = 'KGAT_BEARER'
+              elif owner and owner != 'unknown':
+                  authorization = 'Basic ' + base64.b64encode(f'{owner}:{token}'.encode()).decode()
+                  auth_mode = 'LEGACY_BASIC'
+              else:
+                  authorization = None
+                  auth_mode = 'UNKNOWN'
+              result['auth_mode'] = auth_mode
+              if not authorization:
+                  result.update({'status': 'AUTH_MODE_UNRESOLVED', 'gpu': None, 'tpu': None})
+              else:
+                  req = urllib.request.Request(endpoint, data=b'{}', method='POST', headers={
+                      'Authorization': authorization,
                       'Content-Type': 'application/json',
-                      'User-Agent': 'kaggle-eight-quota-readonly/1.0',
-                  },
-              )
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as response:
-                      payload = json.loads(response.read().decode('utf-8'))
-                  result.update({
-                      'status': 'OK',
-                      'gpu': quota(payload.get('gpuQuota') or payload.get('gpu_quota')),
-                      'tpu': quota(payload.get('tpuQuota') or payload.get('tpu_quota')),
-                      'refresh_at': payload.get('quotaRefreshTime') or payload.get('quota_refresh_time'),
+                      'User-Agent': 'kaggle-eight-quota-readonly/1.1',
                   })
-              except urllib.error.HTTPError as exc:
-                  result.update({'status': 'QUERY_ERROR', 'http_status': exc.code, 'gpu': None, 'tpu': None})
-              except Exception as exc:
-                  result.update({'status': 'QUERY_ERROR', 'error_type': type(exc).__name__, 'gpu': None, 'tpu': None})
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as response:
+                          payload = json.loads(response.read().decode('utf-8'))
+                      result.update({
+                          'status': 'OK',
+                          'gpu': quota(payload.get('gpuQuota') or payload.get('gpu_quota')),
+                          'tpu': quota(payload.get('tpuQuota') or payload.get('tpu_quota')),
+                          'refresh_at': payload.get('quotaRefreshTime') or payload.get('quota_refresh_time'),
+                      })
+                  except urllib.error.HTTPError as exc:
+                      result.update({'status': 'QUERY_ERROR', 'http_status': exc.code, 'gpu': None, 'tpu': None})
+                  except Exception as exc:
+                      result.update({'status': 'QUERY_ERROR', 'error_type': type(exc).__name__, 'gpu': None, 'tpu': None})
 
-          body = '## KAGGLE QUOTA EIGHT READONLY\n\n```json\n' + json.dumps(result, indent=2) + '\n```\n'
+          body = '## KAGGLE QUOTA EIGHT READONLY V2\n\n```json\n' + json.dumps(result, indent=2) + '\n```\n'
           data = json.dumps({'body': body}).encode('utf-8')
           url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/18/comments"
-          request = urllib.request.Request(
-              url,
-              data=data,
-              method='POST',
-              headers={
-                  'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN'],
-                  'Accept': 'application/vnd.github+json',
-                  'X-GitHub-Api-Version': '2022-11-28',
-                  'Content-Type': 'application/json; charset=utf-8',
-                  'User-Agent': 'kaggle-eight-quota-readonly/1.0',
-              },
-          )
+          request = urllib.request.Request(url, data=data, method='POST', headers={
+              'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN'],
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'Content-Type': 'application/json; charset=utf-8',
+              'User-Agent': 'kaggle-eight-quota-readonly/1.1',
+          })
           with urllib.request.urlopen(request, timeout=30) as response:
-              if response.status not in (200, 201):
-                  raise SystemExit(f'issue receipt HTTP {response.status}')
+              if response.status not in (200, 201): raise SystemExit(f'issue receipt HTTP {response.status}')
           print(json.dumps({'account_id': account, 'status': result['status'], 'receipt_posted': True}))
           '@
           $script | & $python -
