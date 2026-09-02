@@ -27,6 +27,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference='Stop'
+          $env:CLOUDFLARE_API_TOKEN=([string]$env:CLOUDFLARE_API_TOKEN).Trim()
+          $env:CLOUDFLARE_ACCOUNT_ID=([string]$env:CLOUDFLARE_ACCOUNT_ID).Trim()
           Set-Location deploy/cloudflare-worker-free
           npm ci --silent
           $worker=@'
@@ -76,3 +78,4 @@ jobs:
               Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body $payload -TimeoutSec 30|Out-Null
             } catch { Write-Warning 'Issue receipt publish failed; sanitized result remains in job log.' }
           } finally { if(-not $p.HasExited){Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue} }
+          exit 0
