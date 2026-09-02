@@ -61,5 +61,14 @@
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
     "default_accelerator": "NvidiaTeslaT4"
+  },
+  {
+    "account_id": "kg-08",
+    "owner_slug": "mononoke44",
+    "secret_scope": "kaggle-08",
+    "enabled": true,
+    "max_parallel": 1,
+    "capabilities": ["cpu", "gpu"],
+    "default_accelerator": "NvidiaTeslaT4"
   }
 ]
