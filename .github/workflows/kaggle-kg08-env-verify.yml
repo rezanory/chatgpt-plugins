@@ -1,0 +1,54 @@
+name: kaggle-kg08-env-verify
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kaggle-kg08-env-verify.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: [self-hosted, windows, x64, v622]
+    environment: kaggle-08
+    timeout-minutes: 5
+    steps:
+      - name: Verify kaggle-08 secret against Kaggle quota API
+        shell: powershell
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, urllib.request, urllib.error
+          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          out={'account_id':'kg-08','owner_slug':'mononoke44'}
+          if not token:
+              out['status']='TOKEN_NOT_CONFIGURED'
+          elif not token.startswith('KGAT_'):
+              out['status']='UNSUPPORTED_TOKEN_FORMAT'
+          else:
+              req=urllib.request.Request('https://api.kaggle.com/v1/kernels.KernelsApiService/GetAcceleratorQuotaStatistics',data=b'{}',method='POST',headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r:
+                      x=json.loads(r.read().decode())
+                  def sec(v):
+                      if isinstance(v,(int,float)): return float(v)
+                      if isinstance(v,dict): return float(v.get('seconds',0) or 0)+float(v.get('nanos',0) or 0)/1e9
+                      s=str(v).strip(); return float(s[:-1] if s.endswith('s') else s)
+                  def q(o):
+                      if not isinstance(o,dict): return None
+                      u=sec(o.get('timeUsed',o.get('time_used',0))); t=sec(o.get('totalTimeAllowed',o.get('total_time_allowed',0)))
+                      return {'used_hours':round(u/3600,3),'remaining_hours':round(max(0,t-u)/3600,3),'total_hours':round(t/3600,3)}
+                  out.update(status='OK',gpu=q(x.get('gpuQuota') or x.get('gpu_quota')),tpu=q(x.get('tpuQuota') or x.get('tpu_quota')),refresh_at=x.get('quotaRefreshTime') or x.get('quota_refresh_time'))
+              except urllib.error.HTTPError as e:
+                  out.update(status='QUERY_ERROR',http_status=e.code)
+              except Exception as e:
+                  out.update(status='QUERY_ERROR',error_type=type(e).__name__)
+          print('CGP_KG08_ENV_VERIFY='+json.dumps(out,separators=(',',':')))
+          '@
+          $script|& $python -
