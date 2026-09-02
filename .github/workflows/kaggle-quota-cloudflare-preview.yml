@@ -65,8 +65,14 @@ jobs:
               if($safe.Length -gt 3000){$safe=$safe.Substring($safe.Length-3000)}
               $result=@{status='PREVIEW_UNAVAILABLE';detail=$safe}
             }
-            $json=$result|ConvertTo-Json -Depth 12
-            $body="## KAGGLE QUOTA CLOUDFLARE PREVIEW`n`n``````json`n$json`n``````"
-            $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-            Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json' -Body (@{body=$body}|ConvertTo-Json -Compress) -TimeoutSec 30|Out-Null
+            $json=$result|ConvertTo-Json -Depth 12 -Compress
+            Write-Host 'CGP_KAGGLE_QUOTA_RESULT_BEGIN'
+            Write-Host $json
+            Write-Host 'CGP_KAGGLE_QUOTA_RESULT_END'
+            try {
+              $body="## KAGGLE QUOTA CLOUDFLARE PREVIEW`n`n$json"
+              $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+              $payload=@{body=$body}|ConvertTo-Json -Compress
+              Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/18/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body $payload -TimeoutSec 30|Out-Null
+            } catch { Write-Warning 'Issue receipt publish failed; sanitized result remains in job log.' }
           } finally { if(-not $p.HasExited){Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue} }
