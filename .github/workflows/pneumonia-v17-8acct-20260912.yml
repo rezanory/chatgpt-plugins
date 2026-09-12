@@ -29,15 +29,23 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $dir='control-plane-payloads/pneumonia-v17-20260912'
-          $out=Join-Path $dir 'PNEUMONIA_MASTER_M01_M12_M07_GATE_RUN_SAFE_V1_7.ipynb'
-          if(-not (Test-Path $out)){throw 'V1.7 payload missing'}
+          $name='PNEUMONIA_MASTER_M01_M12_M07_GATE_RUN_SAFE_V1_7.ipynb'
+          $rel="$dir/$name"
+          if(-not (Test-Path $rel)){throw 'V1.7 payload missing'}
           $all=@(Get-ChildItem $dir -File -Filter '*.ipynb')
           if($all.Count -ne 1){throw "exactly one launch notebook required; found $($all.Count)"}
+          $out=Join-Path $env:RUNNER_TEMP $name
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $env:CGP_GIT_REL=$rel
+          $env:CGP_EXACT_OUT=$out
+          & $python -c "import os,subprocess,pathlib; b=subprocess.check_output(['git','show','HEAD:'+os.environ['CGP_GIT_REL']]); pathlib.Path(os.environ['CGP_EXACT_OUT']).write_bytes(b)"
+          if($LASTEXITCODE -ne 0){throw 'exact Git blob extraction failed'}
           $sha=(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
           if($sha -ne '9fca3b687297fc4e23cd1a2f68d4765c897bd20516ae7c69309c99ca5a595907'){throw "V1.7 SHA mismatch: $sha"}
           "CGP_NOTEBOOK_PATH=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_NOTEBOOK_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "V1.7 exact payload validated: $sha"
+          Write-Host "V1.7 exact Git blob validated: $sha"
 
       - name: Request GitHub OIDC action-broker identity
         shell: powershell
