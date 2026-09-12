@@ -1,0 +1,116 @@
+name: pneumonia-v17-control-plane-toggle-20260912
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: pneumonia-v17-control-plane-toggle-20260912
+  cancel-in-progress: false
+
+jobs:
+  enable:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_ROUTE_ENABLE_20260912' }}
+    runs-on: windows-latest
+    environment: cloudflare-production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify canonical gateway before enable
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          $h=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
+          if($h.service -ne 'chatgpt-kaggle-gateway' -or $h.status -ne 'ready'){throw 'canonical gateway not ready'}
+
+      - name: Typecheck wrapper
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npm install --no-audit --no-fund
+            if($LASTEXITCODE -ne 0){throw 'npm install failed'}
+            npm run check
+            if($LASTEXITCODE -ne 0){throw 'typecheck failed'}
+          } finally { Pop-Location }
+
+      - name: Enable scoped V1.7 OIDC action route
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CLOUDFLARE_ACCOUNT_ID=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if(-not $env:CLOUDFLARE_ACCOUNT_ID -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare deployment credentials unavailable'}
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway
+            if($LASTEXITCODE -ne 0){throw 'wrapper deploy failed'}
+          } finally { Pop-Location }
+
+      - name: Verify V1.7 route enabled without canonical regression
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          $h=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
+          if($h.service -ne 'chatgpt-kaggle-gateway' -or $h.status -ne 'ready'){throw 'canonical gateway changed'}
+          $v3=Invoke-RestMethod -Uri "$base/control-plane/v3/healthz" -Method Get -TimeoutSec 30
+          if($v3.github_oidc_action_broker -ne $true){throw 'OIDC action route unavailable'}
+          Write-Host 'V1.7 OIDC route enabled; canonical gateway healthy.'
+
+  disable:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_ROUTE_DISABLE_20260912' }}
+    runs-on: windows-latest
+    environment: cloudflare-production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Disable temporary V1.7 action route
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CLOUDFLARE_ACCOUNT_ID=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if(-not $env:CLOUDFLARE_ACCOUNT_ID -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare deployment credentials unavailable'}
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npm install --no-audit --no-fund
+            if($LASTEXITCODE -ne 0){throw 'npm install failed'}
+            npx wrangler deploy src/index.ts --name chatgpt-kaggle-gateway
+            if($LASTEXITCODE -ne 0){throw 'canonical restore failed'}
+          } finally { Pop-Location }
+
+      - name: Verify canonical restore
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          $h=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
+          if($h.service -ne 'chatgpt-kaggle-gateway' -or $h.status -ne 'ready'){throw 'canonical gateway restore failed'}
+          try {
+            Invoke-WebRequest -UseBasicParsing -Uri "$base/control-plane/v3/healthz" -Method Get -TimeoutSec 30 | Out-Null
+            throw 'temporary V1.7 route still present'
+          } catch {
+            if([int]$_.Exception.Response.StatusCode -ne 404){throw "unexpected route-disable result: $($_.Exception.Message)"}
+          }
+          Write-Host 'Temporary V1.7 route disabled; canonical gateway restored.'
