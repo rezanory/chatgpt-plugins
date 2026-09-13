@@ -39,7 +39,7 @@ jobs:
           token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
           if not token:
               raise SystemExit('missing token')
-          kagglehub.login(token=token, validate_credentials=True)
+          kagglehub.login(token, validate_credentials=True)
           me=kagglehub.whoami()
           print('KAGGLE_WHOAMI='+json.dumps({'account_id':os.environ['ACCOUNT_ID'],'username':me.get('username')},sort_keys=True))
           PY
