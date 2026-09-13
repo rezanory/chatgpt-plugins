@@ -36,7 +36,7 @@ jobs:
           $root=Join-Path (Split-Path $env:RUNNER_TEMP -Parent) '_secret_promotion_20260913'
           New-Item -ItemType Directory -Force -Path $root | Out-Null
           $plain=[Text.Encoding]::UTF8.GetBytes($env:KAGGLE_API_TOKEN.Trim())
-          $cipher=[Security.Cryptography.ProtectedData]::Protect($plain,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+          $cipher=[System.Security.Cryptography.ProtectedData]::Protect($plain,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
           [IO.File]::WriteAllBytes((Join-Path $root ($env:TARGET_SECRET+'.bin')),$cipher)
           [Array]::Clear($plain,0,$plain.Length)
           Write-Host ('STAGED '+$env:TARGET_SECRET)
@@ -64,7 +64,7 @@ jobs:
               $path=Join-Path $root ($target+'.bin')
               if(-not (Test-Path $path)){throw "staged secret missing: $target"}
               $cipher=[IO.File]::ReadAllBytes($path)
-              $plain=[Security.Cryptography.ProtectedData]::Unprotect($cipher,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+              $plain=[System.Security.Cryptography.ProtectedData]::Unprotect($cipher,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
               $token=[Text.Encoding]::UTF8.GetString($plain)
               if([string]::IsNullOrWhiteSpace($token)){throw "decrypted secret empty: $target"}
               $token | npx --yes wrangler@4.131.1 secret put $target --name chatgpt-kaggle-gateway
