@@ -76,7 +76,7 @@
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
-    "labels": ["pool:kaggle-11", "route:github-environment"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc"],
     "default_accelerator": "NvidiaTeslaT4"
   },
   {
@@ -86,7 +86,7 @@
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
-    "labels": ["pool:kaggle-11", "route:github-environment"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc"],
     "default_accelerator": "NvidiaTeslaT4"
   },
   {
@@ -96,7 +96,7 @@
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
-    "labels": ["pool:kaggle-11", "route:github-environment"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc"],
     "default_accelerator": "NvidiaTeslaT4"
   },
   {
@@ -106,7 +106,7 @@
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
-    "labels": ["pool:kaggle-11", "route:github-environment"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc"],
     "default_accelerator": "NvidiaTeslaT4"
   }
 ]
