@@ -1,0 +1,69 @@
+name: kaggle-11-cloudflare-control-plane-deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kaggle-11-cloudflare-control-plane-deploy.yml'
+      - 'deploy/cloudflare-worker-free/src/control-plane-v3-*.ts'
+      - 'deploy/cloudflare-worker-free/src/index.ts'
+      - 'deploy/cloudflare-worker-free/src/kaggle.ts'
+      - 'deploy/cloudflare-worker-free/package.json'
+      - 'deploy/cloudflare-worker-free/wrangler.jsonc'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kaggle-11-cloudflare-control-plane-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+    environment: cloudflare-production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Typecheck control plane
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npm install --no-audit --no-fund
+            if($LASTEXITCODE -ne 0){throw 'npm install failed'}
+            npm run check
+            if($LASTEXITCODE -ne 0){throw 'typecheck failed'}
+          } finally { Pop-Location }
+      - name: Deploy OIDC-gated control plane
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CLOUDFLARE_ACCOUNT_ID=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if(-not $env:CLOUDFLARE_ACCOUNT_ID -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials unavailable'}
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway
+            if($LASTEXITCODE -ne 0){throw 'wrangler deploy failed'}
+          } finally { Pop-Location }
+      - name: Verify canonical and v3 health
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          $h=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
+          if($h.service -ne 'chatgpt-kaggle-gateway' -or $h.status -ne 'ready'){throw 'canonical gateway unhealthy'}
+          $v3=Invoke-RestMethod -Uri "$base/control-plane/v3/healthz" -Method Get -TimeoutSec 30
+          if($v3.status -ne 'ready' -or $v3.github_oidc_read_broker -ne $true -or $v3.github_oidc_action_broker -ne $true){throw 'v3 control plane unhealthy'}
+          Write-Host ('CLOUDFLARE_GATEWAY_READY service={0} configured={1} master={2}' -f $h.service,$h.kaggle_tokens_configured,$h.master_configured)
+          Write-Host 'CONTROL_PLANE_V3_READY'
