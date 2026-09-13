@@ -18,26 +18,32 @@ concurrency:
 jobs:
   legacy-cloudflare:
     name: kg-01..07 via Cloudflare OIDC
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 10
     steps:
       - name: Request GitHub OIDC read identity
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
-          sep='?'
-          [[ "$ACTIONS_ID_TOKEN_REQUEST_URL" == *'?'* ]] && sep='&'
-          url="${ACTIONS_ID_TOKEN_REQUEST_URL}${sep}audience=cgp-control-plane-v3"
-          token="$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$url" | python -c "import json,sys; print(json.load(sys.stdin)['value'])")"
-          test "${#token}" -gt 100
-          echo "::add-mask::$token"
-          echo "CGP_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $uri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3"
+          $r=Invoke-RestMethod -Uri $uri -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'GitHub OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
       - name: Verify seven legacy accounts read-only
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
-          python - <<'PY'
-          import concurrent.futures, json, os, time, urllib.error, urllib.request
+          $ErrorActionPreference='Stop'
+          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          $h=Invoke-RestMethod -Uri "$base/control-plane/v3/healthz" -Method Get -TimeoutSec 30
+          if($h.status -ne 'ready' -or $h.github_oidc_read_broker -ne $true){throw 'control-plane-v3 health unavailable'}
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import concurrent.futures, json, os, urllib.request
           base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
           token=os.environ['CGP_OIDC_TOKEN']
           accounts=[
@@ -49,17 +55,6 @@ jobs:
             ('kg-06','kg-06','msdenis'),
             ('kg-07','kg-07','nisabulutmark'),
           ]
-          for attempt in range(18):
-            try:
-              with urllib.request.urlopen(base+'/control-plane/v3/healthz',timeout=10) as r:
-                h=json.load(r)
-              if h.get('status')=='ready' and h.get('github_oidc_read_broker') is True:
-                break
-            except Exception:
-              pass
-            if attempt==17:
-              raise SystemExit('control-plane-v3 health unavailable')
-            time.sleep(5)
           def seconds(value):
             if isinstance(value,(int,float)): return float(value)
             if isinstance(value,dict): return float(value.get('seconds',0) or 0)+float(value.get('nanos',0) or 0)/1e9
@@ -76,7 +71,7 @@ jobs:
                      'service':'kernels.KernelsApiService','method':'GetAcceleratorQuotaStatistics','body':{}}
             req=urllib.request.Request(base+'/control-plane/v3/read/kaggle',data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={
               'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json',
-              'User-Agent':'kaggle-11-pool-readiness/1.0'})
+              'User-Agent':'kaggle-11-pool-readiness/1.1'})
             with urllib.request.urlopen(req,timeout=30) as r:
               out=json.load(r)
             if not out.get('ok'):
@@ -92,7 +87,9 @@ jobs:
           for row in rows: print('KAGGLE_POOL_RESULT='+json.dumps(row,sort_keys=True))
           if len(rows)!=7 or any(r['status']!='OK' for r in rows): raise SystemExit('legacy pool incomplete')
           print('KAGGLE_LEGACY_GATE=7/7')
-          PY
+          '@
+          $script | & $python -
+          if($LASTEXITCODE -ne 0){throw 'legacy Kaggle pool probe failed'}
 
   modern-environment:
     name: ${{ matrix.account_id }} via ${{ matrix.environment }}
@@ -128,7 +125,7 @@ jobs:
           if actual.lower()!=expected.lower(): raise SystemExit(f'owner mismatch: {actual!r}')
           req=urllib.request.Request('https://api.kaggle.com/v1/kernels.KernelsApiService/GetAcceleratorQuotaStatistics',data=b'{}',method='POST',headers={
             'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json',
-            'User-Agent':'kaggle-11-pool-readiness/1.0'})
+            'User-Agent':'kaggle-11-pool-readiness/1.1'})
           with urllib.request.urlopen(req,timeout=30) as r: q=json.load(r)
           def seconds(value):
             if isinstance(value,(int,float)): return float(value)
