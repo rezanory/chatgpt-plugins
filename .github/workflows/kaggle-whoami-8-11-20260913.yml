@@ -1,0 +1,45 @@
+name: kaggle-whoami-8-11-20260913
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kaggle-whoami-8-11-20260913.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  whoami:
+    name: ${{ matrix.account_id }} / ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ matrix.environment }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {account_id: kg-08, environment: kaggle-08}
+          - {account_id: kg-09, environment: kaggle-09}
+          - {account_id: kg-10, environment: kaggle-10}
+          - {account_id: kg-11, environment: kaggle-11}
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      ACCOUNT_ID: ${{ matrix.account_id }}
+    steps:
+      - name: Resolve authenticated Kaggle username
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -q 'kagglehub>=1.0,<2'
+          python - <<'PY'
+          import json, os
+          import kagglehub
+          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          if not token:
+              raise SystemExit('missing token')
+          kagglehub.login(token=token, validate_credentials=True)
+          me=kagglehub.whoami()
+          print('KAGGLE_WHOAMI='+json.dumps({'account_id':os.environ['ACCOUNT_ID'],'username':me.get('username')},sort_keys=True))
+          PY
