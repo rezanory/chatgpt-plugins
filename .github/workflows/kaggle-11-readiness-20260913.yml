@@ -1,0 +1,116 @@
+name: kaggle-11-readiness-20260913
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: ${{ matrix.account_id }} / ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ matrix.environment }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      max-parallel: 11
+      matrix:
+        include:
+          - {account_id: kg-01, environment: kaggle-01, expected_owner: azadka}
+          - {account_id: kg-02, environment: kaggle-02, expected_owner: radlinaradlina}
+          - {account_id: kg-03, environment: kaggle-03, expected_owner: rezanory}
+          - {account_id: kg-04, environment: kaggle-04, expected_owner: reyhanehazad}
+          - {account_id: kg-05, environment: kaggle-05, expected_owner: trickermark}
+          - {account_id: kg-06, environment: kaggle-06, expected_owner: msdenis}
+          - {account_id: kg-07, environment: kaggle-07, expected_owner: nisabulutmark}
+          - {account_id: kg-08, environment: kaggle-08, expected_owner: mononoke44}
+          - {account_id: kg-09, environment: kaggle-09, expected_owner: unknown}
+          - {account_id: kg-10, environment: kaggle-10, expected_owner: unknown}
+          - {account_id: kg-11, environment: kaggle-11, expected_owner: unknown}
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      ACCOUNT_ID: ${{ matrix.account_id }}
+      ENVIRONMENT_NAME: ${{ matrix.environment }}
+      EXPECTED_OWNER: ${{ matrix.expected_owner }}
+    steps:
+      - name: Read-only Kaggle auth, identity and quota probe
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64, json, os, re, urllib.error, urllib.request
+
+          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          aid=os.environ['ACCOUNT_ID']
+          env_name=os.environ['ENVIRONMENT_NAME']
+          expected=os.environ['EXPECTED_OWNER']
+          result={'account_id':aid,'environment':env_name,'expected_owner':expected,
+                  'read_only':True,'compute_launched':False,'token_present':bool(token)}
+
+          def call(service, method, body, authorization):
+              url=f'https://api.kaggle.com/v1/{service}/{method}'
+              req=urllib.request.Request(url,data=json.dumps(body,separators=(',',':')).encode(),method='POST',headers={
+                  'Authorization':authorization,'Content-Type':'application/json','Accept':'application/json',
+                  'User-Agent':'chatgpt-plugins-kaggle-11-readiness/1.0'})
+              with urllib.request.urlopen(req,timeout=30) as r:
+                  raw=r.read().decode('utf-8','replace')
+                  return r.status,(json.loads(raw) if raw else {})
+
+          def duration_seconds(value):
+              if value is None: return None
+              if isinstance(value,(int,float)): return float(value)
+              if isinstance(value,dict): return float(value.get('seconds',0) or 0)+float(value.get('nanos',0) or 0)/1e9
+              m=re.fullmatch(r'(-?[0-9]+(?:\.[0-9]+)?)s',str(value).strip())
+              return float(m.group(1)) if m else None
+
+          def quota(obj):
+              if not isinstance(obj,dict): return None
+              used=duration_seconds(obj.get('timeUsed',obj.get('time_used')))
+              total=duration_seconds(obj.get('totalTimeAllowed',obj.get('total_time_allowed')))
+              if used is None or total is None: return {'shape':sorted(obj.keys())}
+              return {'used_hours':round(used/3600,3),'remaining_hours':round(max(0,total-used)/3600,3),'total_hours':round(total/3600,3)}
+
+          if not token:
+              result.update(status='MISSING_TOKEN')
+              print('KAGGLE_READINESS_RESULT='+json.dumps(result,sort_keys=True))
+              raise SystemExit(2)
+
+          candidates=[]
+          if token.startswith('KGAT_'):
+              candidates.append(('KGAT_BEARER','Bearer '+token))
+          if expected!='unknown':
+              candidates.append(('LEGACY_BASIC','Basic '+base64.b64encode(f'{expected}:{token}'.encode()).decode()))
+          if not candidates:
+              candidates.append(('BEARER_FALLBACK','Bearer '+token))
+
+          last_error=None
+          for mode,auth in candidates:
+              try:
+                  _,q=call('kernels.KernelsApiService','GetAcceleratorQuotaStatistics',{},auth)
+                  _,k=call('kernels.KernelsApiService','ListKernels',{'group':'PROFILE','pageSize':5},auth)
+                  kernels=k.get('kernels') or []
+                  detected=''
+                  for item in kernels:
+                      if isinstance(item,dict):
+                          detected=(item.get('author') or '').strip()
+                          if not detected:
+                              ref=(item.get('ref') or '').strip()
+                              if '/' in ref: detected=ref.split('/',1)[0]
+                          if detected: break
+                  result.update(status='OK',auth_mode=mode,detected_owner=(detected or None),
+                      owner_match=(None if not detected or expected=='unknown' else detected.lower()==expected.lower()),
+                      gpu=quota(q.get('gpuQuota') or q.get('gpu_quota')),
+                      tpu=quota(q.get('tpuQuota') or q.get('tpu_quota')),
+                      refresh_at=q.get('quotaRefreshTime') or q.get('quota_refresh_time'),
+                      visible_profile_kernels=len(kernels))
+                  break
+              except urllib.error.HTTPError as exc:
+                  last_error=f'HTTP_{exc.code}'
+              except Exception as exc:
+                  last_error=type(exc).__name__
+          else:
+              result.update(status='AUTH_OR_QUERY_FAILED',error_type=last_error)
+
+          print('KAGGLE_READINESS_RESULT='+json.dumps(result,sort_keys=True))
+          if result.get('status')!='OK': raise SystemExit(3)
+          PY
