@@ -3,9 +3,10 @@
     "account_id": "kg-01",
     "owner_slug": "azadka",
     "secret_scope": "kaggle-01",
-    "enabled": false,
+    "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc", "role:master"],
     "default_accelerator": "NvidiaTeslaT4"
   },
   {
@@ -15,6 +16,7 @@
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc"],
     "default_accelerator": "NvidiaTeslaT4"
   },
   {
@@ -24,6 +26,7 @@
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc"],
     "default_accelerator": "NvidiaTeslaT4"
   },
   {
@@ -33,6 +36,7 @@
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc"],
     "default_accelerator": "NvidiaTeslaT4"
   },
   {
@@ -42,6 +46,7 @@
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc"],
     "default_accelerator": "NvidiaTeslaT4"
   },
   {
@@ -51,6 +56,7 @@
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc"],
     "default_accelerator": "NvidiaTeslaT4"
   },
   {
@@ -60,15 +66,47 @@
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:cloudflare-oidc"],
     "default_accelerator": "NvidiaTeslaT4"
   },
   {
     "account_id": "kg-08",
-    "owner_slug": "mononoke44",
+    "owner_slug": "azadkk",
     "secret_scope": "kaggle-08",
     "enabled": true,
     "max_parallel": 1,
     "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:github-environment"],
+    "default_accelerator": "NvidiaTeslaT4"
+  },
+  {
+    "account_id": "kg-09",
+    "owner_slug": "mylovevpn1",
+    "secret_scope": "kaggle-09",
+    "enabled": true,
+    "max_parallel": 1,
+    "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:github-environment"],
+    "default_accelerator": "NvidiaTeslaT4"
+  },
+  {
+    "account_id": "kg-10",
+    "owner_slug": "computstu1",
+    "secret_scope": "kaggle-10",
+    "enabled": true,
+    "max_parallel": 1,
+    "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:github-environment"],
+    "default_accelerator": "NvidiaTeslaT4"
+  },
+  {
+    "account_id": "kg-11",
+    "owner_slug": "jobreza1",
+    "secret_scope": "kaggle-11",
+    "enabled": true,
+    "max_parallel": 1,
+    "capabilities": ["cpu", "gpu"],
+    "labels": ["pool:kaggle-11", "route:github-environment"],
     "default_accelerator": "NvidiaTeslaT4"
   }
 ]
