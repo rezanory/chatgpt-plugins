@@ -7,10 +7,22 @@ const TRUSTED_REPOSITORY_ID = "1337215097";
 const TRUSTED_OWNER_ID = "62356000";
 const TRUSTED_ACTOR_ID = "62356000";
 const TRUSTED_REF = "refs/heads/main";
-const READ_WORKFLOW_REF =
-  "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main";
-const ACTION_WORKFLOW_REF =
-  "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-8acct-20260912.yml@refs/heads/main";
+const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
+  [
+    "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main",
+    new Set(["issue_comment"]),
+  ],
+  [
+    "rezanory/chatgpt-plugins/.github/workflows/kaggle-11-pool-readiness.yml@refs/heads/main",
+    new Set(["push", "workflow_dispatch"]),
+  ],
+]);
+const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
+  [
+    "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-8acct-20260912.yml@refs/heads/main",
+    new Set(["issue_comment"]),
+  ],
+]);
 const CLOCK_SKEW_SECONDS = 60;
 
 type Rec = Record<string, unknown>;
@@ -76,7 +88,7 @@ function audienceMatches(value: unknown, expected: string): boolean {
 
 async function signingKey(kid: string): Promise<CryptoKey> {
   const response = await fetch(GITHUB_OIDC_JWKS, {
-    headers: { Accept: "application/json", "User-Agent": "chatgpt-control-plane-v3-oidc/1.0" },
+    headers: { Accept: "application/json", "User-Agent": "chatgpt-control-plane-v3-oidc/1.1" },
   });
   if (!response.ok) throw new Error(`GitHub OIDC JWKS HTTP ${response.status}`);
   const payload = object(await response.json());
@@ -119,7 +131,7 @@ async function verifyBrokerOidc(
   if (!verified) throw new Error("GitHub OIDC JWT signature invalid");
 
   const expectedAudience = kind === "read" ? READ_AUDIENCE : ACTION_AUDIENCE;
-  const expectedWorkflow = kind === "read" ? READ_WORKFLOW_REF : ACTION_WORKFLOW_REF;
+  const allowedWorkflows = kind === "read" ? READ_WORKFLOW_EVENTS : ACTION_WORKFLOW_EVENTS;
   const now = Math.floor(Date.now() / 1000);
   const exp = numericClaim(claims, "exp");
   const nbf = claims.nbf === undefined ? now : numericClaim(claims, "nbf");
@@ -148,7 +160,8 @@ async function verifyBrokerOidc(
   if (ownerId !== TRUSTED_OWNER_ID || actorId !== TRUSTED_ACTOR_ID) {
     throw new Error("GitHub OIDC owner/actor identity mismatch");
   }
-  if (workflowRef !== expectedWorkflow || ref !== TRUSTED_REF || eventName !== "issue_comment") {
+  const allowedEvents = allowedWorkflows.get(workflowRef);
+  if (!allowedEvents || !allowedEvents.has(eventName) || ref !== TRUSTED_REF) {
     throw new Error("GitHub OIDC workflow/ref/event mismatch");
   }
   if (claims.repository_visibility !== "private") throw new Error("GitHub OIDC repository visibility mismatch");
