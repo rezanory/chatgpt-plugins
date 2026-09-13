@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-09-13T19:44:22Z",
+  "status": "READY_11_OF_11",
+  "route": "cloudflare-oidc",
+  "cloudflare_worker": "chatgpt-kaggle-gateway",
+  "cloudflare_worker_version_id": "f615cb8e-99ee-48f2-981b-51ad8c5b8e47",
+  "runtime_commit": "110fee8",
+  "validation_run_id": 34778582543,
+  "quota_refresh_at": "2026-09-19T00:00:00Z",
+  "aggregate_capacity": {
+    "accounts": 11,
+    "gpu_total_hours": 330.0,
+    "gpu_remaining_hours": 330.0,
+    "tpu_total_hours": 220.0,
+    "tpu_remaining_hours": 220.0
+  },
+  "accounts": [
+    {"account_id":"kg-01","owner_slug":"azadka","role":"master","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"},
+    {"account_id":"kg-02","owner_slug":"radlinaradlina","role":"worker","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"},
+    {"account_id":"kg-03","owner_slug":"rezanory","role":"worker","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"},
+    {"account_id":"kg-04","owner_slug":"reyhanehazad","role":"worker","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"},
+    {"account_id":"kg-05","owner_slug":"trickermark","role":"worker","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"},
+    {"account_id":"kg-06","owner_slug":"msdenis","role":"worker","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"},
+    {"account_id":"kg-07","owner_slug":"nisabulutmark","role":"worker","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"},
+    {"account_id":"kg-08","owner_slug":"azadkk","role":"worker","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"},
+    {"account_id":"kg-09","owner_slug":"mylovevpn1","role":"worker","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"},
+    {"account_id":"kg-10","owner_slug":"computstu1","role":"worker","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"},
+    {"account_id":"kg-11","owner_slug":"jobreza1","role":"worker","gpu_remaining_hours":30.0,"tpu_remaining_hours":20.0,"status":"OK"}
+  ],
+  "security": {
+    "secret_values_recorded": false,
+    "validation_reads_only": true,
+    "temporary_dpapi_staging_removed": true
+  }
+}
