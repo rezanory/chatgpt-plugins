@@ -28,17 +28,17 @@ jobs:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
       TARGET_SECRET: ${{ matrix.target }}
     steps:
-      - name: Stage token locally with DPAPI
+      - name: Stage token locally with Windows DPAPI SecureString
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           if([string]::IsNullOrWhiteSpace($env:KAGGLE_API_TOKEN)){throw 'Kaggle token unavailable'}
           $root=Join-Path (Split-Path $env:RUNNER_TEMP -Parent) '_secret_promotion_20260913'
           New-Item -ItemType Directory -Force -Path $root | Out-Null
-          $plain=[Text.Encoding]::UTF8.GetBytes($env:KAGGLE_API_TOKEN.Trim())
-          $cipher=[System.Security.Cryptography.ProtectedData]::Protect($plain,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
-          [IO.File]::WriteAllBytes((Join-Path $root ($env:TARGET_SECRET+'.bin')),$cipher)
-          [Array]::Clear($plain,0,$plain.Length)
+          $secure=ConvertTo-SecureString $env:KAGGLE_API_TOKEN.Trim() -AsPlainText -Force
+          $protected=ConvertFrom-SecureString $secure
+          [IO.File]::WriteAllText((Join-Path $root ($env:TARGET_SECRET+'.dpapi')),$protected,[Text.UTF8Encoding]::new($false))
+          $secure=$null; $protected=$null
           Write-Host ('STAGED '+$env:TARGET_SECRET)
 
   promote:
@@ -61,16 +61,16 @@ jobs:
           $targets=@('CGP_KAGGLE_KG08_TOKEN','CGP_KAGGLE_KG09_TOKEN','CGP_KAGGLE_KG10_TOKEN','CGP_KAGGLE_KG11_TOKEN')
           try {
             foreach($target in $targets){
-              $path=Join-Path $root ($target+'.bin')
+              $path=Join-Path $root ($target+'.dpapi')
               if(-not (Test-Path $path)){throw "staged secret missing: $target"}
-              $cipher=[IO.File]::ReadAllBytes($path)
-              $plain=[System.Security.Cryptography.ProtectedData]::Unprotect($cipher,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
-              $token=[Text.Encoding]::UTF8.GetString($plain)
+              $protected=[IO.File]::ReadAllText($path,[Text.Encoding]::UTF8)
+              $secure=ConvertTo-SecureString $protected
+              $bstr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+              try {$token=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)} finally {[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)}
               if([string]::IsNullOrWhiteSpace($token)){throw "decrypted secret empty: $target"}
               $token | npx --yes wrangler@4.131.1 secret put $target --name chatgpt-kaggle-gateway
               if($LASTEXITCODE -ne 0){throw "Cloudflare secret put failed: $target"}
-              [Array]::Clear($plain,0,$plain.Length)
-              $token=$null
+              $token=$null; $secure=$null; $protected=$null
             }
           } finally {
             if(Test-Path $root){Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue}
