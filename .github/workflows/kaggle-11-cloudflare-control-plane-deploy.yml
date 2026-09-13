@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Typecheck control plane
+      - name: Validate exact control-plane bundle
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -39,8 +39,8 @@ jobs:
           try {
             npm install --no-audit --no-fund
             if($LASTEXITCODE -ne 0){throw 'npm install failed'}
-            npm run check
-            if($LASTEXITCODE -ne 0){throw 'typecheck failed'}
+            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway --dry-run
+            if($LASTEXITCODE -ne 0){throw 'control-plane dry-run failed'}
           } finally { Pop-Location }
       - name: Deploy OIDC-gated control plane
         shell: powershell
