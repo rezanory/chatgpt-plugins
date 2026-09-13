@@ -1,0 +1,166 @@
+name: kaggle-11-pool-readiness
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kaggle-11-pool-readiness.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: kaggle-11-pool-readiness
+  cancel-in-progress: false
+
+jobs:
+  legacy-cloudflare:
+    name: kg-01..07 via Cloudflare OIDC
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Request GitHub OIDC read identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          sep='?'
+          [[ "$ACTIONS_ID_TOKEN_REQUEST_URL" == *'?'* ]] && sep='&'
+          url="${ACTIONS_ID_TOKEN_REQUEST_URL}${sep}audience=cgp-control-plane-v3"
+          token="$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$url" | python -c "import json,sys; print(json.load(sys.stdin)['value'])")"
+          test "${#token}" -gt 100
+          echo "::add-mask::$token"
+          echo "CGP_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: Verify seven legacy accounts read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import concurrent.futures, json, os, time, urllib.error, urllib.request
+          base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          token=os.environ['CGP_OIDC_TOKEN']
+          accounts=[
+            ('kg-01','master','azadka'),
+            ('kg-02','kg-02','radlinaradlina'),
+            ('kg-03','kg-03','rezanory'),
+            ('kg-04','kg-04','reyhanehazad'),
+            ('kg-05','kg-05','trickermark'),
+            ('kg-06','kg-06','msdenis'),
+            ('kg-07','kg-07','nisabulutmark'),
+          ]
+          for attempt in range(18):
+            try:
+              with urllib.request.urlopen(base+'/control-plane/v3/healthz',timeout=10) as r:
+                h=json.load(r)
+              if h.get('status')=='ready' and h.get('github_oidc_read_broker') is True:
+                break
+            except Exception:
+              pass
+            if attempt==17:
+              raise SystemExit('control-plane-v3 health unavailable')
+            time.sleep(5)
+          def seconds(value):
+            if isinstance(value,(int,float)): return float(value)
+            if isinstance(value,dict): return float(value.get('seconds',0) or 0)+float(value.get('nanos',0) or 0)/1e9
+            text=str(value or '').strip()
+            return float(text[:-1]) if text.endswith('s') else None
+          def quota(obj):
+            if not isinstance(obj,dict): return None
+            used=seconds(obj.get('timeUsed',obj.get('time_used')))
+            total=seconds(obj.get('totalTimeAllowed',obj.get('total_time_allowed')))
+            if used is None or total is None: return {'shape':sorted(obj.keys())}
+            return {'used_hours':round(used/3600,3),'remaining_hours':round(max(0,total-used)/3600,3),'total_hours':round(total/3600,3)}
+          def call(pool_id,cp_id,owner):
+            payload={'provider':'kaggle','action':'raw_read','account_id':cp_id,
+                     'service':'kernels.KernelsApiService','method':'GetAcceleratorQuotaStatistics','body':{}}
+            req=urllib.request.Request(base+'/control-plane/v3/read/kaggle',data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={
+              'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json',
+              'User-Agent':'kaggle-11-pool-readiness/1.0'})
+            with urllib.request.urlopen(req,timeout=30) as r:
+              out=json.load(r)
+            if not out.get('ok'):
+              raise RuntimeError(f'{pool_id}: broker ok=false')
+            result=out.get('result') or {}
+            return {'account_id':pool_id,'owner_slug':owner,'route':'cloudflare-oidc','status':'OK',
+                    'gpu':quota(result.get('gpuQuota') or result.get('gpu_quota')),
+                    'tpu':quota(result.get('tpuQuota') or result.get('tpu_quota')),
+                    'refresh_at':result.get('quotaRefreshTime') or result.get('quota_refresh_time')}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
+            rows=list(ex.map(lambda x: call(*x),accounts))
+          rows.sort(key=lambda x:x['account_id'])
+          for row in rows: print('KAGGLE_POOL_RESULT='+json.dumps(row,sort_keys=True))
+          if len(rows)!=7 or any(r['status']!='OK' for r in rows): raise SystemExit('legacy pool incomplete')
+          print('KAGGLE_LEGACY_GATE=7/7')
+          PY
+
+  modern-environment:
+    name: ${{ matrix.account_id }} via ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ matrix.environment }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {account_id: kg-08, environment: kaggle-08, owner: azadkk}
+          - {account_id: kg-09, environment: kaggle-09, owner: mylovevpn1}
+          - {account_id: kg-10, environment: kaggle-10, owner: computstu1}
+          - {account_id: kg-11, environment: kaggle-11, owner: jobreza1}
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      ACCOUNT_ID: ${{ matrix.account_id }}
+      EXPECTED_OWNER: ${{ matrix.owner }}
+    steps:
+      - name: Verify token, identity and quota read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -q 'kagglehub>=1.0,<2'
+          python - <<'PY'
+          import json, os, re, urllib.request
+          import kagglehub
+          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          if not token: raise SystemExit('missing KAGGLE_API_TOKEN')
+          me=kagglehub.whoami()
+          actual=(me.get('username') or '').strip()
+          expected=os.environ['EXPECTED_OWNER']
+          if actual.lower()!=expected.lower(): raise SystemExit(f'owner mismatch: {actual!r}')
+          req=urllib.request.Request('https://api.kaggle.com/v1/kernels.KernelsApiService/GetAcceleratorQuotaStatistics',data=b'{}',method='POST',headers={
+            'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json',
+            'User-Agent':'kaggle-11-pool-readiness/1.0'})
+          with urllib.request.urlopen(req,timeout=30) as r: q=json.load(r)
+          def seconds(value):
+            if isinstance(value,(int,float)): return float(value)
+            if isinstance(value,dict): return float(value.get('seconds',0) or 0)+float(value.get('nanos',0) or 0)/1e9
+            m=re.fullmatch(r'(-?[0-9]+(?:\.[0-9]+)?)s',str(value or '').strip())
+            return float(m.group(1)) if m else None
+          def quota(obj):
+            used=seconds((obj or {}).get('timeUsed',(obj or {}).get('time_used')))
+            total=seconds((obj or {}).get('totalTimeAllowed',(obj or {}).get('total_time_allowed')))
+            if used is None or total is None: return {'shape':sorted((obj or {}).keys())}
+            return {'used_hours':round(used/3600,3),'remaining_hours':round(max(0,total-used)/3600,3),'total_hours':round(total/3600,3)}
+          row={'account_id':os.environ['ACCOUNT_ID'],'owner_slug':actual,'route':'github-environment','status':'OK',
+               'gpu':quota(q.get('gpuQuota') or q.get('gpu_quota')),
+               'tpu':quota(q.get('tpuQuota') or q.get('tpu_quota')),
+               'refresh_at':q.get('quotaRefreshTime') or q.get('quota_refresh_time')}
+          print('KAGGLE_POOL_RESULT='+json.dumps(row,sort_keys=True))
+          PY
+
+  gate:
+    name: 11-account readiness gate
+    runs-on: ubuntu-latest
+    needs: [legacy-cloudflare, modern-environment]
+    if: always()
+    steps:
+      - name: Fail closed unless every route passed
+        shell: bash
+        env:
+          LEGACY: ${{ needs.legacy-cloudflare.result }}
+          MODERN: ${{ needs.modern-environment.result }}
+        run: |
+          set -euo pipefail
+          echo "legacy-cloudflare=$LEGACY modern-environment=$MODERN"
+          test "$LEGACY" = success
+          test "$MODERN" = success
+          echo 'KAGGLE_11_POOL_READY=11/11'
