@@ -66,6 +66,26 @@ const ACCOUNTS: Record<
     username: "nisabulutmark",
     envKey: "CGP_KAGGLE_KG07_TOKEN",
   },
+  "kg-08": {
+    owner: "azadkk",
+    username: "azadkk",
+    envKey: "CGP_KAGGLE_KG08_TOKEN",
+  },
+  "kg-09": {
+    owner: "mylovevpn1",
+    username: "mylovevpn1",
+    envKey: "CGP_KAGGLE_KG09_TOKEN",
+  },
+  "kg-10": {
+    owner: "computstu1",
+    username: "computstu1",
+    envKey: "CGP_KAGGLE_KG10_TOKEN",
+  },
+  "kg-11": {
+    owner: "jobreza1",
+    username: "jobreza1",
+    envKey: "CGP_KAGGLE_KG11_TOKEN",
+  },
   master: {
     owner: "azadka",
     username: "azadka",

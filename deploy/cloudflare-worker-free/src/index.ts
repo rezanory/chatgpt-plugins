@@ -34,7 +34,7 @@ const READ_ONLY = {
   openWorldHint: true,
 } as const;
 
-const workerAccountId = z.enum(["kg-02", "kg-03", "kg-04", "kg-05", "kg-06", "kg-07"]);
+const workerAccountId = z.enum(["kg-02", "kg-03", "kg-04", "kg-05", "kg-06", "kg-07", "kg-08", "kg-09", "kg-10", "kg-11"]);
 
 function textResult(value: unknown) {
   return {
@@ -51,7 +51,7 @@ function buildServer(env: WorkerEnv): McpServer {
   server.registerTool(
     "kaggle_accounts",
     {
-      description: "List the six execution accounts without exposing credentials.",
+      description: "List the ten execution accounts without exposing credentials.",
       inputSchema: z.object({}),
       annotations: READ_ONLY,
     },
@@ -81,8 +81,8 @@ function buildServer(env: WorkerEnv): McpServer {
   server.registerTool(
     "kaggle_auth_check_all",
     {
-      description: "Verify all six execution accounts in parallel using direct HTTPS API calls.",
-      inputSchema: z.object({ max_workers: z.number().int().min(1).max(6).default(6) }),
+      description: "Verify all ten execution accounts in parallel using direct HTTPS API calls.",
+      inputSchema: z.object({ max_workers: z.number().int().min(1).max(10).default(10) }),
       annotations: READ_ONLY,
     },
     async () => textResult(await authCheckAll(env)),
@@ -133,7 +133,7 @@ function buildServer(env: WorkerEnv): McpServer {
       inputSchema: z.object({
         search: z.string().min(1).max(200),
         page_size: z.number().int().min(1).max(100).default(20),
-        max_workers: z.number().int().min(1).max(6).default(6),
+        max_workers: z.number().int().min(1).max(10).default(10),
       }),
       annotations: READ_ONLY,
     },
@@ -317,6 +317,10 @@ export default {
           env.CGP_KAGGLE_KG05_TOKEN,
           env.CGP_KAGGLE_KG06_TOKEN,
           env.CGP_KAGGLE_KG07_TOKEN,
+          env.CGP_KAGGLE_KG08_TOKEN,
+          env.CGP_KAGGLE_KG09_TOKEN,
+          env.CGP_KAGGLE_KG10_TOKEN,
+          env.CGP_KAGGLE_KG11_TOKEN,
         ].filter((value) => Boolean(value?.trim())).length,
         master_configured: Boolean(env.CGP_KAGGLE_MASTER_TOKEN?.trim()),
         write_enabled: env.CGP_WRITE_ENABLED === "1",

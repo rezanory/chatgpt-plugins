@@ -18,6 +18,10 @@ const ACCOUNTS = new Set<AccountId>([
   "kg-05",
   "kg-06",
   "kg-07",
+  "kg-08",
+  "kg-09",
+  "kg-10",
+  "kg-11",
   "master",
 ]);
 const SECRET_KEY = /(token|secret|password|authorization|credential|api[_-]?key|cookie|signed[_-]?url)/i;
