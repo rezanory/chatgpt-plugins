@@ -1,0 +1,78 @@
+name: tmp-promote-kaggle-08-11-to-cloudflare-20260913
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/tmp-promote-kaggle-08-11-to-cloudflare-20260913.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    name: stage ${{ matrix.account_id }}
+    runs-on: [self-hosted, windows, x64, v622-r2]
+    environment: ${{ matrix.environment }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {account_id: kg-08, environment: kaggle-08, target: CGP_KAGGLE_KG08_TOKEN}
+          - {account_id: kg-09, environment: kaggle-09, target: CGP_KAGGLE_KG09_TOKEN}
+          - {account_id: kg-10, environment: kaggle-10, target: CGP_KAGGLE_KG10_TOKEN}
+          - {account_id: kg-11, environment: kaggle-11, target: CGP_KAGGLE_KG11_TOKEN}
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      TARGET_SECRET: ${{ matrix.target }}
+    steps:
+      - name: Stage token locally with DPAPI
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if([string]::IsNullOrWhiteSpace($env:KAGGLE_API_TOKEN)){throw 'Kaggle token unavailable'}
+          $root=Join-Path (Split-Path $env:RUNNER_TEMP -Parent) '_secret_promotion_20260913'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $plain=[Text.Encoding]::UTF8.GetBytes($env:KAGGLE_API_TOKEN.Trim())
+          $cipher=[Security.Cryptography.ProtectedData]::Protect($plain,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+          [IO.File]::WriteAllBytes((Join-Path $root ($env:TARGET_SECRET+'.bin')),$cipher)
+          [Array]::Clear($plain,0,$plain.Length)
+          Write-Host ('STAGED '+$env:TARGET_SECRET)
+
+  promote:
+    name: promote to Cloudflare
+    needs: [stage]
+    runs-on: [self-hosted, windows, x64, v622-r2]
+    environment: cloudflare-production
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Promote DPAPI-staged tokens and securely clean up
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CLOUDFLARE_ACCOUNT_ID=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if([string]::IsNullOrWhiteSpace($env:CLOUDFLARE_API_TOKEN) -or [string]::IsNullOrWhiteSpace($env:CLOUDFLARE_ACCOUNT_ID)){throw 'Cloudflare credentials unavailable'}
+          $root=Join-Path (Split-Path $env:RUNNER_TEMP -Parent) '_secret_promotion_20260913'
+          $targets=@('CGP_KAGGLE_KG08_TOKEN','CGP_KAGGLE_KG09_TOKEN','CGP_KAGGLE_KG10_TOKEN','CGP_KAGGLE_KG11_TOKEN')
+          try {
+            foreach($target in $targets){
+              $path=Join-Path $root ($target+'.bin')
+              if(-not (Test-Path $path)){throw "staged secret missing: $target"}
+              $cipher=[IO.File]::ReadAllBytes($path)
+              $plain=[Security.Cryptography.ProtectedData]::Unprotect($cipher,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+              $token=[Text.Encoding]::UTF8.GetString($plain)
+              if([string]::IsNullOrWhiteSpace($token)){throw "decrypted secret empty: $target"}
+              $token | npx --yes wrangler@4.131.1 secret put $target --name chatgpt-kaggle-gateway
+              if($LASTEXITCODE -ne 0){throw "Cloudflare secret put failed: $target"}
+              [Array]::Clear($plain,0,$plain.Length)
+              $token=$null
+            }
+          } finally {
+            if(Test-Path $root){Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue}
+          }
+          Write-Host 'PROMOTION_OK=4/4'
