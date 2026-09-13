@@ -1,0 +1,4 @@
+interface:
+  display_name: "Onboard Kaggle Account Fleet"
+  short_description: "Bulk onboard Kaggle accounts through Cloudflare"
+  default_prompt: "Onboard the new authorized Kaggle accounts into the canonical fleet, promote credentials securely to Cloudflare, update routing, validate readiness, and clean up temporary paths."
