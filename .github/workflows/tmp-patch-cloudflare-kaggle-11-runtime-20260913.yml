@@ -1,0 +1,132 @@
+name: tmp-patch-cloudflare-kaggle-11-runtime-20260913
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/tmp-patch-cloudflare-kaggle-11-runtime-20260913.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tmp-patch-cloudflare-kaggle-11-runtime-20260913
+  cancel-in-progress: false
+
+jobs:
+  patch-deploy:
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Patch exact 11-account runtime surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_one(path, old, new):
+              p=Path(path); text=p.read_text(encoding='utf-8')
+              count=text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, got {count}: {old[:80]!r}')
+              p.write_text(text.replace(old,new),encoding='utf-8')
+
+          def replace_count(path, old, new, expected):
+              p=Path(path); text=p.read_text(encoding='utf-8')
+              count=text.count(old)
+              if count != expected:
+                  raise SystemExit(f'{path}: expected {expected} matches, got {count}: {old!r}')
+              p.write_text(text.replace(old,new),encoding='utf-8')
+
+          k='deploy/cloudflare-worker-free/src/kaggle.ts'
+          replace_one(k,
+            'export type WorkerAccountId = "kg-02" | "kg-03" | "kg-04" | "kg-05" | "kg-06" | "kg-07";',
+            'export type WorkerAccountId = "kg-02" | "kg-03" | "kg-04" | "kg-05" | "kg-06" | "kg-07" | "kg-08" | "kg-09" | "kg-10" | "kg-11";')
+          replace_one(k,
+            '  CGP_KAGGLE_KG07_TOKEN?: string;\n  CGP_KAGGLE_MASTER_TOKEN?: string;',
+            '  CGP_KAGGLE_KG07_TOKEN?: string;\n  CGP_KAGGLE_KG08_TOKEN?: string;\n  CGP_KAGGLE_KG09_TOKEN?: string;\n  CGP_KAGGLE_KG10_TOKEN?: string;\n  CGP_KAGGLE_KG11_TOKEN?: string;\n  CGP_KAGGLE_MASTER_TOKEN?: string;')
+          replace_one(k,
+            '  { accountId: "kg-07", ownerSlug: "nisabulutmark", username: "nisabulutmark", role: "worker" },\n] as const;',
+            '  { accountId: "kg-07", ownerSlug: "nisabulutmark", username: "nisabulutmark", role: "worker" },\n  { accountId: "kg-08", ownerSlug: "azadkk", username: "azadkk", role: "worker" },\n  { accountId: "kg-09", ownerSlug: "mylovevpn1", username: "mylovevpn1", role: "worker" },\n  { accountId: "kg-10", ownerSlug: "computstu1", username: "computstu1", role: "worker" },\n  { accountId: "kg-11", ownerSlug: "jobreza1", username: "jobreza1", role: "worker" },\n] as const;')
+          replace_one(k,
+            '    case "kg-07":\n      return env.CGP_KAGGLE_KG07_TOKEN;\n    case "master":',
+            '    case "kg-07":\n      return env.CGP_KAGGLE_KG07_TOKEN;\n    case "kg-08":\n      return env.CGP_KAGGLE_KG08_TOKEN;\n    case "kg-09":\n      return env.CGP_KAGGLE_KG09_TOKEN;\n    case "kg-10":\n      return env.CGP_KAGGLE_KG10_TOKEN;\n    case "kg-11":\n      return env.CGP_KAGGLE_KG11_TOKEN;\n    case "master":')
+
+          i='deploy/cloudflare-worker-free/src/index.ts'
+          replace_one(i,
+            'const workerAccountId = z.enum(["kg-02", "kg-03", "kg-04", "kg-05", "kg-06", "kg-07"]);',
+            'const workerAccountId = z.enum(["kg-02", "kg-03", "kg-04", "kg-05", "kg-06", "kg-07", "kg-08", "kg-09", "kg-10", "kg-11"]);')
+          replace_one(i,'List the six execution accounts without exposing credentials.','List the ten execution accounts without exposing credentials.')
+          replace_one(i,'Verify all six execution accounts in parallel using direct HTTPS API calls.','Verify all ten execution accounts in parallel using direct HTTPS API calls.')
+          replace_count(i,'max(6).default(6)','max(10).default(10)',2)
+          replace_one(i,
+            '          env.CGP_KAGGLE_KG07_TOKEN,\n        ].filter((value) => Boolean(value?.trim())).length,',
+            '          env.CGP_KAGGLE_KG07_TOKEN,\n          env.CGP_KAGGLE_KG08_TOKEN,\n          env.CGP_KAGGLE_KG09_TOKEN,\n          env.CGP_KAGGLE_KG10_TOKEN,\n          env.CGP_KAGGLE_KG11_TOKEN,\n        ].filter((value) => Boolean(value?.trim())).length,')
+
+          c='deploy/cloudflare-worker-free/src/control-plane-v3-index.ts'
+          replace_one(c,
+            '  "kg-07",\n  "master",',
+            '  "kg-07",\n  "kg-08",\n  "kg-09",\n  "kg-10",\n  "kg-11",\n  "master",')
+
+          ck='deploy/cloudflare-worker-free/src/control-plane-v3-kaggle.ts'
+          replace_one(ck,
+            '  "kg-07": {\n    owner: "nisabulutmark",\n    username: "nisabulutmark",\n    envKey: "CGP_KAGGLE_KG07_TOKEN",\n  },\n  master:',
+            '  "kg-07": {\n    owner: "nisabulutmark",\n    username: "nisabulutmark",\n    envKey: "CGP_KAGGLE_KG07_TOKEN",\n  },\n  "kg-08": {\n    owner: "azadkk",\n    username: "azadkk",\n    envKey: "CGP_KAGGLE_KG08_TOKEN",\n  },\n  "kg-09": {\n    owner: "mylovevpn1",\n    username: "mylovevpn1",\n    envKey: "CGP_KAGGLE_KG09_TOKEN",\n  },\n  "kg-10": {\n    owner: "computstu1",\n    username: "computstu1",\n    envKey: "CGP_KAGGLE_KG10_TOKEN",\n  },\n  "kg-11": {\n    owner: "jobreza1",\n    username: "jobreza1",\n    envKey: "CGP_KAGGLE_KG11_TOKEN",\n  },\n  master:')
+
+          ca='deploy/cloudflare-worker-free/src/control-plane-v3-action.ts'
+          replace_one(ca,
+            '  "kg-07": { owner: "nisabulutmark", username: "nisabulutmark", envKey: "CGP_KAGGLE_KG07_TOKEN" },\n  master:',
+            '  "kg-07": { owner: "nisabulutmark", username: "nisabulutmark", envKey: "CGP_KAGGLE_KG07_TOKEN" },\n  "kg-08": { owner: "azadkk", username: "azadkk", envKey: "CGP_KAGGLE_KG08_TOKEN" },\n  "kg-09": { owner: "mylovevpn1", username: "mylovevpn1", envKey: "CGP_KAGGLE_KG09_TOKEN" },\n  "kg-10": { owner: "computstu1", username: "computstu1", envKey: "CGP_KAGGLE_KG10_TOKEN" },\n  "kg-11": { owner: "jobreza1", username: "jobreza1", envKey: "CGP_KAGGLE_KG11_TOKEN" },\n  master:')
+          PY
+          git diff --check
+      - name: Validate exact control-plane bundle
+        shell: bash
+        working-directory: deploy/cloudflare-worker-free
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway --dry-run
+      - name: Commit runtime patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'rezanory'
+          git config user.email '62356000+rezanory@users.noreply.github.com'
+          git add deploy/cloudflare-worker-free/src/kaggle.ts deploy/cloudflare-worker-free/src/index.ts deploy/cloudflare-worker-free/src/control-plane-v3-index.ts deploy/cloudflare-worker-free/src/control-plane-v3-kaggle.ts deploy/cloudflare-worker-free/src/control-plane-v3-action.ts
+          git commit -m 'Extend Cloudflare Kaggle runtime to 11-account pool'
+          git push origin HEAD:main
+      - name: Deploy patched runtime
+        shell: bash
+        working-directory: deploy/cloudflare-worker-free
+        run: |
+          set -euo pipefail
+          export CLOUDFLARE_ACCOUNT_ID="$(printf '%s' "$RAW_CLOUDFLARE_ACCOUNT_ID" | tr -d '[:space:]')"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway
+      - name: Verify 10 workers plus master configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, urllib.request
+          u='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/healthz'
+          with urllib.request.urlopen(u,timeout=30) as r: h=json.load(r)
+          assert h.get('status')=='ready', h
+          assert h.get('kaggle_tokens_configured')==10, h
+          assert h.get('master_configured') is True, h
+          print('CLOUDFLARE_KAGGLE_CONFIGURED=11/11')
+          PY
