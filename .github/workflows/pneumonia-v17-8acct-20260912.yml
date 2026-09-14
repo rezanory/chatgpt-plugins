@@ -288,10 +288,15 @@ jobs:
           if len(notebook.get("cells", [])) < 13:
               raise SystemExit("canonical V1.7 notebook shape is incomplete")
           hpo_source = "".join(notebook["cells"][12].get("source", []))
-          marker = "# Candidate generation — deterministic."
-          if marker not in hpo_source:
-              raise SystemExit("HPO candidate-generation marker missing")
-          prefix = hpo_source.split(marker, 1)[0]
+          # Use an ASCII execution boundary. The notebook's descriptive heading
+          # contains an em dash whose decoding has differed across runners; the
+          # candidate-generation call itself is ASCII and stable. Preserve all
+          # function definitions above that call, then replace only execution.
+          execution_marker = "candidates = generate_confirmation_candidates()"
+          marker_index = hpo_source.find(execution_marker)
+          if marker_index < 0:
+              raise SystemExit("HPO candidate-generation execution boundary missing")
+          prefix = hpo_source[:marker_index]
           compile(prefix, "<m07-stageb-hpo-definitions>", "exec")
           stage1_blob = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
           custom = """
