@@ -35,7 +35,9 @@ jobs:
           (github.event_name == 'workflow_dispatch' &&
           github.event.inputs.recovery == 'M07_DIAGNOSTICS_IMPORT_FIX1') ||
           (github.event_name == 'workflow_dispatch' &&
-          github.event.inputs.recovery == 'M07_HPO_ROOT_FIX1') }}
+          github.event.inputs.recovery == 'M07_HPO_ROOT_FIX1') ||
+          (github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_PERSIST_UPLOAD_RETRY_FIX1') }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -258,6 +260,66 @@ jobs:
                   break
           if not replaced:
               raise SystemExit("continuation restore invocation not found for compatibility patch")
+
+          # Kaggle's StartBlobUpload endpoint has returned transient HTTP 503s
+          # during this continuation.  Keep the strict persistence gate, but
+          # add bounded retries for that deterministic transient only; all
+          # non-transient failures still fail closed immediately.
+          retry_old = """    try:
+              kagglehub.dataset_upload(
+                  PERSIST_DATASET_HANDLE, str(PERSIST_ROOT), version_notes=str(note),
+              )
+              print(f"✅ Persistent upload OK: {note}")
+              return True
+          except Exception as exc:
+              print("❌ Persistent upload failed:", type(exc).__name__)
+              if strict:
+                  raise RuntimeError(
+                      "PERSISTENCE_GATE_FAILED before expensive training. "
+                      f"Handle={PERSIST_DATASET_HANDLE}"
+                  ) from exc
+              return False"""
+          retry_new = """    # M07_PERSIST_UPLOAD_RETRY_FIX1: bounded retry for Kaggle HTTP 503 only.
+              attempts = 3
+              for attempt in range(1, attempts + 1):
+                  try:
+                      kagglehub.dataset_upload(
+                          PERSIST_DATASET_HANDLE, str(PERSIST_ROOT), version_notes=str(note),
+                      )
+                      print(f"✅ Persistent upload OK: {note}")
+                      return True
+                  except Exception as exc:
+                      status = getattr(getattr(exc, "response", None), "status_code", None)
+                      transient = (
+                          status == 503
+                          or "503 Server Error" in str(exc)
+                          or "Service Unavailable" in str(exc)
+                      )
+                      if transient and attempt < attempts:
+                          import time
+                          wait_seconds = 15 * attempt
+                          print(
+                              f"⚠️ Persistent upload transient 503 "
+                              f"(attempt {attempt}/{attempts}); retrying in {wait_seconds}s"
+                          )
+                          time.sleep(wait_seconds)
+                          continue
+                      print("❌ Persistent upload failed:", type(exc).__name__)
+                      if strict:
+                          raise RuntimeError(
+                              "PERSISTENCE_GATE_FAILED before expensive training. "
+                              f"Handle={PERSIST_DATASET_HANDLE}"
+                          ) from exc
+                      return False"""
+          retry_hits = 0
+          for cell in notebook["cells"]:
+              source = "".join(cell.get("source", []))
+              if retry_old in source:
+                  source = source.replace(retry_old, retry_new, 1)
+                  cell["source"] = source.splitlines(keepends=True)
+                  retry_hits += 1
+          if retry_hits != 1:
+              raise SystemExit(f"M07_PERSIST_UPLOAD_RETRY_FIX1 expected one _persist_upload patch, got {retry_hits}")
           notebook["cells"] = notebook["cells"][:13] + notebook["cells"][14:24]
           # The canonical notebook derives a full handle as owner/slug.  Keep
           # the persisted dataset slug unqualified to avoid owner duplication.
@@ -267,12 +329,13 @@ jobs:
               source = source.replace('"m07-multires-gate-run-safe-v17"', json.dumps(persist_slug))
               cell["source"] = source.splitlines(keepends=True)
           notebook.setdefault("metadata", {})["cgp_continuation"] = {
-              "schema": "m07.d260914d.continuation.builder.v1",
+              "schema": "m07.d260914d.continuation.builder.v2",
               "campaign_id": "d260914d", "winner_candidate_id": 2,
               "final5_kernel_ref": FINAL5_REF, "final5_code_sha256": PREDECESSOR_LAUNCH_SHA,
               "persistence_handle": PERSIST_HANDLE, "split_fingerprint": "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9",
               "artifact_evidence": {"status": "PASS", **(artifact_green or {})},
               "locked_test_used": False, "external_used": False, "phase2_unlocked": False,
+              "persistence_upload_retry": "M07_PERSIST_UPLOAD_RETRY_FIX1",
           }
           out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "PNEUMONIA_V17_D260914D_M07_LOCKED_TEST_DIAGNOSTICS_FIX1.ipynb"
           out.write_text(json.dumps(notebook, ensure_ascii=False, indent=1), encoding="utf-8")
