@@ -2,6 +2,7 @@ import canonicalWorker from "./index";
 import { executeKaggleOidcAction } from "./control-plane-v3-action";
 import {
   kaggleLiveLog,
+  kaggleOutputJsonFiles,
   kagglePhaseProbe,
   kaggleReadCall,
   type ControlPlaneV3Env,
@@ -92,6 +93,11 @@ async function handleKaggleRead(request: Request, env: ControlPlaneV3Env): Promi
       method,
       body: object(body.body),
     });
+  } else if (action === "output_json_files") {
+    const names = Array.isArray(body.file_names) ? body.file_names.map((value) => String(value)) : [];
+    result = await kaggleOutputJsonFiles(
+      env, account, String(body.kernel_ref ?? ""), names, Number(body.max_bytes_per_file ?? 65_536),
+    );
   } else if (action === "phase_probe") {
     result = await kagglePhaseProbe(env, account, String(body.kernel_ref ?? ""));
   } else if (action === "live_log") {
