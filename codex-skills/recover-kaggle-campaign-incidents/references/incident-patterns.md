@@ -57,4 +57,3 @@ Before attributing 401/403 to a Kaggle account:
 5. Run one permanent-path, per-account, read-only identity or quota query.
 6. Treat a query comment without a matching run/receipt as transport evidence missing, not account failure.
 7. Require exact `N/N`; preserve individual receipts so a fail-fast aggregate cannot hide the failing account.
-

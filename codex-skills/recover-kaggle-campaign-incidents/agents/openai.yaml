@@ -2,4 +2,3 @@ interface:
   display_name: "Recover Kaggle Campaign Incidents"
   short_description: "Safely diagnose stalled Kaggle campaigns"
   default_prompt: "Use $recover-kaggle-campaign-incidents to diagnose this Kaggle campaign failure, reconcile exact evidence, and recover it without duplicate compute."
-

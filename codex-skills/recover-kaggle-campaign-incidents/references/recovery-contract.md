@@ -68,4 +68,3 @@ Record:
 - authority fences.
 
 Never include Kaggle tokens, Cloudflare credentials, OIDC bearer tokens, or unredacted logs that may contain them.
-

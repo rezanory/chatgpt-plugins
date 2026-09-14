@@ -55,4 +55,3 @@ Resume the same stable conversation from the exact unfinished point only after r
 ## Completion evidence
 
 Do not declare recovery from a plan or a green-looking focused check. Require the affected lane to resume observable progress or reach its expected terminal state, exact provider and Git identities to match, every required validation to be accounted for, duplicates to be fenced, and later scientific phases to remain unchanged unless separately authorized.
-
