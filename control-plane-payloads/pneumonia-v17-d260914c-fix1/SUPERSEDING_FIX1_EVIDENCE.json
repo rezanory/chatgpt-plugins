@@ -1,0 +1,21 @@
+{
+  "schema": "pneumonia.v17.superseding.fix1.evidence.v1",
+  "supersedes_campaign": "d260914b",
+  "campaign": "d260914c",
+  "immutable_predecessor_launch_run": 34794661482,
+  "predecessor_head_sha": "c5e7e4d7e574a7f5c2cdcb7f0dc4e85e67955f7a",
+  "root_cause_class": "SOURCE_CONTRACT",
+  "root_cause": "Fresh persistence datasets return KaggleHub BackendError with canonical NOT_FOUND envelope (errors=[Not found], error.code=5, wasSuccessful=false). The predecessor absence classifier accepted only explicit HTTP 404, so all three workers failed closed before GPU training.",
+  "fix_scope": "Persistence absence classifier only; accept HTTP 404 OR the exact canonical KaggleHub BackendError NOT_FOUND envelope. Authentication, network, malformed, permission and generic errors remain fail-closed.",
+  "scientific_settings_changed": false,
+  "phase2_launched": false,
+  "locked_test_executed": false,
+  "failed_artifacts_mutated": false,
+  "source_validation": {"tests_run":135,"failures":0,"errors":0,"code_stamp_matches":true},
+  "stage1_notebooks": {
+    "W01": "ace1176fe2317f8c90596505283af6e624c5d7e58e655d8e513797857ce513ca",
+    "W02": "f65f39f294c811bfa6bb95145d0e126c9191193b165ed9dd94d341fe6f5566f5",
+    "W03": "3137c1242e5f301bbed5f3be82e8cc8d01c9c841ced4fe2782afb26c9519878e"
+  },
+  "focused_payload_sha256": "f4755a0f5b2c91ab09882dcae137049c70e55dfde77af795789a2870e5acb176"
+}
