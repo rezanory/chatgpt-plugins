@@ -10,194 +10,237 @@ permissions:
   issues: write
 
 concurrency:
-  group: pneumonia-v17-8acct-20260912
+  group: pneumonia-v17-d260914b-m07-stage1
   cancel-in-progress: false
 
 jobs:
-  launch:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_RUN_8ACCT_20260912' }}
+  launch-m07-stage1:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914B_M07_STAGE1' }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 45
     steps:
-      - name: Checkout exact package payload
+      - name: Checkout exact V1.7 source
         uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Validate exact V1.7 launch payload only
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $dir='control-plane-payloads/pneumonia-v17-20260912'
-          $name='PNEUMONIA_MASTER_M01_M12_M07_GATE_RUN_SAFE_V1_7.ipynb'
-          $rel="$dir/$name"
-          if(-not (Test-Path $rel)){throw 'V1.7 payload missing'}
-          $all=@(Get-ChildItem $dir -File -Filter '*.ipynb')
-          if($all.Count -ne 1){throw "exactly one launch notebook required; found $($all.Count)"}
-          $out=Join-Path $env:RUNNER_TEMP $name
-          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
-          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
-          $env:CGP_GIT_REL=$rel
-          $env:CGP_EXACT_OUT=$out
-          & $python -c "import os,subprocess,pathlib; b=subprocess.check_output(['git','show','HEAD:'+os.environ['CGP_GIT_REL']]); pathlib.Path(os.environ['CGP_EXACT_OUT']).write_bytes(b)"
-          if($LASTEXITCODE -ne 0){throw 'exact Git blob extraction failed'}
-          $sha=(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
-          if($sha -ne '9fca3b687297fc4e23cd1a2f68d4765c897bd20516ae7c69309c99ca5a595907'){throw "V1.7 SHA mismatch: $sha"}
-          "CGP_NOTEBOOK_PATH=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CGP_NOTEBOOK_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "V1.7 exact Git blob validated: $sha"
-
-      - name: Request GitHub OIDC action-broker identity
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
-          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $uri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action"
-          $h=@{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
-          $r=Invoke-RestMethod -Uri $uri -Headers $h -TimeoutSec 30
-          $token=[string]$r.value
-          if($token.Length -lt 100){throw 'GitHub OIDC token unavailable'}
-          Write-Host "::add-mask::$token"
-          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
-
-      - name: Launch exact V1.7 on azadka master then six legacy workers
+      - name: Build and verify three isolated M07 screening notebooks
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           $script=@'
-          import concurrent.futures, json, os, pathlib, urllib.error, urllib.request
+          import copy, hashlib, json, os, pathlib
+          src=pathlib.Path('control-plane-payloads/pneumonia-v17-20260912/PNEUMONIA_MASTER_M01_M12_M07_GATE_RUN_SAFE_V1_7.ipynb')
+          expected_src='9fca3b687297fc4e23cd1a2f68d4765c897bd20516ae7c69309c99ca5a595907'
+          if hashlib.sha256(src.read_bytes()).hexdigest()!=expected_src:
+              raise RuntimeError('V1.7 source SHA mismatch')
+          nb0=json.loads(src.read_text(encoding='utf-8'))
+          hpo_src=''.join(nb0['cells'][12].get('source',[]))
+          marker='# ------------------------------------------------------------\n# Candidate generation — deterministic.'
+          if marker not in hpo_src: raise RuntimeError('HPO marker missing')
+          hpo_prefix=hpo_src.split(marker,1)[0]
+          campaign='d260914b'; master='azadka'
+          assignments={
+              'W01':[(0,1),(1,2),(3,1),(4,2),(6,1),(7,2)],
+              'W02':[(0,2),(2,1),(3,2),(5,1),(6,2)],
+              'W03':[(1,1),(2,2),(4,1),(5,2),(7,1)],
+          }
+          expected_sha={
+              'W01':'6e0b6e463f769e8a8d919fc44b1a0bf50d81efa5fc31028cb3ce46e981a12620',
+              'W02':'aa8ab4eaf8b6c864f8619b510e8e5fd1ce703948a29973464b2345ab79599ab0',
+              'W03':'409f3e06b8305195a78d318f3ae474152f1ef1818f8725011eec70713368cf9f',
+          }
+          def cc(text):
+              return {'cell_type':'code','execution_count':None,'metadata':{},'outputs':[],
+                      'source':[line+'\n' for line in text.rstrip().splitlines()]}
+          def md(text):
+              return {'cell_type':'markdown','metadata':{},'source':[line+'\n' for line in text.rstrip().splitlines()]}
+          def orig(i):
+              c=copy.deepcopy(nb0['cells'][i])
+              if c['cell_type']=='code': c['execution_count']=None; c['outputs']=[]
+              return c
+          prep_t='''
+          from pathlib import Path
+          import os, json, hashlib, shutil
+          DIST_CAMPAIGN_ID = "{campaign}"
+          DIST_ROLE = "M07_HPO_SCREEN"
+          DIST_SLOT = "{slot}"
+          DIST_MASTER_OWNER = "{master}"
 
-          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
-          token=os.environ['CGP_ACTION_OIDC_TOKEN'].strip()
-          template=pathlib.Path(os.environ['CGP_NOTEBOOK_PATH']).read_text(encoding='utf-8')
-          accounts=[
-              ('master','azadka'),
-              ('kg-02','radlinaradlina'),
-              ('kg-03','rezanory'),
-              ('kg-04','reyhanehazad'),
-              ('kg-05','trickermark'),
-              ('kg-06','msdenis'),
-              ('kg-07','nisabulutmark'),
+          # Stage-specific persistence namespace is set before original CONFIG executes.
+          os.environ['M07_PERSIST_DATASET_SLUG'] = "m07-hpo-screen-{slot_lower}-{campaign}"
+
+          _work = Path('/kaggle/working') if Path('/kaggle/working').exists() else Path.cwd()
+          _marker = _work / f'.pneumonia_dist_{{DIST_CAMPAIGN_ID}}_{{DIST_ROLE}}_{{DIST_SLOT or "none"}}.json'
+          _canonical_roots = [
+              _work/'M07_GATE_R224_RUN_SAFE_V17', _work/'M07_GATE_MULTIRES_V17',
+              _work/'PNEUMONIA_MASTER_PHASE2_V17', _work/'M07_PERSIST_STATE_RUN_SAFE_V1_7',
           ]
+          if any(p.exists() for p in _canonical_roots) and not _marker.is_file():
+              raise RuntimeError('DIST_LEAKAGE_GUARD: pre-existing V1.7 working state without this campaign marker')
+          if _marker.is_file():
+              old=json.loads(_marker.read_text(encoding='utf-8'))
+              if old.get('campaign_id') != DIST_CAMPAIGN_ID or old.get('role') != DIST_ROLE or old.get('slot','') != DIST_SLOT:
+                  raise RuntimeError('DIST_LEAKAGE_GUARD: working directory belongs to another role/campaign')
+          else:
+              _marker.write_text(json.dumps({{
+                  'campaign_id':DIST_CAMPAIGN_ID,'role':DIST_ROLE,'slot':DIST_SLOT,
+                  'source_notebook_sha256':'{src_sha}'
+              }},indent=2),encoding='utf-8')
 
-          def broker(payload, timeout=240):
-              raw=json.dumps(payload,separators=(',',':')).encode()
-              req=urllib.request.Request(endpoint,data=raw,method='POST',headers={
-                  'Authorization':'Bearer '+token,
-                  'Content-Type':'application/json',
-                  'Accept':'application/json',
-                  'User-Agent':'pneumonia-v17-eight-account-launch/1.0',
-              })
-              try:
-                  with urllib.request.urlopen(req,timeout=timeout) as r:
-                      txt=r.read().decode('utf-8','replace')
-                      value=json.loads(txt) if txt else {}
-                      return r.status,value
-              except urllib.error.HTTPError as exc:
-                  txt=exc.read(5000).decode('utf-8','replace')
-                  raise RuntimeError(f'HTTP {exc.code}: {txt[:1400]}') from exc
-
-          def submit(item):
-              aid,owner=item
-              slug=(f'{owner}/pneumonia-v17-master-20260912' if aid=='master' else f'{owner}/pneumonia-v17-worker-{owner}-20260912')
-              row={'account_id':aid,'owner':owner,'kernel_ref':slug,'master_owner':'azadka'}
-              nb=template
-              payload={
-                  'request_id':f'pneumonia-v17-8acct-{aid}-20260912-v1',
-                  'provider':'kaggle',
-                  'operation_class':'compute',
-                  'account_id':aid,
-                  'purpose':'Execute only the exact PNEUMONIA V1.7 notebook independently. azadka is master; all other accounts are workers. No other notebook.',
-                  'service':'kernels.KernelsApiService',
-                  'method':'SaveKernel',
-                  'body':{
-                      'slug':slug,
-                      'newTitle':('Pneumonia V1.7 MASTER - azadka - 2026-09-12' if aid=='master' else f'Pneumonia V1.7 WORKER - {owner} - 2026-09-12'),
-                      'text':nb,
-                      'language':'PYTHON',
-                      'kernelType':'NOTEBOOK',
-                      'kernelExecutionType':'SAVE_AND_RUN_ALL',
-                      'isPrivate':True,
-                      'enableGpu':True,
-                      'enableInternet':True,
-                      'datasetDataSources':['paultimothymooney/chest-xray-pneumonia'],
-                  },
-              }
-              try:
-                  http,result=broker(payload)
-                  if not isinstance(result,dict) or not result.get('ok'):
-                      raise RuntimeError('Control Plane returned ok=false')
-                  row.update(submitted=True,http_status=http,provider_ref=result.get('provider_ref'),requested_ref=result.get('requested_ref'),broker_run_id=result.get('broker_run_id'))
-              except Exception as exc:
-                  row.update(submitted=False,error=f'{type(exc).__name__}: {exc}'[:1600])
-              return row
-
-          master_result=submit(accounts[0])
-          results=[master_result]
-          if master_result.get('submitted'):
-              with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
-                  futures=[ex.submit(submit,a) for a in accounts[1:]]
-                  results.extend(f.result() for f in concurrent.futures.as_completed(futures))
-          order={a[0]:i for i,a in enumerate(accounts)}
-          results.sort(key=lambda x:order[x['account_id']])
-          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'pneumonia-v17-seven-control-plane-results.json'
-          out.write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
-          ok=sum(1 for r in results if r.get('submitted'))
-          fail=7-ok
-          master=next(r for r in results if r['account_id']=='master')
+          # Never allow prior experiment output to enter as a normal input. Cross-account shards from THIS
+          # campaign are imported only by explicit receipt/hash validation in dedicated importer cells.
+          _input=Path('/kaggle/input')
+          if _input.exists():
+              forbidden=[]
+              for name in ('MASTER_M01_M12_RESULTS_MATRIX.csv','MASTER_CAMPAIGN_COMPLETE.json'):
+                  forbidden += [str(p) for p in _input.rglob(name)]
+              if forbidden:
+                  raise RuntimeError('DIST_LEAKAGE_GUARD: old master output attached: '+ '; '.join(forbidden[:8]))
+          print('Distributed campaign:',DIST_CAMPAIGN_ID,'role:',DIST_ROLE,'slot:',DIST_SLOT or '-')
+          '''
+          owner_check='''
+          if str(KAGGLE_PERSIST_OWNER).casefold() == str(DIST_MASTER_OWNER).casefold():
+              raise RuntimeError('DIST_ACCOUNT_ROLE_MISMATCH: M07 worker shard must not run on the master account')
+          print('✅ M07 worker account:', KAGGLE_PERSIST_OWNER)
+          '''
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'pneumonia_d260914b_m07_stage1'
+          out.mkdir(parents=True,exist_ok=True)
+          manifest={}
+          for slot,pairs in assignments.items():
+              prep=prep_t.format(campaign=campaign,slot=slot,slot_lower=slot.lower(),master=master,src_sha=expected_src)
+              custom=hpo_prefix+f'''
+          # ============================================================
+          # DISTRIBUTED M07 HPO SCREEN — {slot}
+          # ============================================================
+          DIST_SCREEN_ASSIGNMENT = {pairs!r}
+          _expected=set((c,f) for c in range(HPO_CANDIDATES) for f in HPO_SCREEN_FOLDS)
+          if not set(DIST_SCREEN_ASSIGNMENT).issubset(_expected):
+              raise RuntimeError('DIST_SCREEN_ASSIGNMENT_INVALID')
+          candidates=generate_confirmation_candidates()
+          _rows=[]
+          for cid,fold in DIST_SCREEN_ASSIGNMENT:
+              cand=next(c for c in candidates if int(c['candidate_id'])==int(cid))
+              p=run_or_restore_hpo_candidate_fold(cand,int(fold))
+              _rows.append({{'candidate_id':int(cid),'fold':int(fold),'run_fingerprint':p['run_fingerprint'],
+                             'receipt_sha256':run_file_sha256(hpo_result_path(cid,fold))}})
+          summary={{'schema':'m07.dist.hpo.screen.v1','status':'COMPLETE','campaign_id':DIST_CAMPAIGN_ID,
+                   'slot':DIST_SLOT,'kaggle_owner':KAGGLE_PERSIST_OWNER,'source_notebook_sha256':'{expected_src}',
+                   'split_fingerprint':EXPECTED_SPLIT_FINGERPRINT,'pairs':_rows}}
+          summary_path=OUTPUT_ROOT/f'M07_HPO_SCREEN_{{DIST_SLOT}}_SUMMARY.json'
+          atomic_write_json(summary_path,summary)
+          _persist_lightweight_files([summary_path],note=f'{{DIST_SLOT}} M07 HPO screening shard complete')
+          print('✅ SCREEN SHARD COMPLETE',DIST_SLOT)
+          display(pd.DataFrame(_rows))
+          '''
+              cells=[cc(prep)]+[orig(i) for i in range(1,4)]+[cc(owner_check)]+[orig(i) for i in range(4,12)]+[cc(custom)]
+              nb={'cells':[md(f'# M07 distributed HPO screening — {slot} — {campaign}')]+cells,
+                  'metadata':copy.deepcopy(nb0.get('metadata',{})),
+                  'nbformat':nb0.get('nbformat',4),'nbformat_minor':nb0.get('nbformat_minor',5)}
+              p=out/f'PNEUMONIA_V17_M07_STAGE1_SCREEN_{slot}_{campaign}.ipynb'
+              p.write_text(json.dumps(nb,ensure_ascii=False,indent=1),encoding='utf-8')
+              sha=hashlib.sha256(p.read_bytes()).hexdigest()
+              if sha!=expected_sha[slot]: raise RuntimeError(f'{slot} derived SHA mismatch: {sha}')
+              manifest[slot]={'path':str(p),'sha256':sha,'pairs':pairs}
+          m=out/'manifest.json'; m.write_text(json.dumps(manifest,indent=2),encoding='utf-8')
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
-              f.write(f'CGP_RESULTS_PATH={out}\nCGP_OK_COUNT={ok}\nCGP_FAIL_COUNT={fail}\nCGP_MASTER_OK={1 if master.get("submitted") else 0}\n')
-          print(json.dumps({'master_submitted':bool(master.get('submitted')),'submitted':ok,'failed':fail,'master_first':True,'workers_parallel':True,'exact_v17_only':True}))
+              f.write(f'CGP_M07_STAGE1_DIR={out}\nCGP_M07_STAGE1_MANIFEST={m}\n')
+          print(json.dumps(manifest,indent=2))
           '@
           $script | & $python -
-          if($LASTEXITCODE -ne 0){throw 'broker launch script failed'}
+          if($LASTEXITCODE -ne 0){throw 'M07 Stage1 build/verification failed'}
 
-      - name: Publish exact V1.7 launch receipt
+      - name: Request GitHub OIDC action-broker identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'OIDC context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $uri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action"
+          $r=Invoke-RestMethod -Uri $uri -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Save and Run All three M07 screening shards
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import concurrent.futures,json,os,pathlib,urllib.error,urllib.request
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+          token=os.environ['CGP_ACTION_OIDC_TOKEN'].strip()
+          root=pathlib.Path(os.environ['CGP_M07_STAGE1_DIR'])
+          lanes=[('kg-02','radlinaradlina','W01'),('kg-03','rezanory','W02'),('kg-04','reyhanehazad','W03')]
+          def submit(item):
+              aid,owner,slot=item
+              p=root/f'PNEUMONIA_V17_M07_STAGE1_SCREEN_{slot}_d260914b.ipynb'
+              text=p.read_text(encoding='utf-8')
+              slug=f'{owner}/pneumonia-v17-d260914b-m07-screen-{slot.lower()}'
+              payload={'request_id':f'pneumonia-v17-d260914b-m07-stage1-{aid}-{slot.lower()}',
+                       'provider':'kaggle','operation_class':'compute','account_id':aid,
+                       'purpose':f'PNEUMONIA V1.7 d260914b M07 HPO screening shard {slot} only; isolated persistence; no locked test.',
+                       'service':'kernels.KernelsApiService','method':'SaveKernel',
+                       'body':{'slug':slug,'newTitle':f'Pneumonia V1.7 d260914b M07 Screen {slot} - {owner}',
+                               'text':text,'language':'PYTHON','kernelType':'NOTEBOOK',
+                               'kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,
+                               'enableGpu':True,'enableInternet':True,
+                               'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}}
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
+                  headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json','User-Agent':'pneumonia-v17-d260914b-m07-stage1/1.0'})
+              row={'account_id':aid,'owner':owner,'slot':slot,'kernel_ref':slug}
+              try:
+                  with urllib.request.urlopen(req,timeout=240) as r:
+                      value=json.loads(r.read().decode('utf-8','replace') or '{}')
+                  if not value.get('ok'): raise RuntimeError('broker ok=false')
+                  row.update(submitted=True,provider_ref=value.get('provider_ref') or value.get('requested_ref'),broker_run_id=value.get('broker_run_id'))
+              except urllib.error.HTTPError as e:
+                  row.update(submitted=False,error=f'HTTP {e.code}: '+e.read(3000).decode('utf-8','replace')[:1800])
+              except Exception as e:
+                  row.update(submitted=False,error=f'{type(e).__name__}: {e}'[:1800])
+              return row
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+              results=list(ex.map(submit,lanes))
+          results.sort(key=lambda r:r['slot'])
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'pneumonia-d260914b-m07-stage1-results.json'
+          out.write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
+          ok=sum(bool(r.get('submitted')) for r in results)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write(f'CGP_RESULTS_PATH={out}\nCGP_OK_COUNT={ok}\nCGP_FAIL_COUNT={3-ok}\n')
+          print(json.dumps({'accepted':ok,'failed':3-ok,'campaign':'d260914b','stage':'M07_STAGE1'}))
+          '@
+          $script | & $python -
+          if($LASTEXITCODE-ne 0){throw 'M07 Stage1 submit script failed'}
+
+      - name: Publish d260914b M07 Stage1 receipt
         if: always()
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference='Stop'
           $rows=@()
           if($env:CGP_RESULTS_PATH -and (Test-Path $env:CGP_RESULTS_PATH)){
-            $r=Get-Content -Raw $env:CGP_RESULTS_PATH | ConvertFrom-Json
-            foreach($x in @($r)){
-              $state=if($x.submitted){'SAVEKERNEL_ACCEPTED'}else{'FAILED'}
-              $detail=if($x.submitted){if($x.provider_ref){[string]$x.provider_ref}else{'Control Plane ok=true'}}else{([string]$x.error).Replace('|','/')}
-              $rows += "| $($x.account_id) | $($x.owner) | $state | $($x.kernel_ref) | $detail |"
+            foreach($x in @(Get-Content -Raw $env:CGP_RESULTS_PATH | ConvertFrom-Json)){
+              $state=if($x.submitted){'SAVE_AND_RUN_ALL_ACCEPTED'}else{'FAILED'}
+              $detail=if($x.submitted){[string]$x.provider_ref}else{([string]$x.error).Replace('|','/')}
+              $rows += "| $($x.slot) | $($x.account_id) | $($x.owner) | $state | $($x.kernel_ref) | $detail |"
             }
           }
-          $table=($rows -join "`n")
-          $state=if($env:CGP_OK_COUNT -eq '7' -and $env:CGP_MASTER_OK -eq '1'){'ALL_7_ACCEPTED'}else{'PARTIAL_OR_FAILED'}
-          $msg=@"
-          ## PNEUMONIA V1.7 EIGHT-ACCOUNT CONTROL-PLANE $state
-          - Run: ``$env:GITHUB_RUN_ID``
-          - Master/controller: ``azadka``
-          - Exact V1.7 notebook SHA256: ``$env:CGP_NOTEBOOK_SHA``
-          - Notebook allowlist: ``exactly one .ipynb``
-          - Submission topology: ``azadka master first; six legacy workers independently after master acceptance``
-          - Master accepted: ``$env:CGP_MASTER_OK``
-          - Submitted/accepted: ``$env:CGP_OK_COUNT/7``
-          - Failed: ``$env:CGP_FAIL_COUNT/7``
-          - RUNNING is not claimed by this receipt; it records authoritative SaveKernel acceptance only.
-
-          | Account | Owner | State | Kernel | Detail |
-          |---|---|---|---|---|
-          $table
-          "@
-          $payload=@{body=$msg}|ConvertTo-Json -Compress
+          $state=if($env:CGP_OK_COUNT -eq '3' -and $env:CGP_FAIL_COUNT -eq '0'){'ALL_3_ACCEPTED'}else{'PARTIAL_OR_FAILED'}
+          $msg="## PNEUMONIA V1.7 d260914b M07 STAGE1 $state`n- Campaign: ``d260914b```n- Run: ``$env:GITHUB_RUN_ID```n- Stage: ``M07 HPO screening only`` `n- Accepted: ``$env:CGP_OK_COUNT/3```n- Failed: ``$env:CGP_FAIL_COUNT/3```n- Locked Test: ``NOT EXECUTED BY THESE NOTEBOOKS```n- Azadka: ``reserved for ranking/master`` `n`n| Slot | Account | Owner | State | Kernel | Detail |`n|---|---|---|---|---|---|`n$($rows-join"`n")"
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $payload | Out-Null
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body (@{body=$msg}|ConvertTo-Json -Compress) | Out-Null
 
-      - name: Fail closed unless azadka master and all six legacy workers accepted
+      - name: Fail closed unless all three screening jobs were accepted
         if: always()
         shell: powershell
         run: |
-          if($env:CGP_OK_COUNT -ne '7' -or $env:CGP_FAIL_COUNT -ne '0' -or $env:CGP_MASTER_OK -ne '1'){
-            throw "Exact V1.7 control-plane launch incomplete: submitted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT master=$env:CGP_MASTER_OK"
+          if($env:CGP_OK_COUNT -ne '3' -or $env:CGP_FAIL_COUNT -ne '0'){
+            throw "d260914b M07 Stage1 incomplete: accepted=$env:CGP_OK_COUNT failed=$env:CGP_FAIL_COUNT"
           }
-          Write-Host 'Exact V1.7 accepted on azadka master and all six legacy workers; no other notebook was submitted by this workflow.'
+          Write-Host 'All three d260914b M07 Stage1 Save-and-Run-All requests accepted.'
