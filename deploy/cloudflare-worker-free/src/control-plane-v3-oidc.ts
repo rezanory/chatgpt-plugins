@@ -9,8 +9,14 @@ const TRUSTED_ACTOR_ID = "62356000";
 const TRUSTED_REF = "refs/heads/main";
 const READ_WORKFLOW_REF =
   "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main";
-const ACTION_WORKFLOW_REF =
-  "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-action.yml@refs/heads/main";
+// Keep the action broker fail-closed while allowing only the repository's
+// explicitly trusted issue-comment action workflows. The M07 continuation
+// workflow has its own immutable workflow identity and must be allowlisted.
+const ACTION_WORKFLOW_REFS = new Set([
+  "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-8acct-20260912.yml@refs/heads/main",
+  "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/main",
+  "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-action.yml@refs/heads/main",
+]);
 const CLOCK_SKEW_SECONDS = 60;
 
 type Rec = Record<string, unknown>;
@@ -119,7 +125,7 @@ async function verifyBrokerOidc(
   if (!verified) throw new Error("GitHub OIDC JWT signature invalid");
 
   const expectedAudience = kind === "read" ? CONTROL_PLANE_AUDIENCE : ACTION_AUDIENCE;
-  const expectedWorkflow = kind === "read" ? READ_WORKFLOW_REF : ACTION_WORKFLOW_REF;
+  const expectedWorkflow = kind === "read" ? READ_WORKFLOW_REF : "";
   const now = Math.floor(Date.now() / 1000);
   const exp = numericClaim(claims, "exp");
   const nbf = claims.nbf === undefined ? now : numericClaim(claims, "nbf");
@@ -148,7 +154,10 @@ async function verifyBrokerOidc(
   if (ownerId !== TRUSTED_OWNER_ID || actorId !== TRUSTED_ACTOR_ID) {
     throw new Error("GitHub OIDC owner/actor identity mismatch");
   }
-  if (workflowRef !== expectedWorkflow || ref !== TRUSTED_REF || eventName !== "issue_comment") {
+  const workflowAllowed = kind === "read"
+    ? workflowRef === expectedWorkflow
+    : ACTION_WORKFLOW_REFS.has(workflowRef);
+  if (!workflowAllowed || ref !== TRUSTED_REF || eventName !== "issue_comment") {
     throw new Error("GitHub OIDC workflow/ref/event mismatch");
   }
   if (claims.repository_visibility !== "private") throw new Error("GitHub OIDC repository visibility mismatch");
