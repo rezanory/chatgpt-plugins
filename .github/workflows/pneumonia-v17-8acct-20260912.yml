@@ -10,12 +10,12 @@ permissions:
   issues: write
 
 concurrency:
-  group: pneumonia-v17-d260914c-m07-stage1-fix1-allowlisted
+  group: pneumonia-v17-d260914d-m07-stage1-fix1-allowlisted
   cancel-in-progress: false
 
 jobs:
   launch-m07-stage1-fix1:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914C_M07_STAGE1_ALLOWLISTED_FIX1' }}
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914D_M07_STAGE1_ALLOWLISTED_FIX1' }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 45
     steps:
@@ -24,7 +24,7 @@ jobs:
         with:
           ref: main
 
-      - name: Rebuild superseding d260914c candidate deterministically
+      - name: Rebuild superseding d260914d candidate deterministically
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -42,7 +42,7 @@ jobs:
           $oldSha=(Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
           if($oldSha -ne '522ec01eb9cd916c96067ad36a6cef0823af35550142f47f607aaaff74c2c48a'){throw "immutable predecessor payload SHA mismatch: $oldSha"}
           $oldOut=Join-Path $env:RUNNER_TEMP 'pneumonia-v17-d260914b-immutable-source'
-          $newOut=Join-Path $env:RUNNER_TEMP 'pneumonia-v17-d260914c-fix1'
+          $newOut=Join-Path $env:RUNNER_TEMP 'pneumonia-v17-d260914d-fix1'
           if(Test-Path $oldOut){Remove-Item -Recurse -Force $oldOut}
           if(Test-Path $newOut){Remove-Item -Recurse -Force $newOut}
           New-Item -ItemType Directory -Path $oldOut -Force | Out-Null
@@ -51,7 +51,7 @@ jobs:
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           & $python -c "import tarfile; tarfile.open(r'$archive','r:xz').extractall(r'$oldOut')"
           if($LASTEXITCODE-ne 0){throw 'immutable predecessor payload extraction failed'}
-          & $python 'control-plane-payloads/pneumonia-v17-d260914c-fix1/build_stage1_fix1.py' --src $oldOut --dst $newOut
+          & $python 'control-plane-payloads/pneumonia-v17-d260914d-fix1/build_stage1_fix1.py' --src $oldOut --dst $newOut
           if($LASTEXITCODE-ne 0){throw 'superseding candidate deterministic build/validation failed'}
           "CGP_PAYLOAD_DIR=$newOut" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "SUPERSEDING_CANDIDATE_OK old_payload_sha=$oldSha"
@@ -66,19 +66,19 @@ jobs:
           import hashlib,json,os,pathlib
           root=pathlib.Path(os.environ['CGP_PAYLOAD_DIR'])
           expected={
-            'W01':'ace1176fe2317f8c90596505283af6e624c5d7e58e655d8e513797857ce513ca',
-            'W02':'f65f39f294c811bfa6bb95145d0e126c9191193b165ed9dd94d341fe6f5566f5',
-            'W03':'3137c1242e5f301bbed5f3be82e8cc8d01c9c841ced4fe2782afb26c9519878e',
+            'W01':'d763dee2a0bb569615564b38ca719aef1863be7419d3cb232be73faf37e77383',
+            'W02':'bf199fc8110cde3ebde95a9dee583b77365ef763ec690405dbc0a502844185aa',
+            'W03':'e41518beb7fc648a9895ef9806ef51ef726c2862e40f6f2747f5368cd5672ccd',
           }
           for slot in ('W01','W02','W03'):
-              name=f'PNEUMONIA_V17_M07_STAGE1_SCREEN_{slot}_d260914c.ipynb'
+              name=f'PNEUMONIA_V17_M07_STAGE1_SCREEN_{slot}_d260914d.ipynb'
               p=root/name
               if not p.is_file(): raise SystemExit(f'missing notebook {name}')
               sha=hashlib.sha256(p.read_bytes()).hexdigest()
               if sha != expected[slot]: raise SystemExit(f'{slot}: notebook SHA mismatch: {sha}')
               nb=json.loads(p.read_text(encoding='utf-8'))
               text='\n'.join(''.join(c.get('source',[])) for c in nb['cells'])
-              required=['d260914c','DIST_ROLE = "M07_HPO_SCREEN"',f'DIST_SLOT = "{slot}"','UNLOCK_REMAINING_MODELS = False','paultimothymooney/chest-xray-pneumonia','DIST_LEAKAGE_GUARD','SCREEN SHARD COMPLETE','payload.get("errors") == ["Not found"]']
+              required=['d260914d','DIST_ROLE = "M07_HPO_SCREEN"',f'DIST_SLOT = "{slot}"','UNLOCK_REMAINING_MODELS = False','paultimothymooney/chest-xray-pneumonia','DIST_LEAKAGE_GUARD','SCREEN SHARD COMPLETE','payload.get("errors") == ["Not found"]']
               for token in required:
                   if token not in text: raise SystemExit(f'{name}: required token missing: {token}')
           ev=json.loads((root/'RUNTIME_BUILD_EVIDENCE.json').read_text(encoding='utf-8'))
@@ -112,12 +112,12 @@ jobs:
           oidc=os.environ['CGP_ACTION_OIDC_TOKEN'].strip()
           root=pathlib.Path(os.environ['CGP_PAYLOAD_DIR'])
           jobs=[
-            ('kg-02','radlinaradlina','W01','PNEUMONIA_V17_M07_STAGE1_SCREEN_W01_d260914c.ipynb'),
-            ('kg-03','rezanory','W02','PNEUMONIA_V17_M07_STAGE1_SCREEN_W02_d260914c.ipynb'),
-            ('kg-04','reyhanehazad','W03','PNEUMONIA_V17_M07_STAGE1_SCREEN_W03_d260914c.ipynb'),
+            ('kg-02','radlinaradlina','W01','PNEUMONIA_V17_M07_STAGE1_SCREEN_W01_d260914d.ipynb'),
+            ('kg-03','rezanory','W02','PNEUMONIA_V17_M07_STAGE1_SCREEN_W02_d260914d.ipynb'),
+            ('kg-04','reyhanehazad','W03','PNEUMONIA_V17_M07_STAGE1_SCREEN_W03_d260914d.ipynb'),
           ]
           def call(payload):
-              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'pneumonia-v17-d260914c-fix1-allowlisted/1.0'})
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'pneumonia-v17-d260914d-fix1-allowlisted/1.0'})
               try:
                   with urllib.request.urlopen(req,timeout=240) as r:
                       return json.loads(r.read().decode('utf-8','replace') or '{}')
@@ -126,13 +126,13 @@ jobs:
           def submit(job):
               aid,owner,slot,name=job
               text=(root/name).read_text(encoding='utf-8')
-              ref=f'{owner}/pneumonia-v17-d260914c-m07-screen-{slot.lower()}'
+              ref=f'{owner}/pneumonia-v17-d260914d-m07-screen-{slot.lower()}'
               payload={
-                'request_id':f'pneumonia-v17-d260914c-m07-screen-{slot.lower()}-allowlisted-fix1-v1',
+                'request_id':f'pneumonia-v17-d260914d-m07-screen-{slot.lower()}-allowlisted-fix1-v1',
                 'provider':'kaggle','operation_class':'compute','account_id':aid,
-                'purpose':f'Superseding d260914c M07 HPO screening shard {slot}; persistence NOT_FOUND contract fix only; no Locked Test; Phase2 locked.',
+                'purpose':f'Superseding d260914d M07 HPO screening shard {slot}; persistence NOT_FOUND contract fix only; no Locked Test; Phase2 locked.',
                 'service':'kernels.KernelsApiService','method':'SaveKernel',
-                'body':{'slug':ref,'newTitle':f'Pneumonia V1.7 d260914c M07 Screen {slot}','text':text,
+                'body':{'slug':ref,'newTitle':f'Pneumonia V1.7 d260914d M07 Screen {slot}','text':text,
                         'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL',
                         'isPrivate':True,'enableGpu':True,'enableInternet':True,
                         'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}
@@ -148,7 +148,7 @@ jobs:
           with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
               rows=list(ex.map(submit,jobs))
           rows.sort(key=lambda x:x['slot'])
-          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'pneumonia-v17-d260914c-m07-stage1-fix1-launch.json'
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'pneumonia-v17-d260914d-m07-stage1-fix1-launch.json'
           out.write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding='utf-8')
           print(json.dumps(rows,ensure_ascii=False))
           ok=sum(1 for r in rows if r['ok'])
@@ -173,7 +173,7 @@ jobs:
             }
           }
           $accepted=if($env:CGP_OK_COUNT){$env:CGP_OK_COUNT}else{'0'}
-          $msg="## PNEUMONIA V1.7 d260914c M07 STAGE1 SUPERSEDING FIX1`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Accepted: ``$accepted/3```n- Campaign: ``d260914c```n- Supersedes: ``d260914b`` (immutable)`n- Fix: ``canonical KaggleHub BackendError NOT_FOUND code=5 accepted as confirmed fresh persistence absence`` `n- Stage1 SHAs: ``W01 ace1176fe2317f8c90596505283af6e624c5d7e58e655d8e513797857ce513ca`` / ``W02 f65f39f294c811bfa6bb95145d0e126c9191193b165ed9dd94d341fe6f5566f5`` / ``W03 3137c1242e5f301bbed5f3be82e8cc8d01c9c841ced4fe2782afb26c9519878e```n- Scientific state: ``M07 HPO screening only; Phase-2 not launched```n- Locked Test: ``NOT EXECUTED```n- OIDC workflow: ``pneumonia-v17-8acct-20260912.yml`` `n`n| Slot | Account | Owner | State | Kernel | Detail |`n|---|---|---|---|---|---|`n$($rows-join"`n")"
+          $msg="## PNEUMONIA V1.7 d260914d M07 STAGE1 SUPERSEDING FIX1`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Accepted: ``$accepted/3```n- Campaign: ``d260914d```n- Supersedes: ``d260914b`` (immutable)`n- Fix: ``canonical KaggleHub BackendError NOT_FOUND code=5 accepted as confirmed fresh persistence absence`` `n- Stage1 SHAs: ``W01 d763dee2a0bb569615564b38ca719aef1863be7419d3cb232be73faf37e77383`` / ``W02 bf199fc8110cde3ebde95a9dee583b77365ef763ec690405dbc0a502844185aa`` / ``W03 e41518beb7fc648a9895ef9806ef51ef726c2862e40f6f2747f5368cd5672ccd```n- Scientific state: ``M07 HPO screening only; Phase-2 not launched```n- Locked Test: ``NOT EXECUTED```n- OIDC workflow: ``pneumonia-v17-8acct-20260912.yml`` `n`n| Slot | Account | Owner | State | Kernel | Detail |`n|---|---|---|---|---|---|`n$($rows-join"`n")"
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes((@{body=$msg}|ConvertTo-Json -Compress))) | Out-Null
 
@@ -181,5 +181,5 @@ jobs:
         if: always()
         shell: powershell
         run: |
-          if($env:CGP_OK_COUNT-ne'3'){throw "d260914c M07 Stage-1 incomplete: accepted=$env:CGP_OK_COUNT/3"}
-          Write-Host 'd260914c M07 Stage-1 3/3 SAVE_AND_RUN_ALL accepted via allowlisted OIDC workflow.'
+          if($env:CGP_OK_COUNT-ne'3'){throw "d260914d M07 Stage-1 incomplete: accepted=$env:CGP_OK_COUNT/3"}
+          Write-Host 'd260914d M07 Stage-1 3/3 SAVE_AND_RUN_ALL accepted via allowlisted OIDC workflow.'
