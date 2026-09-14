@@ -96,7 +96,7 @@ jobs:
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           $out=Join-Path $env:RUNNER_TEMP 'control-plane-v3-query-result.json'
-          & $python scripts/control_plane_query.py --payload-file $env:CGP_QUERY_PAYLOAD --out $out
+          & $python scripts/control_plane_query_paged.py --payload-file $env:CGP_QUERY_PAYLOAD --out $out
           $code=$LASTEXITCODE
           if(-not (Test-Path $out)){throw 'query result missing'}
           "CGP_QUERY_RESULT=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
