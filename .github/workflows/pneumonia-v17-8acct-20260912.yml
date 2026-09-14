@@ -841,7 +841,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python control-plane-payloads/soilbin-q1-v3/launch_soilbin_v3_cloudflare.py
+          python control-plane-payloads/soilbin-q1-v3-external-model-selection/launch_soilbin_v3_cloudflare.py
 
       - name: Publish SoilBin V3 launch receipt
         shell: bash
