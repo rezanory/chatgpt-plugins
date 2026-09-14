@@ -1,0 +1,263 @@
+name: pneumonia-v17-m07-continuation-20260914
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: pneumonia-v17-d260914d-m07-continuation-v1
+  cancel-in-progress: false
+
+jobs:
+  launch-m07-continuation:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914D_M07_LOCKED_TEST_DIAGNOSTICS_FIX1' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout canonical main source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Build continuation notebook from exact final-five-fold evidence
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, pathlib, re, urllib.request
+
+          REPO = "rezanory/chatgpt-plugins"
+          COMMENTS = f"https://api.github.com/repos/{REPO}/issues/33/comments"
+          HEAD_SHA = "85fa207e56ef6e2979db6fc051772172e1457729"
+          FINAL5_REF = "rezanory/m07-final-5fold-fix2-20260914"
+          PERSIST_HANDLE = "rezanory/m07-final-5fold-fix2-d260914d"
+          RECIPE_FP = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
+          headers = {
+              "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "m07-continuation-builder/1.0",
+          }
+
+          def get_page(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  return json.loads(response.read().decode("utf-8", "replace")), response.headers
+
+          comments = []
+          url = COMMENTS + "?per_page=100&since=2026-09-14T15:00:00Z"
+          while url:
+              page, response_headers = get_page(url)
+              comments.extend(page)
+              next_url = None
+              for part in response_headers.get("Link", "").split(","):
+                  if 'rel="next"' in part:
+                      next_url = part.split(";", 1)[0].strip().strip("<>")
+              url = next_url
+
+          final5_complete = False
+          final5_status_evidence = None
+          artifact_green = None
+          for comment in comments:
+              body = str(comment.get("body", ""))
+              if "CONTROL PLANE V3 QUERY PASS" in body and FINAL5_REF in body:
+                  match = re.search(r"```json\s*(.*?)\s*```", body, re.S)
+                  if match:
+                      try:
+                          outer = json.loads(match.group(1))
+                          result = outer["result"]
+                          resolution = result["resolution"]
+                          telemetry = result["telemetry"]
+                          status = telemetry["result"].get("status")
+                          if (outer.get("ok") is True and outer.get("read_only") is True
+                                  and resolution.get("requested_ref") == FINAL5_REF
+                                  and resolution.get("resolved_ref") == FINAL5_REF
+                                  and resolution.get("matched_by") == "exact_ref"
+                                  and telemetry.get("broker_sha") == HEAD_SHA
+                                  and status == "COMPLETE"):
+                              final5_complete = True
+                              final5_status_evidence = {
+                                  "comment_id": comment.get("id"),
+                                  "request_id": outer.get("request_id"),
+                                  "broker_run_id": telemetry.get("broker_run_id"),
+                                  "broker_sha": telemetry.get("broker_sha"),
+                              }
+                      except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                          pass
+              if "M07_FINAL5_ARTIFACTS_EXACT_GREEN" in body:
+                  match = re.search(r"```json\s*(.*?)\s*```", body, re.S)
+                  if match:
+                      try:
+                          candidate = json.loads(match.group(1))
+                          if (candidate.get("status") == "PASS"
+                                  and candidate.get("kernel_ref") == FINAL5_REF
+                                  and candidate.get("broker_sha") == HEAD_SHA
+                                  and candidate.get("persistence_handle") == PERSIST_HANDLE
+                                  and candidate.get("fold_count") == 5
+                                  and candidate.get("oof_unique_dev_paths") == 5209
+                                  and candidate.get("recipe_fingerprint") == RECIPE_FP
+                                  and candidate.get("locked_test_used") is False
+                                  and candidate.get("external_used") is False):
+                              artifact_green = {
+                                  "comment_id": comment.get("id"),
+                                  "query_request_id": candidate.get("query_request_id"),
+                                  "query_broker_run_id": candidate.get("broker_run_id"),
+                                  "broker_sha": candidate.get("broker_sha"),
+                              }
+                      except (TypeError, ValueError, json.JSONDecodeError):
+                          pass
+
+          if not final5_complete:
+              raise SystemExit("CONTINUATION_BLOCKED_FINAL5_NOT_EXACT_COMPLETE")
+          if not artifact_green:
+              raise SystemExit("CONTINUATION_BLOCKED_FINAL5_ARTIFACTS_NOT_EXACT_GREEN")
+          if not artifact_green.get("query_request_id") or not artifact_green.get("query_broker_run_id"):
+              raise SystemExit("CONTINUATION_BLOCKED_ARTIFACT_EVIDENCE_IDENTITY_MISSING")
+
+          notebook_path = pathlib.Path("control-plane-payloads/pneumonia-v17-20260912/PNEUMONIA_MASTER_M01_M12_M07_GATE_RUN_SAFE_V1_7.ipynb")
+          notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+          if len(notebook.get("cells", [])) < 24:
+              raise SystemExit("canonical V1.7 notebook shape is incomplete for continuation")
+
+          winner = {
+              "candidate_id": 2,
+              "candidate_source": "NEW_SEEDED_RANDOM",
+              "params": {
+                  "batch_size": 12,
+                  "head_lr": 0.00013819845844024556,
+                  "finetune_lr": 5.4346062237001635e-05,
+                  "weight_decay": 0.00018992423414663237,
+                  "dropout": 0.2,
+                  "patience": 4,
+                  "lr_schedule": "cosine",
+                  "min_lr": 3e-7,
+                  "head_warmup_epochs": 1,
+                  "finetune_warmup_epochs": 0,
+                  "edge_filters": 16,
+                  "edge_max_gate": 0.25,
+                  "cbam_reduction": 32,
+              },
+          }
+          fingerprints = {
+              "C00_F01": "bd8d58cc1b9b2b66a748f70f11511d70a6c7355b3b1ae25591c936914bdb5d87",
+              "C00_F02": "0a0fa5668cf82f1606f62dce1b6bbb3709285003b870cdc070c82bdf1828b60a",
+              "C00_F03": "b401f91d6ecea18d46473d4d1e0cbe23b4ceab4f56191f83174f4c58225a5213",
+              "C02_F01": "f70052f832d06b9b3b2183ca70b43bac16b170e808670578bb752223daffe058",
+              "C02_F02": "937e6e68388c082410f78f79ab33cb0b9e45bed88f6b00a13e19fab68ff021ee",
+              "C02_F03": "af2ede36c7f9630a35bcf68f7f9bb11c7f9738d860360ebc7243ed168b03f2d0",
+              "C07_F01": "46e71986c7bf9cd21c825a0f90a9489624e500412e7ac2f32f557e53a5db9765",
+              "C07_F02": "a0bff12ea6a99cf21be22e59cebb03b0057a7dcd48e8d462f84c059cbdd78c2c",
+              "C07_F03": "eb4d06d0c3f657c063fc0338a6635f005cc75449e4dae845037533f61eefba63",
+          }
+          custom = """
+          # M07 d260914d continuation. Final-five-fold artifacts are immutable and reused.
+          STAGEB_WINNER = json.loads(STAGEB_WINNER_BLOB)
+          STAGEB_FOLD_FINGERPRINTS = json.loads(STAGEB_FOLD_FINGERPRINTS_BLOB)
+          RECIPE_PATH = OUTPUT_ROOT / "FROZEN_M07_CONFIRMED_RECIPE.json"
+          shared_params = STAGEB_WINNER["params"]
+          winner_candidate_id = int(STAGEB_WINNER["candidate_id"])
+          winner_candidate_source = STAGEB_WINNER["candidate_source"]
+          confirmation_ranked = [STAGEB_WINNER]
+          EDGE_FILTERS = int(shared_params["edge_filters"])
+          EDGE_MAX_GATE = float(shared_params["edge_max_gate"])
+          CBAM_REDUCTION = int(shared_params["cbam_reduction"])
+          if int(RESTORE_SUMMARY.get("folds", 0)) != 5:
+              raise RuntimeError("CONTINUATION_REQUIRES_FINAL5_PERSISTED_FOLDS")
+          if not all((OUTPUT_ROOT / "FINAL_5FOLD" / f"fold_{fold}" / "COMPLETED.json").is_file() for fold in range(1, 6)):
+              raise RuntimeError("CONTINUATION_FOLD_MARKERS_MISSING")
+          if not RECIPE_PATH.is_file():
+              raise RuntimeError("CONTINUATION_FROZEN_RECIPE_MISSING")
+          recipe = json.loads(RECIPE_PATH.read_text(encoding="utf-8"))
+          if recipe.get("recipe_fingerprint_sha256") != "RECIPE_FP":
+              raise RuntimeError("CONTINUATION_RECIPE_FINGERPRINT_MISMATCH")
+          if recipe.get("locked_test_used") is not False or recipe.get("external_used") is not False:
+              raise RuntimeError("CONTINUATION_SCIENTIFIC_GUARD_DRIFT")
+          print("M07_CONTINUATION_PRECHECK_PASS", json.dumps({"folds": 5, "recipe_fingerprint": recipe["recipe_fingerprint_sha256"], "locked_test_used": False, "external_used": False}, ensure_ascii=False))
+          """
+          custom = custom.replace("STAGEB_WINNER_BLOB", repr(json.dumps(winner, separators=(",", ":"))), 1)
+          custom = custom.replace("STAGEB_FOLD_FINGERPRINTS_BLOB", repr(json.dumps(fingerprints, separators=(",", ":"))), 1)
+          custom = custom.replace("RECIPE_FP", RECIPE_FP, 1)
+          notebook["cells"][12]["source"] = custom.splitlines(keepends=True)
+          notebook["cells"] = notebook["cells"][:13] + notebook["cells"][14:24]
+          for cell in notebook["cells"][:2]:
+              source = "".join(cell.get("source", []))
+              source = source.replace('"m07-multires-gate-run-safe-v17"', json.dumps(PERSIST_HANDLE))
+              cell["source"] = source.splitlines(keepends=True)
+          notebook.setdefault("metadata", {})["cgp_continuation"] = {
+              "schema": "m07.d260914d.continuation.builder.v1",
+              "campaign_id": "d260914d", "winner_candidate_id": 2,
+              "final5_kernel_ref": FINAL5_REF, "final5_code_sha256": HEAD_SHA,
+              "persistence_handle": PERSIST_HANDLE, "split_fingerprint": "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9",
+              "artifact_evidence": {"status": "PASS", **(artifact_green or {})},
+              "locked_test_used": False, "external_used": False, "phase2_unlocked": False,
+          }
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "PNEUMONIA_V17_D260914D_M07_LOCKED_TEST_DIAGNOSTICS_FIX1.ipynb"
+          out.write_text(json.dumps(notebook, ensure_ascii=False, indent=1), encoding="utf-8")
+          print("M07_CONTINUATION_NOTEBOOK_BUILT", out.name, "cells=23", "final5=exact-green")
+          '@
+          $builderOutput = @($script | & $python - 2>&1)
+          $builderCode = $LASTEXITCODE
+          if($builderCode -ne 0){throw ('M07_CONTINUATION_BUILDER_FAILURE=' + ($builderOutput -join "`n"))}
+          "CGP_NOTEBOOK_PATH=$env:RUNNER_TEMP\PNEUMONIA_V17_D260914D_M07_LOCKED_TEST_DIAGNOSTICS_FIX1.ipynb" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Request trusted action OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$oidc.value
+          if($token.Length-lt100){throw 'GitHub OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Submit locked-test and diagnostics continuation kernel
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, pathlib, urllib.request, urllib.error
+          endpoint = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
+          notebook = pathlib.Path(os.environ["CGP_NOTEBOOK_PATH"]).read_text(encoding="utf-8")
+          payload = {
+              "request_id": "pneumonia-v17-d260914d-m07-locked-test-diagnostics-fix1-v1",
+              "provider": "kaggle", "operation_class": "compute", "account_id": "kg-03",
+              "purpose": "d260914d M07 continuation after exact final-five-fold PASS; reuse persisted folds, run OOF/one-time Locked Test/diagnostics/figures/XAI/casebook/external/final gate; Phase2 remains locked.",
+              "service": "kernels.KernelsApiService", "method": "SaveKernel",
+              "body": {"slug": "rezanory/m07-locked-test-diagnostics-fix1-20260914", "newTitle": "M07 Locked Test Diagnostics Fix1 20260914", "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": ["paultimothymooney/chest-xray-pneumonia"]},
+          }
+          req = urllib.request.Request(endpoint, data=json.dumps(payload, separators=(",", ":")).encode(), method="POST", headers={"Authorization": "Bearer " + os.environ["CGP_ACTION_OIDC_TOKEN"], "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "pneumonia-v17-continuation/1.0"})
+          try:
+              with urllib.request.urlopen(req, timeout=240) as response:
+                  result = json.loads(response.read().decode("utf-8", "replace") or "{}")
+          except urllib.error.HTTPError as error:
+              raise SystemExit(f"Continuation SaveKernel HTTP {error.code}: {error.read(4000).decode('utf-8', 'replace')[:1800]}")
+          if not result.get("ok"):
+              raise SystemExit("Continuation action broker returned ok=false")
+          print(json.dumps({"accepted": True, "provider_ref": result.get("provider_ref") or (result.get("result") or {}).get("ref"), "broker_run_id": result.get("broker_run_id"), "broker_sha": result.get("broker_sha")}, ensure_ascii=False))
+          '@
+          $script | & $python -
+          if($LASTEXITCODE -ne 0){throw 'M07 continuation SaveKernel submission failed'}
+
+      - name: Publish continuation launch receipt
+        if: always()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $body="## PNEUMONIA V1.7 d260914d M07 LOCKED TEST DIAGNOSTICS FIX1 ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kernel: ``rezanory/m07-locked-test-diagnostics-fix1-20260914```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: continuation reuses persisted five folds; Phase2 remains locked`n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
