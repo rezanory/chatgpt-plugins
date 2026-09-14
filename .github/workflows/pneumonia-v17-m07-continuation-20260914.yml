@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       recovery:
-        description: One-time recovery gate after a pre-provider continuation failure
+        description: One-time recovery gate after a deterministic continuation failure
         required: true
         type: string
 
@@ -27,7 +27,9 @@ jobs:
           github.event.comment.user.id == 62356000 &&
           github.event.comment.body == 'PNEUMONIA_V17_D260914D_M07_LOCKED_TEST_DIAGNOSTICS_FIX1') ||
           (github.event_name == 'workflow_dispatch' &&
-          github.event.inputs.recovery == 'M07_DATASET_HANDLE_FIX1') }}
+          github.event.inputs.recovery == 'M07_DATASET_HANDLE_FIX1') ||
+          (github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_DATASET_INPUT_ATTACH_FIX1') }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
