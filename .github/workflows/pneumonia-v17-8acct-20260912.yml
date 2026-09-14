@@ -10,7 +10,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: pneumonia-v17-d260914d-m07-stage1-fix1-allowlisted
+  group: pneumonia-v17-d260914d-m07-stageb-confirmation-v2
   cancel-in-progress: false
 
 jobs:
