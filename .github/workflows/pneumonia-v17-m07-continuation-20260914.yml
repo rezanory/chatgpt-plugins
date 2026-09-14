@@ -29,7 +29,9 @@ jobs:
           (github.event_name == 'workflow_dispatch' &&
           github.event.inputs.recovery == 'M07_DATASET_HANDLE_FIX1') ||
           (github.event_name == 'workflow_dispatch' &&
-          github.event.inputs.recovery == 'M07_DATASET_INPUT_ATTACH_FIX1') }}
+          github.event.inputs.recovery == 'M07_DATASET_INPUT_ATTACH_FIX1') ||
+          (github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_PERSISTENCE_ARCHIVE_LAYOUT_FIX1') }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -229,6 +231,21 @@ jobs:
           custom = custom.replace("STAGEB_FOLD_FINGERPRINTS_BLOB", repr(json.dumps(fingerprints, separators=(",", ":"))), 1)
           custom = custom.replace("RECIPE_FP", RECIPE_FP, 1)
           notebook["cells"][12]["source"] = custom.splitlines(keepends=True)
+          compatibility = pathlib.Path("scripts/m07_persistence_expanded_compat.pyfrag").read_text(encoding="utf-8")
+          replaced = False
+          for cell in notebook["cells"]:
+              source = "".join(cell.get("source", []))
+              if "RESTORE_SUMMARY = _try_restore_persisted_state()" in source:
+                  source = source.replace(
+                      "RESTORE_SUMMARY = _try_restore_persisted_state()",
+                      compatibility + "\nRESTORE_SUMMARY = _try_restore_persisted_state_compat()",
+                      1,
+                  )
+                  cell["source"] = source.splitlines(keepends=True)
+                  replaced = True
+                  break
+          if not replaced:
+              raise SystemExit("continuation restore invocation not found for compatibility patch")
           notebook["cells"] = notebook["cells"][:13] + notebook["cells"][14:24]
           # The canonical notebook derives a full handle as owner/slug.  Keep
           # the persisted dataset slug unqualified to avoid owner duplication.

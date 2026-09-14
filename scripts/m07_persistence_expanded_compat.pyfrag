@@ -1,0 +1,123 @@
+def _verify_persistence_snapshot_compat(root):
+    root = Path(root)
+    manifest = root / PERSIST_MANIFEST_NAME
+    if not manifest.is_file():
+        raise ValueError("PERSISTENCE_IDENTITY_MISSING: refusing an unsealed/legacy snapshot")
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    hashes = payload.get("artifact_sha256")
+    if not isinstance(hashes, dict):
+        raise ValueError("Missing artifact hash manifest")
+    artifacts = _persistence_artifacts(root)
+    archive_keys = {key for key in hashes if key.endswith(".zip")}
+    expanded_keys = set()
+    ignored = set()
+    for key in archive_keys:
+        archive_dir = root / key[:-4]
+        if key not in artifacts and archive_dir.is_dir():
+            files = [path for path in archive_dir.rglob("*") if path.is_file()]
+            if not files:
+                raise ValueError("PERSISTENCE_EXPANDED_ARCHIVE_EMPTY")
+            if key.startswith("M07_FOLD_") and not (archive_dir / "FINAL_5FOLD").is_dir():
+                raise ValueError("PERSISTENCE_EXPANDED_FOLD_LAYOUT_INVALID")
+            expanded_keys.add(key)
+            ignored.update(path.relative_to(root).as_posix() for path in files)
+    expected_required = set(hashes) - expanded_keys
+    actual_required = {key for key in artifacts if key not in ignored}
+    if actual_required != expected_required:
+        raise ValueError("PERSISTENCE_ARTIFACT_SET_MISMATCH")
+    direct_artifacts = {key: artifacts[key] for key in expected_required}
+    validate_receipt(
+        payload, _persistence_campaign_contract(), artifacts=direct_artifacts,
+        allowed_statuses={"SEALED"},
+    )
+    print("M07_PERSISTENCE_EXPANDED_ARCHIVE_COMPAT_PASS", json.dumps({"expanded_archives": sorted(expanded_keys), "direct_artifacts": len(direct_artifacts)}, ensure_ascii=False))
+    return payload
+
+
+def _restore_fold_source_compat(source):
+    source = Path(source)
+    if not source.is_dir():
+        _restore_m07_archive_checked(source)
+        return
+    for member in sorted(source.rglob("*")):
+        if not member.is_file():
+            continue
+        target = OUTPUT_ROOT / member.relative_to(source)
+        if target.exists() and (not target.is_file() or run_file_sha256(target) != run_file_sha256(member)):
+            raise ValueError(f"LOCAL_ARCHIVE_EVIDENCE_CONFLICT: {target.name}")
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(member, target)
+
+
+def _restore_light_source_compat(source):
+    source = Path(source)
+    if not source.is_dir():
+        return _restore_light_state(PERSIST_ROOT)
+    for member in sorted(source.rglob("*")):
+        if not member.is_file():
+            continue
+        target = LIGHT_ROOT / member.relative_to(source)
+        if target.exists() and (not target.is_file() or run_file_sha256(target) != run_file_sha256(member)):
+            raise ValueError(f"LOCAL_LIGHT_STATE_CONFLICT: {target.name}")
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(member, target)
+    return 1
+
+
+def _try_restore_persisted_state_compat():
+    global PERSIST_RESTORE_VERIFIED
+    PERSIST_RESTORE_VERIFIED = False
+    restore_dir = WORK / "_M07_REMOTE_STATE_RUN_SAFE_V1_7"
+    if restore_dir.exists():
+        shutil.rmtree(restore_dir)
+    restore_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        downloaded = kagglehub.dataset_download(
+            PERSIST_DATASET_HANDLE, output_dir=str(restore_dir), force_download=True,
+        )
+    except Exception as exc:
+        if not _is_explicit_http_not_found(exc):
+            raise RuntimeError(
+                "PERSISTENCE_RESTORE_FAILED: absence was not confirmed; "
+                "training and all uploads remain blocked. Retry after resolving access/network."
+            ) from exc
+        if (PERSIST_ROOT / PERSIST_MANIFEST_NAME).exists():
+            raise RuntimeError("REMOTE_CAMPAIGN_MISSING_WITH_LOCAL_STATE: resolve explicitly") from exc
+        PERSIST_RESTORE_VERIFIED = True
+        print("Confirmed HTTP 404: starting a new v1.6 M07 campaign.")
+        return {"folds": 0, "light_state": 0, "restore_status": "CONFIRMED_NOT_FOUND"}
+
+    if not isinstance(downloaded, (str, Path)) or not Path(downloaded).is_dir():
+        raise RuntimeError("PERSISTENCE_DOWNLOAD_PATH_INVALID: Kaggle returned no readable snapshot directory")
+    downloaded_root = Path(downloaded).resolve()
+    _verify_persistence_snapshot_compat(downloaded_root)
+    for source in downloaded_root.rglob("*"):
+        if source.is_file():
+            target = PERSIST_ROOT / source.relative_to(downloaded_root)
+            if target.is_file() and run_file_sha256(target) != run_file_sha256(source):
+                raise ValueError(f"LOCAL_REMOTE_PERSISTENCE_CONFLICT: {target.name}")
+    for source in downloaded_root.rglob("*"):
+        if source.is_file():
+            target = PERSIST_ROOT / source.relative_to(downloaded_root)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
+    fold_paths = sorted(PERSIST_ROOT.glob("M07_FOLD_*_RECOVERY.zip"))
+    fold_paths += sorted(path for path in PERSIST_ROOT.glob("M07_FOLD_*_RECOVERY") if path.is_dir())
+    folds = 0
+    for fold_path in fold_paths:
+        _restore_fold_source_compat(fold_path)
+        folds += 1
+
+    light_paths = sorted(PERSIST_ROOT.glob("M07_LIGHT_STATE.zip"))
+    light_paths += sorted(path for path in PERSIST_ROOT.glob("M07_LIGHT_STATE") if path.is_dir())
+    if len(light_paths) > 1:
+        raise ValueError("Ambiguous lightweight persistence archives")
+    light = _restore_light_source_compat(light_paths[0]) if light_paths else 0
+    PERSIST_RESTORE_VERIFIED = True
+    summary = {"folds": folds, "light_state": light, "restore_status": "VERIFIED_EXPANDED_LAYOUT"}
+    print("✅ Restore summary:", summary)
+    return summary
+
