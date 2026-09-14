@@ -66,6 +66,26 @@ const ACCOUNTS: Record<
     username: "nisabulutmark",
     envKey: "CGP_KAGGLE_KG07_TOKEN",
   },
+  "kg-08": {
+    owner: "azadkk",
+    username: "azadkk",
+    envKey: "CGP_KAGGLE_KG08_TOKEN",
+  },
+  "kg-09": {
+    owner: "mylovevpn1",
+    username: "mylovevpn1",
+    envKey: "CGP_KAGGLE_KG09_TOKEN",
+  },
+  "kg-10": {
+    owner: "computstu1",
+    username: "computstu1",
+    envKey: "CGP_KAGGLE_KG10_TOKEN",
+  },
+  "kg-11": {
+    owner: "jobreza1",
+    username: "jobreza1",
+    envKey: "CGP_KAGGLE_KG11_TOKEN",
+  },
   master: {
     owner: "azadka",
     username: "azadka",
@@ -256,6 +276,81 @@ export async function kaggleLiveLog(
     phase_marker_found: phase !== null,
     log_tail: log,
     bounded: true,
+  };
+}
+
+export async function kaggleOutputJsonFiles(
+  env: ControlPlaneV3Env,
+  accountId: AccountId,
+  kernelRef: string,
+  fileNames: string[],
+  maxBytesPerFile = 65_536,
+): Promise<Record<string, unknown>> {
+  if (!Array.isArray(fileNames) || fileNames.length < 1 || fileNames.length > 10) {
+    throw new Error("file_names must contain between 1 and 10 paths");
+  }
+  if (!Number.isInteger(maxBytesPerFile) || maxBytesPerFile < 1024 || maxBytesPerFile > 262_144) {
+    throw new Error("max_bytes_per_file must be between 1024 and 262144");
+  }
+  const slug = kernelSlug(accountId, kernelRef);
+  const exactNames = new Set<string>();
+  for (const rawName of fileNames) {
+    const name = String(rawName ?? "").trim();
+    if (!/^[A-Za-z0-9._/-]{1,500}$/.test(name) || !name.endsWith(".json") ||
+        name.startsWith("/") || name.includes("..") || name.includes("\\")) {
+      throw new Error("file_names contains an unsafe or non-JSON path");
+    }
+    if (exactNames.has(name)) throw new Error("file_names must be unique");
+    exactNames.add(name);
+  }
+  const listing = await kaggleReadCall(env, {
+    accountId,
+    service: "kernels.KernelsApiService",
+    method: "ListKernelSessionOutput",
+    body: { userName: ACCOUNTS[accountId].owner, kernelSlug: slug, pageSize: 100 },
+  });
+  const files = Array.isArray(listing.files) ? listing.files : [];
+  const byName = new Map<string, Record<string, unknown>>();
+  for (const item of files) {
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      const rec = item as Record<string, unknown>;
+      const name = String(rec.fileName ?? "");
+      if (name) byName.set(name, rec);
+    }
+  }
+  const outputs: Array<Record<string, unknown>> = [];
+  for (const name of exactNames) {
+    const item = byName.get(name);
+    if (!item) throw new Error(`requested Kaggle output JSON not found: ${name}`);
+    const rawUrl = String(item.url ?? "");
+    let url: URL;
+    try { url = new URL(rawUrl); }
+    catch { throw new Error(`invalid output URL for: ${name}`); }
+    if (url.protocol !== "https:" || url.hostname !== "www.kaggleusercontent.com") {
+      throw new Error(`output URL host is not allowed for: ${name}`);
+    }
+    const response = await fetch(url.toString(), {
+      headers: { "User-Agent": "chatgpt-control-plane-v3/output-json/1.0" },
+    });
+    if (!response.ok) throw new Error(`output JSON HTTP ${response.status}: ${name}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytesPerFile) {
+      throw new Error(`output JSON exceeds bounded size: ${name}`);
+    }
+    let value: unknown;
+    try { value = JSON.parse(new TextDecoder().decode(bytes)); }
+    catch { throw new Error(`output file is not valid JSON: ${name}`); }
+    if (!value || typeof value !== "object") {
+      throw new Error(`output JSON must be object/array: ${name}`);
+    }
+    outputs.push({ file_name: name, json: value });
+  }
+  return {
+    account_id: accountId,
+    kernel_ref: kernelRef,
+    file_count: outputs.length,
+    files: outputs,
+    signed_urls_returned: false,
   };
 }
 

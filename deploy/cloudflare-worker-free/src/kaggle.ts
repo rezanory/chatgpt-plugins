@@ -1,4 +1,4 @@
-export type WorkerAccountId = "kg-02" | "kg-03" | "kg-04" | "kg-05" | "kg-06" | "kg-07";
+export type WorkerAccountId = "kg-02" | "kg-03" | "kg-04" | "kg-05" | "kg-06" | "kg-07" | "kg-08" | "kg-09" | "kg-10" | "kg-11";
 export type AccountId = WorkerAccountId | "master";
 
 export interface WorkerEnv {
@@ -14,6 +14,10 @@ export interface WorkerEnv {
   CGP_KAGGLE_KG05_TOKEN?: string;
   CGP_KAGGLE_KG06_TOKEN?: string;
   CGP_KAGGLE_KG07_TOKEN?: string;
+  CGP_KAGGLE_KG08_TOKEN?: string;
+  CGP_KAGGLE_KG09_TOKEN?: string;
+  CGP_KAGGLE_KG10_TOKEN?: string;
+  CGP_KAGGLE_KG11_TOKEN?: string;
   CGP_KAGGLE_MASTER_TOKEN?: string;
 }
 
@@ -35,6 +39,10 @@ export const ACCOUNTS: readonly AccountDescriptor[] = [
   { accountId: "kg-05", ownerSlug: "trickermark", username: "trickermark", role: "worker" },
   { accountId: "kg-06", ownerSlug: "msdenis", username: "msdenis", role: "worker" },
   { accountId: "kg-07", ownerSlug: "nisabulutmark", username: "nisabulutmark", role: "worker" },
+  { accountId: "kg-08", ownerSlug: "azadkk", username: "azadkk", role: "worker" },
+  { accountId: "kg-09", ownerSlug: "mylovevpn1", username: "mylovevpn1", role: "worker" },
+  { accountId: "kg-10", ownerSlug: "computstu1", username: "computstu1", role: "worker" },
+  { accountId: "kg-11", ownerSlug: "jobreza1", username: "jobreza1", role: "worker" },
 ] as const;
 
 export const MASTER_ACCOUNT: AccountDescriptor = {
@@ -80,6 +88,14 @@ function tokenFor(env: WorkerEnv, accountId: AccountId): string | undefined {
       return env.CGP_KAGGLE_KG06_TOKEN;
     case "kg-07":
       return env.CGP_KAGGLE_KG07_TOKEN;
+    case "kg-08":
+      return env.CGP_KAGGLE_KG08_TOKEN;
+    case "kg-09":
+      return env.CGP_KAGGLE_KG09_TOKEN;
+    case "kg-10":
+      return env.CGP_KAGGLE_KG10_TOKEN;
+    case "kg-11":
+      return env.CGP_KAGGLE_KG11_TOKEN;
     case "master":
       return env.CGP_KAGGLE_MASTER_TOKEN;
   }
