@@ -34,6 +34,10 @@ ACCOUNTS = {
     "kg-05": "trickermark",
     "kg-06": "msdenis",
     "kg-07": "nisabulutmark",
+    "kg-08": "azadkk",
+    "kg-09": "mylovevpn1",
+    "kg-10": "computstu1",
+    "kg-11": "jobreza1",
 }
 
 
