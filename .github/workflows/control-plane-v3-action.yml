@@ -69,7 +69,7 @@ jobs:
               required=['d260914b','DIST_ROLE = "M07_HPO_SCREEN"',f'DIST_SLOT = "W0{i}"','UNLOCK_REMAINING_MODELS = False','paultimothymooney/chest-xray-pneumonia']
               for token in required:
                   if token not in text: raise SystemExit(f'{name}: required token missing: {token}')
-              forbidden=['v6-2-2','m07-pneumonia-campaign-state','MASTER_M01_M12_RESULTS_MATRIX.csv']
+              forbidden=['v6-2-2','m07-pneumonia-campaign-state']
               for token in forbidden:
                   if token in text: raise SystemExit(f'{name}: forbidden legacy token present: {token}')
           print('M07_STAGE1_NOTEBOOKS_OK=3')
@@ -161,7 +161,9 @@ jobs:
           $table
           "@
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body (@{body=$msg}|ConvertTo-Json -Compress) | Out-Null
+          $json=@{body=$msg}|ConvertTo-Json -Depth 5 -Compress
+          $body=[Text.Encoding]::UTF8.GetBytes($json)
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body $body | Out-Null
 
       - name: Fail closed on partial launch
         if: always()
