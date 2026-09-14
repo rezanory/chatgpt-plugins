@@ -754,3 +754,58 @@ jobs:
           req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/33/comments",data=json.dumps({'body':body}).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'soilbin-launch-receipt/1.0'})
           with urllib.request.urlopen(req,timeout=30): pass
           PY
+
+  soilbin_q1_v2_waveform:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V2_WAVEFORM_LAUNCH_KG09_ALLOWED' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout frozen SoilBin V2 payload
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Request trusted action OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          sep='&' if '?' in base else '?'
+          req=urllib.request.Request(base+sep+'audience=cgp-control-plane-v3-action',headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
+          with urllib.request.urlopen(req,timeout=30) as response:
+              token=json.load(response)['value']
+          if len(token)<100: raise SystemExit('OIDC unavailable')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as handle:
+              handle.write('CGP_ACTION_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Validate, build and launch SoilBin V2 through Cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          python control-plane-payloads/soilbin-q1-v2-waveform/launch_soilbin_v2_cloudflare.py
+
+      - name: Publish SoilBin V2 launch receipt
+        if: always()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, urllib.request
+          p=os.environ.get('SOILBIN_V2_RECEIPT_PATH','')
+          if p and pathlib.Path(p).exists():
+              r=json.loads(pathlib.Path(p).read_text(encoding='utf-8'))
+              body=("## SOILBIN Q1/Q2 WAVEFORM V2 LAUNCH ACCEPTED\n\n"
+                    f"- Run: `{os.environ['GITHUB_RUN_ID']}`\n- Account: `{r['account_id']} / {r['owner']}`\n"
+                    f"- Kernel: `{r['kernel_ref']}`\n- Notebook SHA256: `{r['notebook_sha256']}`\n"
+                    f"- Data SHA256: `{r['data_csv_sha256']}`\n"
+                    "- CPU only: `true`\n- GPU: `false`\n- Leakage guard: `current-run waveform descriptors forbidden as predictors`\n- SAVE_AND_RUN_ALL: `accepted`\n")
+          else:
+              body=f"## SOILBIN Q1/Q2 WAVEFORM V2 LAUNCH FAILED\n\n- Run: `{os.environ['GITHUB_RUN_ID']}`\n- SAVE_AND_RUN_ALL: `not accepted`\n"
+          req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/33/comments",data=json.dumps({'body':body}).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'soilbin-v2-launch-receipt/1.0'})
+          with urllib.request.urlopen(req,timeout=30): pass
+          PY
