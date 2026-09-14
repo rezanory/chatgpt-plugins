@@ -6,6 +6,48 @@ from typing import Any
 import control_plane_query as base
 
 
+def _find_output_listing(value: Any) -> tuple[list[Any], str] | None:
+    """Find the Kaggle output listing inside broker/API wrapper envelopes.
+
+    The Cloudflare broker can wrap the Kaggle API payload one or more times
+    (for example result.result.files). Keep this read helper tolerant to those
+    transport envelopes without weakening the exact-path allowlist below.
+    """
+    if isinstance(value, dict):
+        files = value.get("files")
+        if isinstance(files, list):
+            if not files or any(isinstance(item, dict) and item.get("fileName") for item in files):
+                token = str(value.get("nextPageToken") or "")
+                return files, token
+        for child in value.values():
+            found = _find_output_listing(child)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_output_listing(child)
+            if found is not None:
+                return found
+    return None
+
+
+def _find_next_page_token(value: Any) -> str:
+    if isinstance(value, dict):
+        token = value.get("nextPageToken")
+        if token:
+            return str(token)
+        for child in value.values():
+            found = _find_next_page_token(child)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_next_page_token(child)
+            if found:
+                return found
+    return ""
+
+
 def kaggle_output_json_files(payload: dict[str, Any]) -> Any:
     account_id = str(payload.get("account_id", ""))
     owner = base.ACCOUNTS.get(account_id)
@@ -62,18 +104,16 @@ def kaggle_output_json_files(payload: dict[str, Any]) -> Any:
         )
         if not isinstance(response, dict) or not response.get("ok"):
             raise base.QueryError("ListKernelSessionOutput did not return ok=true")
-        result = response.get("result")
-        if not isinstance(result, dict):
-            raise base.QueryError("ListKernelSessionOutput result missing")
-        raw_files = result.get("files")
-        if not isinstance(raw_files, list):
+        listing = _find_output_listing(response)
+        if listing is None:
             raise base.QueryError("ListKernelSessionOutput files list missing")
+        raw_files, listing_token = listing
         for item in raw_files:
             if isinstance(item, dict) and item.get("fileName"):
                 by_name[str(item["fileName"])] = item
         if all(name in by_name for name in exact_names):
             break
-        next_token = str(result.get("nextPageToken") or "")
+        next_token = listing_token or _find_next_page_token(response)
         if not next_token:
             break
         if next_token == page_token or next_token in seen_tokens:
