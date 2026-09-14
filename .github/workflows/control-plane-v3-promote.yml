@@ -45,9 +45,14 @@ jobs:
           # Issue 33 has thousands of historical comments. Query only the
           # recent bounded window so the exact validation pass cannot fall
           # beyond an arbitrary page cap while preserving fail-closed checks.
-          $since=(Get-Date).ToUniversalTime().AddHours(-12).ToString('yyyy-MM-ddTHH:mm:ssZ')
-          $sinceEncoded=[uri]::EscapeDataString($since)
-          $allComments=@(Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments?per_page=100&since=$sinceEncoded" -Headers $h -TimeoutSec 30)
+          $since=(Get-Date).ToUniversalTime().AddHours(-3).ToString('yyyy-MM-ddTHH:mm:ssZ')
+          $allComments=@()
+          for($page=1; $page -le 10; $page++){
+            $batch=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments?per_page=100&since=$since&page=$page" -Headers $h -TimeoutSec 30
+            if($null -eq $batch){break}
+            $allComments += $batch
+            if(@($batch).Count -lt 100){break}
+          }
           $passes=@($allComments | Where-Object {
             $_.user.login -eq 'github-actions[bot]' -and
             $_.body -like '## CONTROL PLANE V3 VALIDATION PASS*'
