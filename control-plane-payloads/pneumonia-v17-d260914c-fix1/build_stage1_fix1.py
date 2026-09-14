@@ -32,7 +32,9 @@ def main(src,dst):
                 cell['source']=text.splitlines(keepends=True)
         if hits!=1: raise SystemExit(f'{slot}: expected one absence-classifier patch, got {hits}')
         out=dst/f'PNEUMONIA_V17_M07_STAGE1_SCREEN_{slot}_{NEW_CAMPAIGN}.ipynb'
-        out.write_text(json.dumps(nb,ensure_ascii=False,indent=1)+'\n',encoding='utf-8')
+        # Keep candidate identity independent of the runner OS. Path.write_text()
+        # translates LF to CRLF on Windows and invalidates the frozen SHA values.
+        out.write_bytes((json.dumps(nb,ensure_ascii=False,indent=1)+'\n').encode('utf-8'))
         code='\n'.join(''.join(c.get('source',[])) for c in nb['cells'] if c.get('cell_type')=='code')
         ast.parse(code)
         required=[NEW_CAMPAIGN,'DIST_ROLE = "M07_HPO_SCREEN"',f'DIST_SLOT = "{slot}"','UNLOCK_REMAINING_MODELS = False','paultimothymooney/chest-xray-pneumonia',f'm07-hpo-screen-{slot.lower()}-{NEW_CAMPAIGN}','payload.get("errors") == ["Not found"]']
@@ -59,7 +61,7 @@ def main(src,dst):
       got=pred(exc); checks.append({'case':name,'expected':want,'actual':got,'pass':got==want})
     if not all(x['pass'] for x in checks): raise SystemExit('contract regression failed')
     ev={'campaign':NEW_CAMPAIGN,'supersedes':OLD_CAMPAIGN,'stage1':evidence,'contract_checks':checks,'pass':True}
-    (dst/'RUNTIME_BUILD_EVIDENCE.json').write_text(json.dumps(ev,indent=2),encoding='utf-8')
+    (dst/'RUNTIME_BUILD_EVIDENCE.json').write_bytes(json.dumps(ev,indent=2).encode('utf-8'))
     print(json.dumps(ev,indent=2))
 
 if __name__=='__main__':
