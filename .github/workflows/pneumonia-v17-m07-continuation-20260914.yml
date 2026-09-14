@@ -209,6 +209,11 @@ jobs:
           # Diagnostics/figure cells run after the HPO figure cell is intentionally
           # omitted during continuation surgery; keep pyplot available globally.
           import matplotlib.pyplot as plt
+          # Cell 12 is replaced by this continuation precheck.  The canonical
+          # cell also defined HPO_ROOT, which is still consumed by the final
+          # evidence/model-card cell after the HPO work itself is restored.
+          HPO_ROOT = OUTPUT_ROOT / "CONFIRMATION_HPO"
+          HPO_ROOT.mkdir(parents=True, exist_ok=True)
           STAGEB_WINNER = json.loads(STAGEB_WINNER_BLOB)
           STAGEB_FOLD_FINGERPRINTS = json.loads(STAGEB_FOLD_FINGERPRINTS_BLOB)
           RECIPE_PATH = OUTPUT_ROOT / "FROZEN_M07_CONFIRMED_RECIPE.json"
