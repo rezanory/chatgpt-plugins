@@ -10,85 +10,86 @@ permissions:
   issues: write
 
 concurrency:
-  group: pneumonia-m07-runfix-v6-seven
-  cancel-in-progress: true
+  group: pneumonia-v17-d260914b-m07-stage1
+  cancel-in-progress: false
 
 jobs:
-  launch-m07-runfix-v7:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_MASTER_M07_RUNFIX_V7' }}
+  launch-m07-stage1:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914B_LAUNCH_M07_STAGE1' }}
     runs-on: [self-hosted, windows, x64]
     timeout-minutes: 45
     steps:
-      - name: Checkout payload
+      - name: Checkout verified campaign payload
         uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Reconstruct and repair notebook
+      - name: Assemble and verify d260914b payload
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          $names=@(
-            'docs/pneumonia-v6-2-2-m07-exact-part-00.b64',
-            'docs/pneumonia-v6-2-2-m07-exact-part-01.b64',
-            'docs/pneumonia-v6-2-2-m07-exact-part-02.b64',
-            'docs/pneumonia-v6-2-2-m07-exact-part-03.b64',
-            'docs/pneumonia-v6-2-2-m07-exact-part-04.b64',
-            'docs/pneumonia-v6-2-2-m07-exact-part-05.b64',
-            'docs/pneumonia-v6-2-2-m07-exact-part-06.b64',
-            'docs/pneumonia-v6-2-2-m07-exact-part-07.b64'
-          )
-          $b64=''
-          foreach($name in $names){if(-not(Test-Path $name)){throw "missing $name"};$b64+=([IO.File]::ReadAllText($name)).Trim()}
-          if($b64.Length -ne 93120){throw "base64 length mismatch $($b64.Length)"}
-          $input=[IO.MemoryStream]::new([Convert]::FromBase64String($b64))
-          $zip=[IO.Compression.GZipStream]::new($input,[IO.Compression.CompressionMode]::Decompress)
-          $base=Join-Path $env:RUNNER_TEMP 'M07_BASE.ipynb'
-          $output=[IO.File]::Create($base)
-          try{$zip.CopyTo($output)}finally{$output.Dispose();$zip.Dispose();$input.Dispose()}
-          $sha=(Get-FileHash $base -Algorithm SHA256).Hash.ToLower()
-          if($sha -ne '234b87dec5ad3bbc564956025496411f272ed94b7efdb4719f56a1f762bdcc3c'){throw "base sha mismatch $sha"}
-          $env:CGP_BASE_NB=$base
-          $env:CGP_PATCH_PATH=(Resolve-Path 'scripts/m07_cell4_runfix_v5.pyfrag').Path
-          $env:CGP_OUT_NB=(Join-Path $env:RUNNER_TEMP 'M07_RUNFIX_V7.ipynb')
+          $dir='control-plane-payloads/pneumonia-v17-d260914b'
+          $parts=0..8 | ForEach-Object { Join-Path $dir ("initial10.part{0:D2}.b64" -f $_) }
+          $archive=Join-Path $env:RUNNER_TEMP 'pneumonia_initial10_d260914b.tar.xz'
+          $fs=[IO.File]::Open($archive,[IO.FileMode]::Create)
+          try {
+            foreach($p in $parts){
+              if(-not(Test-Path $p)){throw "missing payload part: $p"}
+              $bytes=[Convert]::FromBase64String(([IO.File]::ReadAllText($p)).Trim())
+              $fs.Write($bytes,0,$bytes.Length)
+            }
+          } finally {$fs.Dispose()}
+          $sha=(Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          if($sha -ne '522ec01eb9cd916c96067ad36a6cef0823af35550142f47f607aaaff74c2c48a'){throw "payload sha mismatch: $sha"}
+          $out=Join-Path $env:RUNNER_TEMP 'pneumonia-v17-d260914b'
+          if(Test-Path $out){Remove-Item -Recurse -Force $out}
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python -c "import tarfile; tarfile.open(r'$archive','r:xz').extractall(r'$out')"
+          if($LASTEXITCODE-ne 0){throw 'payload extraction failed'}
+          "CGP_PAYLOAD_DIR=$out" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "PAYLOAD_OK sha=$sha"
+
+      - name: Validate fresh M07 Stage-1 notebooks
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           @'
-          import json,os,pathlib,hashlib
-          base=pathlib.Path(os.environ['CGP_BASE_NB'])
-          patch=pathlib.Path(os.environ['CGP_PATCH_PATH']).read_text(encoding='utf-8')
-          bad='f4fdd4795fe6bd5cdb443db9033d11cff73c3b77f99980001b2721796e2ba'
-          good='f4fdd4795fe6bd5cdb7cb443db9033d11cff73c3b77f99980001b2721796e2ba'
-          assert bad in patch
-          patch=patch.replace(bad,good)
-          nb=json.loads(base.read_text(encoding='utf-8'))
-          nb['cells'][4]['source']=patch.splitlines(True)
-          for c in nb['cells']:
-              if c.get('cell_type')=='code': c['execution_count']=None; c['outputs']=[]
-          out=pathlib.Path(os.environ['CGP_OUT_NB'])
-          out.write_text(json.dumps(nb,ensure_ascii=False),encoding='utf-8')
-          txt=out.read_text(encoding='utf-8')
-          assert 'UNLOCK_REMAINING_MODELS = False' in txt and 'UNLOCK_REMAINING_MODELS = True' not in txt
-          assert 'm07-frozen-split-clone' not in txt
-          assert good in txt and bad not in txt
-          assert '896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9' in txt
-          print('RUNFIX_V7_SHA256='+hashlib.sha256(out.read_bytes()).hexdigest())
+          import json,os,pathlib
+          root=pathlib.Path(os.environ['CGP_PAYLOAD_DIR'])
+          names=[f'PNEUMONIA_V17_M07_STAGE1_SCREEN_W0{i}_d260914b.ipynb' for i in (1,2,3)]
+          for i,name in enumerate(names,1):
+              p=root/name
+              if not p.is_file(): raise SystemExit(f'missing notebook {name}')
+              nb=json.loads(p.read_text(encoding='utf-8'))
+              text='\n'.join(''.join(c.get('source',[])) for c in nb['cells'])
+              required=['d260914b','DIST_ROLE = "M07_HPO_SCREEN"',f'DIST_SLOT = "W0{i}"','UNLOCK_REMAINING_MODELS = False','paultimothymooney/chest-xray-pneumonia']
+              for token in required:
+                  if token not in text: raise SystemExit(f'{name}: required token missing: {token}')
+              forbidden=['v6-2-2','m07-pneumonia-campaign-state','MASTER_M01_M12_RESULTS_MATRIX.csv']
+              for token in forbidden:
+                  if token in text: raise SystemExit(f'{name}: forbidden legacy token present: {token}')
+          print('M07_STAGE1_NOTEBOOKS_OK=3')
           '@ | & $python -
-          if($LASTEXITCODE-ne 0){throw 'notebook patch failed'}
-          "CGP_NOTEBOOK_PATH=$env:CGP_OUT_NB"|Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          if($LASTEXITCODE-ne 0){throw 'M07 Stage-1 validation failed'}
 
       - name: Request trusted action OIDC
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
           $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
-          $token=[string]$r.value
-          if($token.Length-lt100){throw 'OIDC unavailable'}
+          $oidcUri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action"
+          $oidc=Invoke-RestMethod -Uri $oidcUri -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$oidc.value
+          if($token.Length-lt100){throw 'GitHub OIDC token unavailable'}
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
-      - name: SAVE_AND_RUN_ALL repaired M07 V7 on seven accounts
+      - name: SAVE_AND_RUN_ALL M07 Stage-1 on three isolated accounts
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -97,30 +98,74 @@ jobs:
           @'
           import concurrent.futures,json,os,pathlib,urllib.request,urllib.error
           endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
-          oidc=os.environ['CGP_ACTION_OIDC_TOKEN'].strip(); template=pathlib.Path(os.environ['CGP_NOTEBOOK_PATH']).read_text(encoding='utf-8')
-          accounts=[('master','azadka'),('kg-02','radlinaradlina'),('kg-03','rezanory'),('kg-04','reyhanehazad'),('kg-05','trickermark'),('kg-06','msdenis'),('kg-07','nisabulutmark')]
+          oidc=os.environ['CGP_ACTION_OIDC_TOKEN'].strip()
+          root=pathlib.Path(os.environ['CGP_PAYLOAD_DIR'])
+          jobs=[
+            ('kg-02','radlinaradlina','W01','PNEUMONIA_V17_M07_STAGE1_SCREEN_W01_d260914b.ipynb'),
+            ('kg-03','rezanory','W02','PNEUMONIA_V17_M07_STAGE1_SCREEN_W02_d260914b.ipynb'),
+            ('kg-04','reyhanehazad','W03','PNEUMONIA_V17_M07_STAGE1_SCREEN_W03_d260914b.ipynb'),
+          ]
           def call(payload):
-              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-runfix-v7/1.0'})
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'pneumonia-v17-d260914b/1.0'})
               try:
                   with urllib.request.urlopen(req,timeout=240) as r: return json.loads(r.read().decode('utf-8','replace') or '{}')
               except urllib.error.HTTPError as e: raise RuntimeError(f'HTTP {e.code}: '+e.read(4000).decode('utf-8','replace'))
-          def submit(item):
-              aid,owner=item; slug='m07-gate-224-runfix-v7-20260830'; ref=f'{owner}/{slug}'; nb=template.replace('__ACCOUNT_OWNER__',owner)
-              payload={'request_id':f'm07-runfix-v7-{aid}-20260830','provider':'kaggle','operation_class':'compute','account_id':aid,'purpose':'Run repaired M07@224 V7, exact frozen split rebuild/hash verification, Phase2 locked.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':ref,'newTitle':f'M07 Gate 224 RunFix V7 - {owner}','text':nb,'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':True,'enableInternet':True,'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}}
+          def submit(job):
+              aid,owner,slot,name=job
+              text=(root/name).read_text(encoding='utf-8')
+              slug=f'pneumonia-v17-d260914b-m07-screen-{slot.lower()}'
+              ref=f'{owner}/{slug}'
+              payload={'request_id':f'pneumonia-v17-d260914b-m07-screen-{slot.lower()}','provider':'kaggle','operation_class':'compute','account_id':aid,'purpose':f'Fresh d260914b M07 HPO screening shard {slot}; no legacy state; Phase2 locked.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':ref,'newTitle':f'Pneumonia V1.7 d260914b M07 Screen {slot}','text':text,'language':'PYTHON','kernelType':'NOTEBOOK','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':True,'enableInternet':True,'datasetDataSources':['paultimothymooney/chest-xray-pneumonia']}}
               try:
                   r=call(payload)
-                  if not r.get('ok'): raise RuntimeError('broker ok=false')
-                  return {'account_id':aid,'owner':owner,'kernel_ref':ref,'ok':True,'provider_ref':r.get('provider_ref') or (r.get('result') or {}).get('ref')}
-              except Exception as e: return {'account_id':aid,'owner':owner,'kernel_ref':ref,'ok':False,'error':repr(e)[:1500]}
-          with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex: rows=list(ex.map(submit,accounts))
-          print(json.dumps(rows,ensure_ascii=False)); ok=sum(1 for r in rows if r['ok'])
-          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write(f'CGP_OK_COUNT={ok}\n')
-          if ok!=7: raise SystemExit(2)
+                  if not r.get('ok'): raise RuntimeError('control plane returned ok=false')
+                  return {'account_id':aid,'owner':owner,'slot':slot,'kernel_ref':ref,'ok':True,'provider_ref':r.get('provider_ref') or (r.get('result') or {}).get('ref') or ref}
+              except Exception as e:
+                  return {'account_id':aid,'owner':owner,'slot':slot,'kernel_ref':ref,'ok':False,'error':repr(e)[:1800]}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex: rows=list(ex.map(submit,jobs))
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'pneumonia-v17-d260914b-m07-stage1-launch.json'
+          out.write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps(rows,ensure_ascii=False))
+          ok=sum(1 for r in rows if r['ok'])
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write(f'CGP_OK_COUNT={ok}\nCGP_RESULTS_PATH={out}\n')
+          if ok!=3: raise SystemExit(2)
           '@ | & $python -
-          if($LASTEXITCODE-ne 0){throw "M07 V7 launch incomplete accepted=$env:CGP_OK_COUNT/7"}
+          if($LASTEXITCODE-ne 0){throw "M07 Stage-1 launch incomplete accepted=$env:CGP_OK_COUNT/3"}
 
-      - name: Confirm launch acceptance
+      - name: Publish launch receipt
+        if: always()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $rows=@()
+          if($env:CGP_RESULTS_PATH -and (Test-Path $env:CGP_RESULTS_PATH)){
+            foreach($x in @(Get-Content -Raw $env:CGP_RESULTS_PATH | ConvertFrom-Json)){
+              $state=if($x.ok){'SAVE_AND_RUN_ALL_ACCEPTED'}else{'FAILED'}
+              $detail=if($x.ok){[string]$x.provider_ref}else{([string]$x.error).Replace('|','/')}
+              $rows += "| $($x.account_id) | $($x.owner) | $($x.slot) | $state | $($x.kernel_ref) | $detail |"
+            }
+          }
+          $table=$rows -join "`n"
+          $msg=@"
+          ## PNEUMONIA V1.7 d260914b — M07 Stage-1 launch
+          - GitHub run: ``$env:GITHUB_RUN_ID``
+          - Accepted: ``$env:CGP_OK_COUNT/3``
+          - Campaign: ``d260914b``
+          - Scientific state: ``M07 HPO screening only; Phase-2 not launched``
+          - Note: acceptance is not called RUNNING until Kaggle status telemetry confirms it.
+
+          | Account | Owner | Slot | State | Kernel | Provider detail |
+          |---|---|---|---|---|---|
+          $table
+          "@
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body (@{body=$msg}|ConvertTo-Json -Compress) | Out-Null
+
+      - name: Fail closed on partial launch
+        if: always()
         shell: powershell
         run: |
-          if($env:CGP_OK_COUNT-ne'7'){throw "accepted=$env:CGP_OK_COUNT/7"}
-          Write-Host '7/7 repaired M07 V7 SAVE_AND_RUN_ALL accepted; Phase2 remains locked.'
+          if($env:CGP_OK_COUNT-ne'3'){throw "d260914b M07 Stage-1 incomplete: accepted=$env:CGP_OK_COUNT/3"}
+          Write-Host 'M07 Stage-1 3/3 SAVE_AND_RUN_ALL accepted.'
