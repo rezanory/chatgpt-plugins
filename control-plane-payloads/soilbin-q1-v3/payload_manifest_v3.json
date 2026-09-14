@@ -1,0 +1,46 @@
+{
+  "schema": "soilbin.q1.v3.payload.v1",
+  "version": "V3",
+  "kernel_ref": "mylovevpn1/soilbin-q1-q2-v3-external-model-selection-20260914",
+  "cpu_only": true,
+  "gpu": false,
+  "external_labels_used_for_tuning": false,
+  "absolute_external_validation": false,
+  "files": [
+    {
+      "name": "soilbin_v3_runner.py",
+      "size": 37230,
+      "sha256": "8e23cd414dbc9ad035d49739c2449c8567b8b757a269757a8fa0f601815a0d26"
+    },
+    {
+      "name": "launch_soilbin_v3_cloudflare.py",
+      "size": 7225,
+      "sha256": "fb6ea490101bafc3dc7c2ccaf7e800ebd238caa1877cb4526c2675d08410e41c"
+    },
+    {
+      "name": "all_features_51.csv.gz.b64",
+      "size": 15852,
+      "sha256": "dc2ddaefe8edbc00831843a20353b4c4c859ee83d316b4543efb56bb86e7469f"
+    },
+    {
+      "name": "external_canada_ayetan_2026.csv.gz.b64",
+      "size": 976,
+      "sha256": "d3d3fb2b8d24aa2785522245467cba2f69a3aa10bb99010706a2979ddb6a3493"
+    },
+    {
+      "name": "external_erdc_crrel_2009.csv.gz.b64",
+      "size": 864,
+      "sha256": "eed84fdde611992cb73118b83e719e8e5b503dc3a47ec9e5e27b3cc29abfa260"
+    },
+    {
+      "name": "external_literature_corroboration_v3.csv.gz.b64",
+      "size": 1596,
+      "sha256": "c0b621ab8bc1841bcae6781bc91379073260274881ca388535bab38eb5c4ac93"
+    },
+    {
+      "name": "external_validation_registry.json.b64",
+      "size": 6560,
+      "sha256": "b10a49fd29785ee1a60b0e75cc41c5d84ef12eabd41fb9b366f40b3548522b31"
+    }
+  ]
+}
