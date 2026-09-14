@@ -360,23 +360,35 @@ def kaggle_output_json_files(payload: dict[str, Any]) -> Any:
     max_bytes = int(payload.get("max_bytes_per_file", 65536))
     if max_bytes < 1024 or max_bytes > 262144:
         raise QueryError("max_bytes_per_file must be between 1024 and 262144")
-    response = worker_kaggle_read({
-        "provider": "kaggle", "action": "raw_read", "account_id": account_id,
-        "service": "kernels.KernelsApiService", "method": "ListKernelSessionOutput",
-        "body": {"userName": owner, "kernelSlug": slug, "pageSize": 100},
-    })
-    if not isinstance(response, dict) or not response.get("ok"):
-        raise QueryError("ListKernelSessionOutput did not return ok=true")
-    result = response.get("result")
-    if not isinstance(result, dict):
-        raise QueryError("ListKernelSessionOutput result missing")
-    raw_files = result.get("files")
-    if not isinstance(raw_files, list):
-        raise QueryError("ListKernelSessionOutput files list missing")
     by_name: dict[str, dict[str, Any]] = {}
-    for item in raw_files:
-        if isinstance(item, dict) and item.get("fileName"):
-            by_name[str(item["fileName"])] = item
+    previous_signature: tuple[str, ...] | None = None
+    for page in range(1, 21):
+        response = worker_kaggle_read({
+            "provider": "kaggle", "action": "raw_read", "account_id": account_id,
+            "service": "kernels.KernelsApiService", "method": "ListKernelSessionOutput",
+            "body": {"userName": owner, "kernelSlug": slug, "page": page, "pageSize": 10},
+        })
+        if not isinstance(response, dict) or not response.get("ok"):
+            raise QueryError("ListKernelSessionOutput did not return ok=true")
+        result = response.get("result")
+        if not isinstance(result, dict):
+            raise QueryError("ListKernelSessionOutput result missing")
+        raw_files = result.get("files")
+        if not isinstance(raw_files, list):
+            raise QueryError("ListKernelSessionOutput files list missing")
+        signature = tuple(str(item.get("fileName", "")) for item in raw_files if isinstance(item, dict))
+        if page > 1 and signature and signature == previous_signature:
+            raise QueryError("ListKernelSessionOutput pagination did not advance")
+        previous_signature = signature
+        for item in raw_files:
+            if isinstance(item, dict) and item.get("fileName"):
+                by_name[str(item["fileName"])] = item
+        if all(name in by_name for name in exact_names):
+            break
+        if len(raw_files) < 10:
+            break
+    else:
+        raise QueryError("Kaggle output pagination exceeded bounded page limit")
     outputs = []
     for name in exact_names:
         item = by_name.get(name)
