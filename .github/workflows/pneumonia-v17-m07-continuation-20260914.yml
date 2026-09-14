@@ -322,6 +322,15 @@ jobs:
                   source = source.replace(retry_old, retry_new, 1)
                   cell["source"] = source.splitlines(keepends=True)
                   retry_hits += 1
+              elif "def _persist_upload(" in source and "M07_PERSIST_UPLOAD_RETRY_FIX1" not in source:
+                  # Defensive fallback for line-ending/serialization drift in
+                  # the canonical notebook: replace the function body by its
+                  # stable anchors rather than assuming byte-identical text.
+                  start = source.index("    try:", source.index("def _persist_upload("))
+                  end = source.index("        return False", start) + len("        return False")
+                  source = source[:start] + retry_new + source[end:]
+                  cell["source"] = source.splitlines(keepends=True)
+                  retry_hits += 1
           if retry_hits != 1:
               raise SystemExit(f"M07_PERSIST_UPLOAD_RETRY_FIX1 expected one _persist_upload patch, got {retry_hits}")
           notebook["cells"] = notebook["cells"][:13] + notebook["cells"][14:24]
