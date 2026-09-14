@@ -430,7 +430,7 @@ jobs:
           endpoint = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
           notebook = pathlib.Path(os.environ["CGP_NOTEBOOK_PATH"]).read_text(encoding="utf-8")
           payload = {
-              "request_id": "pneumonia-v17-d260914d-m07-stageb-confirmation-fold3-fix1-v1",
+              "request_id": "pneumonia-v17-d260914d-m07-stageb-confirmation-fold3-fix1-v2",
               "provider": "kaggle",
               "operation_class": "compute",
               "account_id": "kg-03",
@@ -438,8 +438,8 @@ jobs:
               "service": "kernels.KernelsApiService",
               "method": "SaveKernel",
               "body": {
-                  "slug": "rezanory/pneumonia-v1-7-d260914d-m07-confirm-fold3-top3-fix1",
-                  "newTitle": "Pneumonia V1.7 d260914d M07 Confirm Fold3 Top3 Fix1",
+              "slug": "rezanory/m07-confirm-f3-fix1-20260914",
+              "newTitle": "M07 Confirm Fold3 Fix1 20260914",
                   "text": notebook,
                   "language": "PYTHON",
                   "kernelType": "NOTEBOOK",
@@ -471,5 +471,5 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $body="## PNEUMONIA V1.7 d260914d M07 STAGE-B CONFIRMATION FIX1 ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Campaign: ``d260914d```n- Stage: ``Fold 3 confirmation for Stage-A Top-3 [2,0,7]```n- Kernel: ``rezanory/pneumonia-v1-7-d260914d-m07-confirm-fold3-top3-fix1```n- Supersedes: ``rezanory/pneumonia-v1-7-d260914d-m07-confirm-fold3-top3`` (errored before training)`n- Scientific guard: ``Locked Test not executed; Phase2 remains locked```n- Stage-1 fan-in target: ``16/16 exact rows with code/split fingerprint verification```n- This is an orchestration receipt only; PASS requires a successful builder, an authoritative SaveKernel response, Kaggle completion, and the Stage-B ranking artifact."
+          $body="## PNEUMONIA V1.7 d260914d M07 STAGE-B CONFIRMATION FIX1 ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Campaign: ``d260914d```n- Stage: ``Fold 3 confirmation for Stage-A Top-3 [2,0,7]```n- Kernel: ``rezanory/m07-confirm-f3-fix1-20260914```n- Supersedes: ``rezanory/pneumonia-v1-7-d260914d-m07-confirm-fold3-top3`` (errored before training)`n- Scientific guard: ``Locked Test not executed; Phase2 remains locked```n- Stage-1 fan-in target: ``16/16 exact rows with code/split fingerprint verification```n- This is an orchestration receipt only; PASS requires a successful builder, an authoritative SaveKernel response, Kaggle completion, and the Stage-B ranking artifact."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
