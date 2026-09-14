@@ -1,0 +1,46 @@
+name: pneumonia-v17-runner-refresh
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pneumonia-v17-runner-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_RUNNER_REFRESH' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 10
+    steps:
+      - name: Refresh byte-exact V1.7 notebook in persistent workspace
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Set-Location $env:GITHUB_WORKSPACE
+          git config core.autocrlf false
+          $path='control-plane-payloads/pneumonia-v17-20260912/PNEUMONIA_MASTER_M01_M12_M07_GATE_RUN_SAFE_V1_7.ipynb'
+          git checkout-index --force -- $path
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import hashlib, pathlib, subprocess
+          p=pathlib.Path('control-plane-payloads/pneumonia-v17-20260912/PNEUMONIA_MASTER_M01_M12_M07_GATE_RUN_SAFE_V1_7.ipynb')
+          expected_sha256='9fca3b687297fc4e23cd1a2f68d4765c897bd20516ae7c69309c99ca5a595907'
+          expected_blob='28e3de65bb84c17c3ea5335f14caeeba82158c72'
+          work_sha=hashlib.sha256(p.read_bytes()).hexdigest()
+          head_blob=subprocess.check_output(['git','rev-parse','HEAD:'+p.as_posix()],text=True).strip()
+          print('worktree_sha256='+work_sha)
+          print('head_blob='+head_blob)
+          if head_blob != expected_blob:
+              raise RuntimeError('HEAD scientific artifact blob mismatch')
+          if work_sha != expected_sha256:
+              raise RuntimeError('persistent runner refresh did not restore byte-exact V1.7 source')
+          print('BYTE_EXACT_V17_SOURCE_OK')
+          '@
+          $script | & $python -
+          if($LASTEXITCODE -ne 0){throw 'runner refresh verification failed'}
