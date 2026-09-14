@@ -265,52 +265,56 @@ jobs:
           # during this continuation.  Keep the strict persistence gate, but
           # add bounded retries for that deterministic transient only; all
           # non-transient failures still fail closed immediately.
-          retry_old = """    try:
-              kagglehub.dataset_upload(
-                  PERSIST_DATASET_HANDLE, str(PERSIST_ROOT), version_notes=str(note),
-              )
-              print(f"✅ Persistent upload OK: {note}")
-              return True
-          except Exception as exc:
-              print("❌ Persistent upload failed:", type(exc).__name__)
-              if strict:
-                  raise RuntimeError(
-                      "PERSISTENCE_GATE_FAILED before expensive training. "
-                      f"Handle={PERSIST_DATASET_HANDLE}"
-                  ) from exc
-              return False"""
-          retry_new = """    # M07_PERSIST_UPLOAD_RETRY_FIX1: bounded retry for Kaggle HTTP 503 only.
-              attempts = 3
-              for attempt in range(1, attempts + 1):
-                  try:
-                      kagglehub.dataset_upload(
-                          PERSIST_DATASET_HANDLE, str(PERSIST_ROOT), version_notes=str(note),
-                      )
-                      print(f"✅ Persistent upload OK: {note}")
-                      return True
-                  except Exception as exc:
-                      status = getattr(getattr(exc, "response", None), "status_code", None)
-                      transient = (
-                          status == 503
-                          or "503 Server Error" in str(exc)
-                          or "Service Unavailable" in str(exc)
-                      )
-                      if transient and attempt < attempts:
-                          import time
-                          wait_seconds = 15 * attempt
-                          print(
-                              f"⚠️ Persistent upload transient 503 "
-                              f"(attempt {attempt}/{attempts}); retrying in {wait_seconds}s"
-                          )
-                          time.sleep(wait_seconds)
-                          continue
-                      print("❌ Persistent upload failed:", type(exc).__name__)
-                      if strict:
-                          raise RuntimeError(
-                              "PERSISTENCE_GATE_FAILED before expensive training. "
-                              f"Handle={PERSIST_DATASET_HANDLE}"
-                          ) from exc
-                      return False"""
+          retry_old = "\n".join([
+              "    try:",
+              "        kagglehub.dataset_upload(",
+              "            PERSIST_DATASET_HANDLE, str(PERSIST_ROOT), version_notes=str(note),",
+              "        )",
+              "        print(f\"✅ Persistent upload OK: {note}\")",
+              "        return True",
+              "    except Exception as exc:",
+              "        print(\"❌ Persistent upload failed:\", type(exc).__name__)",
+              "        if strict:",
+              "            raise RuntimeError(",
+              "                \"PERSISTENCE_GATE_FAILED before expensive training. \"",
+              "                f\"Handle={PERSIST_DATASET_HANDLE}\"",
+              "            ) from exc",
+              "        return False",
+          ])
+          retry_new = "\n".join([
+              "    # M07_PERSIST_UPLOAD_RETRY_FIX1: bounded retry for Kaggle HTTP 503 only.",
+              "    attempts = 3",
+              "    for attempt in range(1, attempts + 1):",
+              "        try:",
+              "            kagglehub.dataset_upload(",
+              "                PERSIST_DATASET_HANDLE, str(PERSIST_ROOT), version_notes=str(note),",
+              "            )",
+              "            print(f\"✅ Persistent upload OK: {note}\")",
+              "            return True",
+              "        except Exception as exc:",
+              "            status = getattr(getattr(exc, \"response\", None), \"status_code\", None)",
+              "            transient = (",
+              "                status == 503",
+              "                or \"503 Server Error\" in str(exc)",
+              "                or \"Service Unavailable\" in str(exc)",
+              "            )",
+              "            if transient and attempt < attempts:",
+              "                import time",
+              "                wait_seconds = 15 * attempt",
+              "                print(",
+              "                    f\"⚠️ Persistent upload transient 503 \"",
+              "                    f\"(attempt {attempt}/{attempts}); retrying in {wait_seconds}s\"",
+              "                )",
+              "                time.sleep(wait_seconds)",
+              "                continue",
+              "            print(\"❌ Persistent upload failed:\", type(exc).__name__)",
+              "            if strict:",
+              "                raise RuntimeError(",
+              "                    \"PERSISTENCE_GATE_FAILED before expensive training. \"",
+              "                    f\"Handle={PERSIST_DATASET_HANDLE}\"",
+              "                ) from exc",
+              "            return False",
+          ])
           retry_hits = 0
           for cell in notebook["cells"]:
               source = "".join(cell.get("source", []))
