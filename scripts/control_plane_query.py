@@ -9,6 +9,7 @@ import subprocess
 import sys
 import sysconfig
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ SECRET_KEY = re.compile(
 )
 SECRET_VALUE = re.compile(
     r"KGAT_[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._~-]+|Basic\s+[A-Za-z0-9+/=]+|"
-    r"X-Goog-Signature=|X-Amz-Signature=",
+    r"X-Goog-Signature=|X-Amz-Signature=|https://www\.kaggleusercontent\.com/kf/\S+",
     re.I,
 )
 ACCOUNTS = {
@@ -307,6 +308,93 @@ def resolved_kaggle_telemetry(payload: dict[str, Any], target_action: str) -> An
     return {"resolution": resolution, "telemetry": result}
 
 
+def _fetch_output_json_url(url: str, max_bytes: int) -> Any:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != "www.kaggleusercontent.com":
+        raise QueryError("Kaggle output file URL host is not allowed")
+    request = urllib.request.Request(
+        url, method="GET",
+        headers={"User-Agent": "chatgpt-control-plane-v3-query/1.1"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            raw = response.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise QueryError("Kaggle output JSON exceeded bounded file limit")
+            if response.status != 200:
+                raise QueryError(f"Kaggle output file HTTP {response.status}")
+    except urllib.error.HTTPError as exc:
+        raise QueryError(f"Kaggle output file HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise QueryError(f"Kaggle output file transport error: {exc.reason}") from exc
+    try:
+        value = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise QueryError("Kaggle output file is not valid UTF-8 JSON") from exc
+    if not isinstance(value, (dict, list)):
+        raise QueryError("Kaggle output JSON must be an object or array")
+    return value
+
+def kaggle_output_json_files(payload: dict[str, Any]) -> Any:
+    account_id = str(payload.get("account_id", ""))
+    owner = ACCOUNTS.get(account_id)
+    kernel_ref = str(payload.get("kernel_ref", "")).strip()
+    if not owner or "/" not in kernel_ref:
+        raise QueryError("kernel_output_json_files requires valid account_id and kernel_ref")
+    ref_owner, slug = kernel_ref.split("/", 1)
+    if ref_owner.lower() != owner.lower() or not re.fullmatch(r"[A-Za-z0-9._-]{1,200}", slug):
+        raise QueryError("kernel_ref owner/slug does not match account_id")
+    names = payload.get("file_names")
+    if not isinstance(names, list) or not 1 <= len(names) <= 10:
+        raise QueryError("file_names must contain between 1 and 10 exact JSON paths")
+    exact_names: list[str] = []
+    for item in names:
+        name = str(item).strip()
+        if (not name.endswith(".json") or len(name) > 500 or name.startswith("/")
+                or ".." in name or "\\" in name
+                or not re.fullmatch(r"[A-Za-z0-9._/-]+", name)):
+            raise QueryError("file_names contains an unsafe or non-JSON path")
+        if name in exact_names:
+            raise QueryError("file_names must be unique")
+        exact_names.append(name)
+    max_bytes = int(payload.get("max_bytes_per_file", 65536))
+    if max_bytes < 1024 or max_bytes > 262144:
+        raise QueryError("max_bytes_per_file must be between 1024 and 262144")
+    response = worker_kaggle_read({
+        "provider": "kaggle", "action": "raw_read", "account_id": account_id,
+        "service": "kernels.KernelsApiService", "method": "ListKernelSessionOutput",
+        "body": {"userName": owner, "kernelSlug": slug, "pageSize": 100},
+    })
+    if not isinstance(response, dict) or not response.get("ok"):
+        raise QueryError("ListKernelSessionOutput did not return ok=true")
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise QueryError("ListKernelSessionOutput result missing")
+    raw_files = result.get("files")
+    if not isinstance(raw_files, list):
+        raise QueryError("ListKernelSessionOutput files list missing")
+    by_name: dict[str, dict[str, Any]] = {}
+    for item in raw_files:
+        if isinstance(item, dict) and item.get("fileName"):
+            by_name[str(item["fileName"])] = item
+    outputs = []
+    for name in exact_names:
+        item = by_name.get(name)
+        if item is None:
+            raise QueryError(f"requested Kaggle output JSON not found: {name}")
+        url = str(item.get("url", ""))
+        if not url:
+            raise QueryError(f"requested Kaggle output JSON has no download URL: {name}")
+        outputs.append({"file_name": name, "json": _fetch_output_json_url(url, max_bytes)})
+    return {
+        "transport": "cloudflare_kaggle_api_then_bounded_output_fetch",
+        "account_id": account_id,
+        "kernel_ref": kernel_ref,
+        "file_count": len(outputs),
+        "files": outputs,
+        "signed_urls_returned": False,
+    }
+
 def resolve_kaggle_executable() -> str | None:
     executable = shutil.which("kaggle") or shutil.which("kaggle.exe")
     if executable:
@@ -336,6 +424,8 @@ def local_kaggle_kernel_status(payload: dict[str, Any]) -> Any:
 
 def kaggle_query(payload: dict[str, Any]) -> Any:
     action = str(payload.get("action", "kernel_status"))
+    if action == "kernel_output_json_files":
+        return kaggle_output_json_files(payload)
     if action in {"live_log", "kernel_status", "phase_probe"}:
         return resolved_kaggle_telemetry(payload, action)
     if action == "resolved_live_log":
