@@ -699,3 +699,57 @@ jobs:
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
           $body="## PNEUMONIA V1.7 d260914d M07 FINAL FIVE-FOLD ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kernel: ``rezanory/m07-final-5fold-20260914```n- Stage-B prerequisite: ``PASS; winner candidate 2; Top-3 [2,0,7]```n- Scientific guard: ``Locked Test, External Validation and Phase2 remain locked```n- This is an orchestration receipt only; PASS requires Kaggle completion plus exact five-fold and OOF artifacts."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
+
+  soilbin_q1_v1:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V1_LAUNCH_KG09_ALLOWED' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout frozen SoilBin payload
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Request trusted action OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          sep='&' if '?' in base else '?'
+          req=urllib.request.Request(base+sep+'audience=cgp-control-plane-v3-action',headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
+          with urllib.request.urlopen(req,timeout=30) as response:
+              token=json.load(response)['value']
+          if len(token)<100: raise SystemExit('OIDC unavailable')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as handle:
+              handle.write('CGP_ACTION_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Validate, build and launch SoilBin benchmark through Cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          python control-plane-payloads/soilbin-q1-v1/launch_soilbin_cloudflare.py
+
+      - name: Publish SoilBin launch receipt
+        if: always()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, urllib.request
+          p=os.environ.get('SOILBIN_RECEIPT_PATH','')
+          if p and pathlib.Path(p).exists():
+              r=json.loads(pathlib.Path(p).read_text(encoding='utf-8'))
+              body=("## SOILBIN Q1/Q2 V1 LAUNCH ACCEPTED\n\n"
+                    f"- Run: `{os.environ['GITHUB_RUN_ID']}`\n- Account: `{r['account_id']} / {r['owner']}`\n"
+                    f"- Kernel: `{r['kernel_ref']}`\n- Notebook SHA256: `{r['notebook_sha256']}`\n"
+                    "- CPU only: `true`\n- GPU: `false`\n- SAVE_AND_RUN_ALL: `accepted`\n")
+          else:
+              body=f"## SOILBIN Q1/Q2 V1 LAUNCH FAILED\n\n- Run: `{os.environ['GITHUB_RUN_ID']}`\n- SAVE_AND_RUN_ALL: `not accepted`\n"
+          req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/33/comments",data=json.dumps({'body':body}).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'soilbin-launch-receipt/1.0'})
+          with urllib.request.urlopen(req,timeout=30): pass
+          PY
