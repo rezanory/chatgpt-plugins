@@ -3,6 +3,12 @@ name: pneumonia-v17-m07-continuation-20260914
 on:
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      recovery:
+        description: One-time recovery gate after a pre-provider continuation failure
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -15,7 +21,13 @@ concurrency:
 
 jobs:
   launch-m07-continuation:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914D_M07_LOCKED_TEST_DIAGNOSTICS_FIX1' }}
+    if: >-
+      ${{ (github.event_name == 'issue_comment' &&
+          github.event.issue.number == 33 &&
+          github.event.comment.user.id == 62356000 &&
+          github.event.comment.body == 'PNEUMONIA_V17_D260914D_M07_LOCKED_TEST_DIAGNOSTICS_FIX1') ||
+          (github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_DATASET_HANDLE_FIX1') }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -216,9 +228,12 @@ jobs:
           custom = custom.replace("RECIPE_FP", RECIPE_FP, 1)
           notebook["cells"][12]["source"] = custom.splitlines(keepends=True)
           notebook["cells"] = notebook["cells"][:13] + notebook["cells"][14:24]
+          # The canonical notebook derives a full handle as owner/slug.  Keep
+          # the persisted dataset slug unqualified to avoid owner duplication.
+          persist_slug = PERSIST_HANDLE.split("/", 1)[1]
           for cell in notebook["cells"][:2]:
               source = "".join(cell.get("source", []))
-              source = source.replace('"m07-multires-gate-run-safe-v17"', json.dumps(PERSIST_HANDLE))
+              source = source.replace('"m07-multires-gate-run-safe-v17"', json.dumps(persist_slug))
               cell["source"] = source.splitlines(keepends=True)
           notebook.setdefault("metadata", {})["cgp_continuation"] = {
               "schema": "m07.d260914d.continuation.builder.v1",
