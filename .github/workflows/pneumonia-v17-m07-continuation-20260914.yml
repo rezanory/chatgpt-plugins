@@ -279,7 +279,7 @@ jobs:
               "provider": "kaggle", "operation_class": "compute", "account_id": "kg-03",
               "purpose": "d260914d M07 continuation after exact final-five-fold PASS; reuse persisted folds, run OOF/one-time Locked Test/diagnostics/figures/XAI/casebook/external/final gate; Phase2 remains locked.",
               "service": "kernels.KernelsApiService", "method": "SaveKernel",
-              "body": {"slug": "rezanory/m07-locked-test-diagnostics-fix1-20260914", "newTitle": "M07 Locked Test Diagnostics Fix1 20260914", "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": ["paultimothymooney/chest-xray-pneumonia"]},
+              "body": {"slug": "rezanory/m07-locked-test-diagnostics-fix1-20260914", "newTitle": "M07 Locked Test Diagnostics Fix1 20260914", "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": ["paultimothymooney/chest-xray-pneumonia", "rezanory/m07-final-5fold-fix2-d260914d"]},
           }
           req = urllib.request.Request(endpoint, data=json.dumps(payload, separators=(",", ":")).encode(), method="POST", headers={"Authorization": "Bearer " + os.environ["CGP_ACTION_OIDC_TOKEN"], "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "pneumonia-v17-continuation/1.0"})
           try:
