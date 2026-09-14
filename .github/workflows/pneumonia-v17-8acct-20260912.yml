@@ -183,3 +183,282 @@ jobs:
         run: |
           if($env:CGP_OK_COUNT-ne'3'){throw "d260914d M07 Stage-1 incomplete: accepted=$env:CGP_OK_COUNT/3"}
           Write-Host 'd260914d M07 Stage-1 3/3 SAVE_AND_RUN_ALL accepted via allowlisted OIDC workflow.'
+
+  confirm-m07-stageb:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914D_M07_STAGEB_CONFIRMATION_FOLD3' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout canonical main source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Build exact Stage-B confirmation notebook from sealed Stage-1 evidence
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, pathlib, re, urllib.request
+
+          REPO = "rezanory/chatgpt-plugins"
+          COMMENTS = f"https://api.github.com/repos/{REPO}/issues/33/comments"
+          headers = {
+              "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "m07-stageb-builder/1.0",
+          }
+
+          def get_page(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  return json.loads(response.read().decode("utf-8", "replace")), response.headers
+
+          comments = []
+          url = COMMENTS + "?per_page=100&since=2026-09-14T10:00:00Z"
+          while url:
+              page, response_headers = get_page(url)
+              comments.extend(page)
+              link = response_headers.get("Link", "")
+              next_url = None
+              for part in link.split(","):
+                  if 'rel="next"' in part:
+                      next_url = part.split(";", 1)[0].strip().strip("<>")
+              url = next_url
+
+          rows = []
+          for comment in comments:
+              body = str(comment.get("body", ""))
+              if "CONTROL PLANE V3 QUERY PASS" not in body:
+                  continue
+              match = re.search(r"```json\s*(.*?)\s*```", body, re.S)
+              if not match:
+                  continue
+              try:
+                  receipt = json.loads(match.group(1))
+                  request_id = str(receipt.get("request_id", ""))
+                  if not (request_id.startswith("d260914d-m07-w") and "-metrics-json-" in request_id):
+                      continue
+                  result = receipt["result"]["result"]
+                  for entry in result["files"]:
+                      value = entry["json"]
+                      rows.append({
+                          "kernel_ref": result["kernel_ref"],
+                          "file_name": entry["file_name"],
+                          "candidate_id": int(value["candidate_id"]),
+                          "fold": int(value["fold"]),
+                          "candidate_source": value["candidate_source"],
+                          "metrics": value["metrics"],
+                          "run_fingerprint": value["run_fingerprint"],
+                          "artifact_sha256": value["artifact_sha256"],
+                          "code_sha256": value["run_contract"]["code_sha256"],
+                          "split_fingerprint": value["split_fingerprint"],
+                          "locked_test_used": bool(value["locked_test_used"]),
+                          "external_used": bool(value["external_used"]),
+                      })
+              except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                  continue
+
+          expected_pairs = {(candidate, fold) for candidate in range(8) for fold in (1, 2)}
+          pairs = {(row["candidate_id"], row["fold"]) for row in rows}
+          if len(rows) != 16 or pairs != expected_pairs:
+              raise SystemExit(f"Stage-1 exact fan-in failed: rows={len(rows)} pairs={sorted(pairs)}")
+          if any(row["locked_test_used"] or row["external_used"] for row in rows):
+              raise SystemExit("Stage-1 evidence illegally consumed Locked Test or external data")
+          code_shas = {row["code_sha256"] for row in rows}
+          split_shas = {row["split_fingerprint"] for row in rows}
+          if code_shas != {"d099b6e51c243b3c489f0a280ca247971e84b1cf1c504cba2a51028c93fba27f"}:
+              raise SystemExit(f"Stage-1 code identity mismatch: {sorted(code_shas)}")
+          if split_shas != {"896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"}:
+              raise SystemExit(f"Stage-1 split identity mismatch: {sorted(split_shas)}")
+          rows.sort(key=lambda row: (row["candidate_id"], row["fold"]))
+          TOP_IDS = [2, 0, 7]
+          STAGE1_EXPECTED_CODE = "d099b6e51c243b3c489f0a280ca247971e84b1cf1c504cba2a51028c93fba27f"
+          STAGE1_EXPECTED_SPLIT = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
+
+          notebook_path = pathlib.Path("control-plane-payloads/pneumonia-v17-20260912/PNEUMONIA_MASTER_M01_M12_M07_GATE_RUN_SAFE_V1_7.ipynb")
+          notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+          if len(notebook.get("cells", [])) < 13:
+              raise SystemExit("canonical V1.7 notebook shape is incomplete")
+          hpo_source = "".join(notebook["cells"][12].get("source", []))
+          marker = "# Candidate generation — deterministic."
+          if marker not in hpo_source:
+              raise SystemExit("HPO candidate-generation marker missing")
+          prefix = hpo_source.split(marker, 1)[0]
+          compile(prefix, "<m07-stageb-hpo-definitions>", "exec")
+          stage1_blob = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+          custom = """
+          # M07 d260914d Stage-B confirmation: exact Fold 3 for Stage-A Top-3.
+          # Stage-1 rows are read-only, independently sealed receipts; no Test data is loaded.
+          STAGE1_ROWS = json.loads(STAGE1_BLOB)
+          STAGE1_EXPECTED_CODE = "d099b6e51c243b3c489f0a280ca247971e84b1cf1c504cba2a51028c93fba27f"
+          STAGE1_EXPECTED_SPLIT = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
+          if len(STAGE1_ROWS) != 16:
+              raise ValueError("M07_STAGE1_FANIN_NOT_EXACT")
+          if {row["split_fingerprint"] for row in STAGE1_ROWS} != {STAGE1_EXPECTED_SPLIT}:
+              raise ValueError("M07_STAGE1_SPLIT_FINGERPRINT_MISMATCH")
+          if {row["code_sha256"] for row in STAGE1_ROWS} != {STAGE1_EXPECTED_CODE}:
+              raise ValueError("M07_STAGE1_CODE_SHA_MISMATCH")
+          TOP_IDS = [2, 0, 7]
+          _candidates = {int(candidate["candidate_id"]): candidate for candidate in generate_confirmation_candidates()}
+          if set(_candidates) != set(range(8)):
+              raise ValueError("M07_CANDIDATE_GENERATION_IDENTITY_MISMATCH")
+          stage1_by_candidate = {}
+          for row in STAGE1_ROWS:
+              if row["candidate_id"] not in stage1_by_candidate:
+                  stage1_by_candidate[row["candidate_id"]] = []
+              stage1_by_candidate[row["candidate_id"]].append({"metrics": row["metrics"], "fold": row["fold"]})
+          for candidate_id in range(8):
+              if sorted(item["fold"] for item in stage1_by_candidate.get(candidate_id, [])) != [1, 2]:
+                  raise ValueError(f"M07_STAGE1_CANDIDATE_FOLDS_INCOMPLETE:{candidate_id}")
+
+          fold3_payloads = {}
+          for candidate_id in TOP_IDS:
+              fold3_payload = run_or_restore_hpo_candidate_fold(_candidates[candidate_id], 3)
+              if fold3_payload.get("status") != "SUCCESS" or int(fold3_payload.get("fold", -1)) != 3:
+                  raise ValueError(f"M07_STAGEB_FOLD3_NOT_SUCCESS:{candidate_id}")
+              if fold3_payload.get("locked_test_used") or fold3_payload.get("external_used"):
+                  raise ValueError(f"M07_STAGEB_FORBIDDEN_DATA_ACCESS:{candidate_id}")
+              if fold3_payload.get("run_contract", {}).get("code_sha256") != STAGE1_EXPECTED_CODE:
+                  raise ValueError(f"M07_STAGEB_CODE_SHA_MISMATCH:{candidate_id}")
+              if fold3_payload.get("split_fingerprint") != STAGE1_EXPECTED_SPLIT:
+                  raise ValueError(f"M07_STAGEB_SPLIT_FINGERPRINT_MISMATCH:{candidate_id}")
+              fold3_payloads[candidate_id] = fold3_payload
+
+          confirmation_rows = []
+          for candidate_id in TOP_IDS:
+              all_folds = stage1_by_candidate[candidate_id] + [{"metrics": fold3_payloads[candidate_id]["metrics"], "fold": 3}]
+              confirmation_rows.append(aggregate_candidate_results(_candidates[candidate_id], all_folds, phase="CONFIRMATION_FOLDS_1_2_3"))
+          confirmation_ranked = sorted(confirmation_rows, key=robust_rank_tuple, reverse=True)
+          for rank, row in enumerate(confirmation_ranked, start=1):
+              row["confirmation_rank"] = int(rank)
+          winner = confirmation_ranked[0]
+          winner_candidate_id = int(winner["candidate_id"])
+          winner_candidate = _candidates[winner_candidate_id]
+          shared_params = candidate_params(winner_candidate)
+          confirmation_df = pd.DataFrame(confirmation_ranked)
+          confirmation_df.to_csv(HPO_ROOT / "M07_HPO_CONFIRMATION_RANKING.csv", index=False)
+          (HPO_ROOT / "M07_HPO_CONFIRMATION_RANKING.json").write_text(json.dumps(json_safe(confirmation_ranked), indent=2), encoding="utf-8")
+          receipt = {
+              "schema": "m07.confirmation_hpo.stageb.v1",
+              "status": "PASS",
+              "campaign_id": "d260914d",
+              "stage": "CONFIRMATION_FOLD_3_AND_RANK_SEAL",
+              "stage1_rows": STAGE1_ROWS,
+              "stage1_code_sha256": STAGE1_EXPECTED_CODE,
+              "split_fingerprint": STAGE1_EXPECTED_SPLIT,
+              "stage_a_top_ids": TOP_IDS,
+              "fold3_run_fingerprints": {str(candidate_id): fold3_payloads[candidate_id]["run_fingerprint"] for candidate_id in TOP_IDS},
+              "confirmation_ranking": json_safe(confirmation_ranked),
+              "winner_candidate_id": winner_candidate_id,
+              "winner_candidate_source": winner_candidate["source"],
+              "winner_params": json_safe(shared_params),
+              "f2_policy": "REPORT_ONLY_NOT_USED_FOR_SELECTION",
+              "locked_test_used": False,
+              "external_used": False,
+              "phase2_unlocked": False,
+          }
+          atomic_write_json(HPO_ROOT / "M07_HPO_STAGEB_CONFIRMATION_RECEIPT.json", receipt)
+          for source in (HPO_ROOT / "M07_HPO_CONFIRMATION_RANKING.csv", HPO_ROOT / "M07_HPO_CONFIRMATION_RANKING.json", HPO_ROOT / "M07_HPO_STAGEB_CONFIRMATION_RECEIPT.json"):
+              shutil.copy2(source, PERSIST_ROOT / source.name)
+          _persist_upload(note="M07 d260914d Stage-B Fold-3 confirmation and exact Top-3 ranking sealed; Phase2 and Locked Test remain locked", strict=PERSIST_STRICT)
+          print("M07_STAGEB_CONFIRMATION_PASS", json.dumps({"winner_candidate_id": winner_candidate_id, "top_ids": TOP_IDS, "fold3_run_fingerprints": receipt["fold3_run_fingerprints"]}, ensure_ascii=False))
+          """
+          custom = custom.replace("STAGE1_BLOB", repr(stage1_blob), 1)
+          notebook["cells"][12]["source"] = (prefix + custom).splitlines(keepends=True)
+          notebook["cells"] = notebook["cells"][:13]
+          # Force a fresh, account-owned Stage-B persistence dataset; never mutate Stage-1 datasets.
+          for cell in notebook["cells"][:2]:
+              source = "".join(cell.get("source", []))
+              source = source.replace('"m07-multires-gate-run-safe-v17"', '"m07-hpo-confirm-f3-d260914d"')
+              cell["source"] = source.splitlines(keepends=True)
+          notebook.setdefault("metadata", {})["cgp_stageb"] = {
+              "schema": "m07.d260914d.stageb.builder.v1",
+              "campaign_id": "d260914d",
+              "stage_a_top_ids": TOP_IDS,
+              "stage_b_fold": 3,
+              "locked_test_used": False,
+              "phase2_unlocked": False,
+              "stage1_fanin": 16,
+              "stage1_code_sha256": STAGE1_EXPECTED_CODE,
+              "split_fingerprint": STAGE1_EXPECTED_SPLIT,
+          }
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "PNEUMONIA_V17_D260914D_M07_STAGEB_CONFIRMATION_FOLD3.ipynb"
+          out.write_text(json.dumps(notebook, ensure_ascii=False, indent=1), encoding="utf-8")
+          print("M07_STAGEB_NOTEBOOK_BUILT", out.name, "stage1_rows=16", "top_ids=2,0,7")
+          '@
+          $script | & $python -
+          if($LASTEXITCODE -ne 0){throw 'Stage-B notebook build/Stage-1 evidence validation failed'}
+          "CGP_NOTEBOOK_PATH=$env:RUNNER_TEMP\PNEUMONIA_V17_D260914D_M07_STAGEB_CONFIRMATION_FOLD3.ipynb" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Request trusted action OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$oidc.value
+          if($token.Length-lt100){throw 'GitHub OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Submit one non-duplicating Stage-B confirmation kernel
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, pathlib, urllib.request, urllib.error
+          endpoint = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
+          notebook = pathlib.Path(os.environ["CGP_NOTEBOOK_PATH"]).read_text(encoding="utf-8")
+          payload = {
+              "request_id": "pneumonia-v17-d260914d-m07-stageb-confirmation-fold3-v1",
+              "provider": "kaggle",
+              "operation_class": "compute",
+              "account_id": "kg-03",
+              "purpose": "d260914d M07 Stage-B confirmation Fold 3 for exact Stage-A Top-3 candidates [2,0,7]; no Locked Test; Phase2 locked; fresh Stage-B persistence dataset.",
+              "service": "kernels.KernelsApiService",
+              "method": "SaveKernel",
+              "body": {
+                  "slug": "rezanory/pneumonia-v1-7-d260914d-m07-confirm-f3",
+                  "newTitle": "Pneumonia V1.7 d260914d M07 Confirm Fold3 Top3",
+                  "text": notebook,
+                  "language": "PYTHON",
+                  "kernelType": "NOTEBOOK",
+                  "kernelExecutionType": "SAVE_AND_RUN_ALL",
+                  "isPrivate": True,
+                  "enableGpu": True,
+                  "enableInternet": True,
+                  "datasetDataSources": ["paultimothymooney/chest-xray-pneumonia"],
+              },
+          }
+          req = urllib.request.Request(endpoint, data=json.dumps(payload, separators=(",", ":")).encode(), method="POST", headers={"Authorization": "Bearer " + os.environ["CGP_ACTION_OIDC_TOKEN"], "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "pneumonia-v17-stageb-confirmation/1.0"})
+          try:
+              with urllib.request.urlopen(req, timeout=240) as response:
+                  result = json.loads(response.read().decode("utf-8", "replace") or "{}")
+          except urllib.error.HTTPError as error:
+              raise SystemExit(f"Stage-B SaveKernel HTTP {error.code}: {error.read(4000).decode('utf-8', 'replace')[:1800]}")
+          if not result.get("ok"):
+              raise SystemExit("Stage-B action broker returned ok=false")
+          print(json.dumps({"accepted": True, "provider_ref": result.get("provider_ref") or (result.get("result") or {}).get("ref"), "broker_run_id": result.get("broker_run_id"), "broker_sha": result.get("broker_sha")}, ensure_ascii=False))
+          '@
+          $script | & $python -
+          if($LASTEXITCODE -ne 0){throw 'Stage-B confirmation SaveKernel submission failed'}
+
+      - name: Publish Stage-B launch receipt
+        if: always()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $body="## PNEUMONIA V1.7 d260914d M07 STAGE-B CONFIRMATION LAUNCH`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Campaign: ``d260914d```n- Stage: ``Fold 3 confirmation for Stage-A Top-3 [2,0,7]```n- Kernel: ``rezanory/pneumonia-v1-7-d260914d-m07-confirm-f3```n- Scientific guard: ``Locked Test not executed; Phase2 remains locked```n- Stage-1 fan-in: ``16/16 exact rows; code/split fingerprints verified```n- This receipt means ``SAVE_AND_RUN_ALL accepted``; final PASS requires the Kaggle kernel completion receipt and Stage-B ranking artifact."
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
