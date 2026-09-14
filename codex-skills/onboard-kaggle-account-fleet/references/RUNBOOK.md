@@ -59,6 +59,14 @@ Require:
 
 Report exact `N/N`; do not round partial success up to ready.
 
+## Readiness incident discrimination
+
+- Compare every probed account ID and owner with `plugins/kaggle/config/accounts.json` and the active runtime map. Do not trust dated `expected_owner` matrices; `kg-01` may be represented by the runtime route `master`.
+- A Cloudflare 401/403 is not sufficient evidence of a bad Kaggle token. Reconcile the deployed OIDC `workflow_ref`, event, ref, actor, and trust-entry history first.
+- Once temporary readiness trust has been removed during cleanup, keep it removed. Use the permanent allowlisted read broker for later per-account probes instead of re-authorizing the retired batch workflow.
+- Preserve one durable result per account. Aggregate/fail-fast execution must not hide which account or policy check failed.
+- If an issue query has no matching run or receipt, check event delivery and provider state. Retry only a read-only query, with a new request ID, after proving the first request caused no provider mutation.
+
 ## Cleanup phase
 
 After success:

@@ -56,6 +56,8 @@ Read `references/ARCHITECTURE.md` before changing Worker topology. Read `referen
 
 Fix forward only. Do not delete working credentials because a later validation fails. If a batch partially succeeds, reconcile Cloudflare secret-name inventory and registry state, then resume only missing accounts. Preserve successful shards while repairing a failed shard.
 
+Do not interpret an aggregate 401/403 as a credential failure until OIDC workflow/ref/event admission is reconciled. After temporary onboarding trust is removed, use the permanent allowlisted per-account read path; do not re-authorize a retired readiness workflow merely to make its old job green. A request comment without a matching workflow run or durable receipt is missing transport evidence, not a failed account.
+
 If Cloudflare or GitHub limits have changed, stop using cached assumptions and re-check official current limits before selecting topology.
 
 ## Output
