@@ -269,7 +269,11 @@ def resolve_kaggle_kernel_ref(payload: dict[str, Any]) -> dict[str, Any]:
         title = f"M07 Gate 224 Package - {owner}"
     title_matches: list[dict[str, Any]] = []
     if not exact and title:
-        title_matches = [item for item in kernels if str(item.get("title", "")).strip().lower() == title.lower()]
+        title_matches = [
+            item
+            for item in kernels
+            if str(item.get("title", "")).strip().lower() == title.lower()
+        ]
 
     candidates = exact or title_matches
     not_before = str(payload.get("not_before", "")).strip()
@@ -278,7 +282,11 @@ def resolve_kaggle_kernel_ref(payload: dict[str, Any]) -> dict[str, Any]:
 
     if not candidates:
         recent = [
-            {"ref": str(item.get("ref", "")), "title": str(item.get("title", "")), "lastRunTime": str(item.get("lastRunTime", ""))}
+            {
+                "ref": str(item.get("ref", "")),
+                "title": str(item.get("title", "")),
+                "lastRunTime": str(item.get("lastRunTime", "")),
+            }
             for item in kernels[:8]
         ]
         raise QueryError(
@@ -380,7 +388,11 @@ def kaggle_output_json_files(payload: dict[str, Any]) -> Any:
         raw_files = result.get("files")
         if not isinstance(raw_files, list):
             raise QueryError("ListKernelSessionOutput files list missing")
-        signature = tuple(str(item.get("fileName", "")) for item in raw_files if isinstance(item, dict))
+        signature = tuple(
+            str(item.get("fileName", ""))
+            for item in raw_files
+            if isinstance(item, dict)
+        )
         if page > 1 and signature and signature == previous_signature:
             raise QueryError("ListKernelSessionOutput pagination did not advance")
         previous_signature = signature
@@ -420,7 +432,13 @@ def resolve_kaggle_executable() -> str | None:
         candidate = Path(scripts) / "kaggle.exe"
         if candidate.exists():
             return str(candidate)
-    user_scripts = Path(os.environ.get("APPDATA", "")) / "Python" / f"Python{sys.version_info.major}{sys.version_info.minor}" / "Scripts" / "kaggle.exe"
+    user_scripts = (
+        Path(os.environ.get("APPDATA", ""))
+        / "Python"
+        / f"Python{sys.version_info.major}{sys.version_info.minor}"
+        / "Scripts"
+        / "kaggle.exe"
+    )
     return str(user_scripts) if user_scripts.exists() else None
 
 
@@ -431,7 +449,13 @@ def local_kaggle_kernel_status(payload: dict[str, Any]) -> Any:
     kernel_ref = str(payload.get("kernel_ref", ""))
     if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", kernel_ref):
         raise QueryError("invalid kernel_ref")
-    completed = subprocess.run([executable, "kernels", "status", kernel_ref], capture_output=True, text=True, timeout=90, check=False)
+    completed = subprocess.run(
+        [executable, "kernels", "status", kernel_ref],
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
     output = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
     if completed.returncode != 0:
         raise QueryError(f"local Kaggle status failed: {sanitize(output.strip())}")
@@ -464,7 +488,13 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
         result = kaggle_query(payload)
     else:
         raise QueryError("provider must be github, cloudflare, or kaggle")
-    return {"ok": True, "request_id": request_id, "provider": provider, "read_only": True, "result": bounded(result)}
+    return {
+        "ok": True,
+        "request_id": request_id,
+        "provider": provider,
+        "read_only": True,
+        "result": bounded(result),
+    }
 
 
 def main() -> int:
