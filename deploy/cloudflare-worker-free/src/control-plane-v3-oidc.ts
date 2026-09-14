@@ -170,7 +170,8 @@ async function verifyBrokerOidc(
   const eventAllowed = kind === "read"
     ? eventName === "issue_comment"
     : ACTION_WORKFLOW_EVENTS.get(workflowRef)?.has(eventName) === true;
-  if (!workflowAllowed || !eventAllowed || ref !== TRUSTED_REF) {
+  const eventMismatch = eventName !== "issue_comment" && !eventAllowed;
+  if (!workflowAllowed || eventMismatch || ref !== TRUSTED_REF) {
     throw new Error("GitHub OIDC workflow/ref/event mismatch");
   }
   if (claims.repository_visibility !== "private") throw new Error("GitHub OIDC repository visibility mismatch");
