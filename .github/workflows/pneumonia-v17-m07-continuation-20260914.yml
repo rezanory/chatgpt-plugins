@@ -31,7 +31,9 @@ jobs:
           (github.event_name == 'workflow_dispatch' &&
           github.event.inputs.recovery == 'M07_DATASET_INPUT_ATTACH_FIX1') ||
           (github.event_name == 'workflow_dispatch' &&
-          github.event.inputs.recovery == 'M07_PERSISTENCE_ARCHIVE_LAYOUT_FIX1') }}
+          github.event.inputs.recovery == 'M07_PERSISTENCE_ARCHIVE_LAYOUT_FIX1') ||
+          (github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_DIAGNOSTICS_IMPORT_FIX1') }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -204,6 +206,9 @@ jobs:
           }
           custom = """
           # M07 d260914d continuation. Final-five-fold artifacts are immutable and reused.
+          # Diagnostics/figure cells run after the HPO figure cell is intentionally
+          # omitted during continuation surgery; keep pyplot available globally.
+          import matplotlib.pyplot as plt
           STAGEB_WINNER = json.loads(STAGEB_WINNER_BLOB)
           STAGEB_FOLD_FINGERPRINTS = json.loads(STAGEB_FOLD_FINGERPRINTS_BLOB)
           RECIPE_PATH = OUTPUT_ROOT / "FROZEN_M07_CONFIRMED_RECIPE.json"
