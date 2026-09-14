@@ -473,3 +473,229 @@ jobs:
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
           $body="## PNEUMONIA V1.7 d260914d M07 STAGE-B CONFIRMATION FIX1 ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Campaign: ``d260914d```n- Stage: ``Fold 3 confirmation for Stage-A Top-3 [2,0,7]```n- Kernel: ``rezanory/m07-confirm-f3-fix1-20260914```n- Supersedes: ``rezanory/pneumonia-v1-7-d260914d-m07-confirm-fold3-top3`` (errored before training)`n- Scientific guard: ``Locked Test not executed; Phase2 remains locked```n- Stage-1 fan-in target: ``16/16 exact rows with code/split fingerprint verification```n- This is an orchestration receipt only; PASS requires a successful builder, an authoritative SaveKernel response, Kaggle completion, and the Stage-B ranking artifact."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
+
+  launch-m07-final5:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914D_M07_FINAL_FIVEFOLD' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout canonical main source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Build final five-fold notebook from Stage-B PASS receipt
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, pathlib, re, urllib.request
+
+          REPO = "rezanory/chatgpt-plugins"
+          COMMENTS = f"https://api.github.com/repos/{REPO}/issues/33/comments"
+          headers = {
+              "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "m07-final-fivefold-builder/1.0",
+          }
+          def get_page(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  return json.loads(response.read().decode("utf-8", "replace")), response.headers
+          comments = []
+          url = COMMENTS + "?per_page=100&since=2026-09-14T14:00:00Z"
+          while url:
+              page, response_headers = get_page(url)
+              comments.extend(page)
+              next_url = None
+              for part in response_headers.get("Link", "").split(","):
+                  if 'rel="next"' in part:
+                      next_url = part.split(";", 1)[0].strip().strip("<>")
+              url = next_url
+
+          ranking = None
+          ranking_kernel_ref = None
+          stageb_receipt_seen = False
+          for comment in comments:
+              body = str(comment.get("body", ""))
+              if "m07.confirmation_hpo.stageb.v1" in body and '"status": "PASS"' in body:
+                  if re.search(r'"stage_a_top_ids":\s*\[\s*2,\s*0,\s*7\s*\]', body) and '"stage1_code_sha256": "d099b6e51c243b3c489f0a280ca247971e84b1cf1c504cba2a51028c93fba27f"' in body:
+                      stageb_receipt_seen = True
+              if "CONTROL PLANE V3 QUERY PASS" not in body or "d260914d-m07-heartbeat-ranking-20260914T1429Z-r1" not in body:
+                  continue
+              match = re.search(r"```json\s*(.*?)\s*```", body, re.S)
+              if not match:
+                  continue
+              outer = json.loads(match.group(1))
+              result = outer["result"]["result"]
+              ranking_kernel_ref = result.get("kernel_ref")
+              files = result.get("files", [])
+              if len(files) != 1 or not str(files[0].get("file_name", "")).endswith("M07_HPO_CONFIRMATION_RANKING.json"):
+                  raise SystemExit("Stage-B ranking artifact identity mismatch")
+              ranking = files[0].get("json")
+          if not stageb_receipt_seen:
+              raise SystemExit("Independent Stage-B PASS receipt not found")
+          if ranking_kernel_ref != "rezanory/m07-confirm-fold3-fix1-20260914":
+              raise SystemExit(f"Stage-B kernel identity mismatch: {ranking_kernel_ref}")
+          if not isinstance(ranking, list) or [int(row.get("candidate_id", -1)) for row in ranking] != [2, 0, 7]:
+              raise SystemExit("Stage-B ranking order is not exact [2,0,7]")
+          if any(int(row.get("n_folds", -1)) != 3 or row.get("folds") != [1, 2, 3] for row in ranking):
+              raise SystemExit("Stage-B confirmation fold fan-in is not exact")
+          winner = ranking[0]
+          if int(winner["candidate_id"]) != 2:
+              raise SystemExit("Stage-B winner candidate drift")
+          if set(winner.get("params", {})) != {"batch_size", "head_lr", "finetune_lr", "weight_decay", "dropout", "patience", "lr_schedule", "min_lr", "head_warmup_epochs", "finetune_warmup_epochs", "edge_filters", "edge_max_gate", "cbam_reduction"}:
+              raise SystemExit("Stage-B winner params schema mismatch")
+          stage1_code = "d099b6e51c243b3c489f0a280ca247971e84b1cf1c504cba2a51028c93fba27f"
+          split_fp = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
+          fold_fingerprints = {
+              "C00_F01": "bd8d58cc1b9b2b66a748f70f11511d70a6c7355b3b1ae25591c936914bdb5d87",
+              "C00_F02": "0a0fa5668cf82f1606f62dce1b6bbb3709285003b870cdc070c82bdf1828b60a",
+              "C00_F03": "b401f91d6ecea18d46473d4d1e0cbe23b4ceab4f56191f83174f4c58225a5213",
+              "C02_F01": "f70052f832d06b9b3b2183ca70b43bac16b170e808670578bb752223daffe058",
+              "C02_F02": "937e6e68388c082410f78f79ab33cb0b9e45bed88f6b00a13e19fab68ff021ee",
+              "C02_F03": "af2ede36c7f9630a35bcf68f7f9bb11c7f9738d860360ebc7243ed168b03f2d0",
+              "C07_F01": "46e71986c7bf9cd21c825a0f90a9489624e500412e7ac2f32f557e53a5db9765",
+              "C07_F02": "a0bff12ea6a99cf21be22e59cebb03b0057a7dcd48e8d462f84c059cbdd78c2c",
+              "C07_F03": "eb4d06d0c3f657c063fc0338a6635f005cc75449e4dae845037533f61eefba63",
+          }
+
+          notebook_path = pathlib.Path("control-plane-payloads/pneumonia-v17-20260912/PNEUMONIA_MASTER_M01_M12_M07_GATE_RUN_SAFE_V1_7.ipynb")
+          notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+          if len(notebook.get("cells", [])) < 16:
+              raise SystemExit("canonical V1.7 notebook shape is incomplete")
+          winner_blob = json.dumps(winner, ensure_ascii=False, separators=(",", ":"))
+          fp_blob = json.dumps(fold_fingerprints, ensure_ascii=False, separators=(",", ":"))
+          custom = """
+          # M07 d260914d final five-fold gate. Stage-B winner is frozen; no HPO/Test/External here.
+          STAGEB_WINNER = json.loads(STAGEB_WINNER_BLOB)
+          STAGEB_FOLD_FINGERPRINTS = json.loads(STAGEB_FOLD_FINGERPRINTS_BLOB)
+          shared_params = STAGEB_WINNER["params"]
+          winner_candidate_id = int(STAGEB_WINNER["candidate_id"])
+          winner_candidate_source = STAGEB_WINNER["candidate_source"]
+          confirmation_ranked = [STAGEB_WINNER]
+          EDGE_FILTERS = int(shared_params["edge_filters"])
+          EDGE_MAX_GATE = float(shared_params["edge_max_gate"])
+          CBAM_REDUCTION = int(shared_params["cbam_reduction"])
+          recipe_core = {
+              "schema": "m07.final.confirmed.recipe.v1.6",
+              "experiment_contract": make_run_contract(
+                  "M07_CONFIRMED_HPO_RECIPE", model_id="M07", resolution=IMAGE_SIZE,
+                  params=shared_params, seed=HPO_CANDIDATE_SEED,
+                  head_epochs=HPO_HEAD_EPOCHS, finetune_epochs=HPO_FINETUNE_EPOCHS,
+                  extra={"candidate_fold_contracts": STAGEB_FOLD_FINGERPRINTS},
+              ),
+              "model_id": "M07", "image_size": IMAGE_SIZE,
+              "split_fingerprint": EXPECTED_SPLIT_FINGERPRINT,
+              "candidate_generation_seed": HPO_CANDIDATE_SEED,
+              "hpo_training_seed_base": HPO_TRAIN_SEED_BASE,
+              "candidate_count": HPO_CANDIDATES,
+              "screening_folds": list(HPO_SCREEN_FOLDS),
+              "confirmation_fold": HPO_CONFIRM_FOLD,
+              "top_k": HPO_TOP_K,
+              "hpo_head_epochs": HPO_HEAD_EPOCHS,
+              "hpo_finetune_epochs": HPO_FINETUNE_EPOCHS,
+              "winner_candidate_id": winner_candidate_id,
+              "winner_candidate_source": winner_candidate_source,
+              "shared_training_params": shared_params,
+              "winner_robust_metrics": STAGEB_WINNER,
+              "ranking_contract": ["mean_min_dual_precision_recall", "worst_fold_min_dual_precision_recall", "mean_min_class_recall", "mean_min_class_precision", "mean_dual_precision_recall_score", "mean_mcc", "mean_balanced_accuracy", "mean_auroc", "lower_std_min_dual_precision_recall"],
+              "f2_policy": "REPORT_ONLY; excluded from threshold, checkpoint, early-stopping, HPO ranking and winner selection",
+              "fixed_flsd53": {"alpha": FLSD_ALPHA, "threshold": FLSD_THRESHOLD, "hard_gamma": FLSD_HARD_GAMMA, "easy_gamma": FLSD_EASY_GAMMA},
+              "cbam_spatial_kernel": CBAM_SPATIAL_KERNEL,
+              "locked_test_used": False, "external_used": False,
+              "stageb_kernel_ref": "rezanory/m07-confirm-fold3-fix1-20260914",
+              "stageb_code_sha256": "STAGE1_CODE_SHA",
+          }
+          recipe_blob = json.dumps(json_safe(recipe_core), sort_keys=True, ensure_ascii=False).encode("utf-8")
+          recipe_core["recipe_fingerprint_sha256"] = hashlib.sha256(recipe_blob).hexdigest()
+          recipe = recipe_core
+          if RECIPE_PATH.exists():
+              previous_recipe = json.loads(RECIPE_PATH.read_text(encoding="utf-8"))
+              if previous_recipe != json_safe(recipe):
+                  raise ValueError("FROZEN_RECIPE_CONFLICT: final five-fold recipe changed")
+          atomic_write_json(RECIPE_PATH, recipe)
+          print("M07_FINAL5_RECIPE_FROZEN", json.dumps({"winner_candidate_id": winner_candidate_id, "recipe_fingerprint": recipe["recipe_fingerprint_sha256"], "locked_test_used": False, "external_used": False}, ensure_ascii=False))
+          """
+          custom = custom.replace("STAGEB_WINNER_BLOB", repr(winner_blob), 1)
+          custom = custom.replace("STAGEB_FOLD_FINGERPRINTS_BLOB", repr(fp_blob), 1)
+          custom = custom.replace("STAGE1_CODE_SHA", stage1_code, 1)
+          notebook["cells"][12]["source"] = custom.splitlines(keepends=True)
+          notebook["cells"] = notebook["cells"][:13] + [notebook["cells"][14], notebook["cells"][15]]
+          for cell in notebook["cells"][:2]:
+              source = "".join(cell.get("source", []))
+              source = source.replace('"m07-multires-gate-run-safe-v17"', '"m07-final-5fold-d260914d"')
+              cell["source"] = source.splitlines(keepends=True)
+          notebook.setdefault("metadata", {})["cgp_final5"] = {
+              "schema": "m07.d260914d.final5.builder.v1",
+              "campaign_id": "d260914d", "winner_candidate_id": 2,
+              "stageb_kernel_ref": "rezanory/m07-confirm-fold3-fix1-20260914",
+              "stage1_code_sha256": stage1_code, "split_fingerprint": split_fp,
+              "locked_test_used": False, "external_used": False, "phase2_unlocked": False,
+          }
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "PNEUMONIA_V17_D260914D_M07_FINAL_FIVEFOLD.ipynb"
+          out.write_text(json.dumps(notebook, ensure_ascii=False, indent=1), encoding="utf-8")
+          print("M07_FINAL5_NOTEBOOK_BUILT", out.name, "winner=2", "cells=15")
+          '@
+          $builderOutput = @($script | & $python - 2>&1)
+          $builderCode = $LASTEXITCODE
+          if($builderCode -ne 0){throw ('M07_FINAL5_BUILDER_FAILURE=' + ($builderOutput -join "`n"))}
+          "CGP_NOTEBOOK_PATH=$env:RUNNER_TEMP\PNEUMONIA_V17_D260914D_M07_FINAL_FIVEFOLD.ipynb" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Request trusted action OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$oidc.value
+          if($token.Length-lt100){throw 'GitHub OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Submit final five-fold kernel
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, pathlib, urllib.request, urllib.error
+          endpoint = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
+          notebook = pathlib.Path(os.environ["CGP_NOTEBOOK_PATH"]).read_text(encoding="utf-8")
+          payload = {
+              "request_id": "pneumonia-v17-d260914d-m07-final-fivefold-v1",
+              "provider": "kaggle", "operation_class": "compute", "account_id": "kg-03",
+              "purpose": "d260914d M07 final five patient-locked folds using independent Stage-B PASS winner candidate 2; Locked Test, External and Phase2 remain locked.",
+              "service": "kernels.KernelsApiService", "method": "SaveKernel",
+              "body": {"slug": "rezanory/m07-final-5fold-20260914", "newTitle": "M07 Final 5fold 20260914", "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": ["paultimothymooney/chest-xray-pneumonia"]},
+          }
+          req = urllib.request.Request(endpoint, data=json.dumps(payload, separators=(",", ":")).encode(), method="POST", headers={"Authorization": "Bearer " + os.environ["CGP_ACTION_OIDC_TOKEN"], "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "pneumonia-v17-final-fivefold/1.0"})
+          try:
+              with urllib.request.urlopen(req, timeout=240) as response:
+                  result = json.loads(response.read().decode("utf-8", "replace") or "{}")
+          except urllib.error.HTTPError as error:
+              raise SystemExit(f"Final five-fold SaveKernel HTTP {error.code}: {error.read(4000).decode('utf-8', 'replace')[:1800]}")
+          if not result.get("ok"):
+              raise SystemExit("Final five-fold action broker returned ok=false")
+          print(json.dumps({"accepted": True, "provider_ref": result.get("provider_ref") or (result.get("result") or {}).get("ref"), "broker_run_id": result.get("broker_run_id"), "broker_sha": result.get("broker_sha")}, ensure_ascii=False))
+          '@
+          $script | & $python -
+          if($LASTEXITCODE -ne 0){throw 'Final five-fold SaveKernel submission failed'}
+
+      - name: Publish final five-fold launch receipt
+        if: always()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $body="## PNEUMONIA V1.7 d260914d M07 FINAL FIVE-FOLD ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kernel: ``rezanory/m07-final-5fold-20260914```n- Stage-B prerequisite: ``PASS; winner candidate 2; Top-3 [2,0,7]```n- Scientific guard: ``Locked Test, External Validation and Phase2 remain locked```n- This is an orchestration receipt only; PASS requires Kaggle completion plus exact five-fold and OOF artifacts."
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
