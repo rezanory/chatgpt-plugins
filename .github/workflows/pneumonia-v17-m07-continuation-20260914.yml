@@ -37,7 +37,11 @@ jobs:
 
           REPO = "rezanory/chatgpt-plugins"
           COMMENTS = f"https://api.github.com/repos/{REPO}/issues/33/comments"
-          HEAD_SHA = "85fa207e56ef6e2979db6fc051772172e1457729"
+          # The predecessor's launch identity is immutable.  The broker_sha on a
+          # later read is the deployed read-broker identity and can legitimately
+          # rotate, so it must be validated as a real SHA and bound to the
+          # independently recorded artifact evidence below.
+          PREDECESSOR_LAUNCH_SHA = "85fa207e56ef6e2979db6fc051772172e1457729"
           FINAL5_REF = "rezanory/m07-final-5fold-fix2-20260914"
           PERSIST_HANDLE = "rezanory/m07-final-5fold-fix2-d260914d"
           RECIPE_FP = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
@@ -66,6 +70,9 @@ jobs:
 
           final5_complete = False
           final5_status_evidence = None
+          final5_query_broker_sha = None
+          complete_status_candidates = []
+          artifact_candidates = []
           artifact_green = None
           for comment in comments:
               body = str(comment.get("body", ""))
@@ -78,19 +85,19 @@ jobs:
                           resolution = result["resolution"]
                           telemetry = result["telemetry"]
                           status = telemetry["result"].get("status")
+                          broker_sha = str(telemetry.get("broker_sha", "")).lower()
                           if (outer.get("ok") is True and outer.get("read_only") is True
                                   and resolution.get("requested_ref") == FINAL5_REF
                                   and resolution.get("resolved_ref") == FINAL5_REF
                                   and resolution.get("matched_by") == "exact_ref"
-                                  and telemetry.get("broker_sha") == HEAD_SHA
+                                  and re.fullmatch(r"[0-9a-f]{40}", broker_sha)
                                   and status == "COMPLETE"):
-                              final5_complete = True
-                              final5_status_evidence = {
+                              complete_status_candidates.append({
                                   "comment_id": comment.get("id"),
                                   "request_id": outer.get("request_id"),
                                   "broker_run_id": telemetry.get("broker_run_id"),
-                                  "broker_sha": telemetry.get("broker_sha"),
-                              }
+                                  "broker_sha": broker_sha,
+                              })
                       except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                           pass
               if "M07_FINAL5_ARTIFACTS_EXACT_GREEN" in body:
@@ -98,23 +105,44 @@ jobs:
                   if match:
                       try:
                           candidate = json.loads(match.group(1))
+                          candidate_broker_sha = str(candidate.get("broker_sha", "")).lower()
                           if (candidate.get("status") == "PASS"
                                   and candidate.get("kernel_ref") == FINAL5_REF
-                                  and candidate.get("broker_sha") == HEAD_SHA
+                                  and candidate.get("predecessor_launch_broker_sha") == PREDECESSOR_LAUNCH_SHA
+                                  and re.fullmatch(r"[0-9a-f]{40}", candidate_broker_sha)
                                   and candidate.get("persistence_handle") == PERSIST_HANDLE
                                   and candidate.get("fold_count") == 5
                                   and candidate.get("oof_unique_dev_paths") == 5209
                                   and candidate.get("recipe_fingerprint") == RECIPE_FP
                                   and candidate.get("locked_test_used") is False
                                   and candidate.get("external_used") is False):
-                              artifact_green = {
+                              artifact_candidates.append({
                                   "comment_id": comment.get("id"),
                                   "query_request_id": candidate.get("query_request_id"),
                                   "query_broker_run_id": candidate.get("broker_run_id"),
-                                  "broker_sha": candidate.get("broker_sha"),
-                              }
+                                  "broker_sha": candidate_broker_sha,
+                                  "predecessor_launch_broker_sha": candidate.get("predecessor_launch_broker_sha"),
+                              })
                       except (TypeError, ValueError, json.JSONDecodeError):
                           pass
+
+          if complete_status_candidates:
+              final5_status_evidence = max(
+                  complete_status_candidates,
+                  key=lambda item: int(item.get("comment_id") or 0),
+              )
+              final5_complete = True
+              final5_query_broker_sha = final5_status_evidence["broker_sha"]
+          if final5_query_broker_sha:
+              matching_artifacts = [
+                  item for item in artifact_candidates
+                  if item.get("broker_sha") == final5_query_broker_sha
+              ]
+              if matching_artifacts:
+                  artifact_green = max(
+                      matching_artifacts,
+                      key=lambda item: int(item.get("comment_id") or 0),
+                  )
 
           if not final5_complete:
               raise SystemExit("CONTINUATION_BLOCKED_FINAL5_NOT_EXACT_COMPLETE")
@@ -195,7 +223,7 @@ jobs:
           notebook.setdefault("metadata", {})["cgp_continuation"] = {
               "schema": "m07.d260914d.continuation.builder.v1",
               "campaign_id": "d260914d", "winner_candidate_id": 2,
-              "final5_kernel_ref": FINAL5_REF, "final5_code_sha256": HEAD_SHA,
+              "final5_kernel_ref": FINAL5_REF, "final5_code_sha256": PREDECESSOR_LAUNCH_SHA,
               "persistence_handle": PERSIST_HANDLE, "split_fingerprint": "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9",
               "artifact_evidence": {"status": "PASS", **(artifact_green or {})},
               "locked_test_used": False, "external_used": False, "phase2_unlocked": False,
