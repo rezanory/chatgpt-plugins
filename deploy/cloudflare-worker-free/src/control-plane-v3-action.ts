@@ -32,6 +32,10 @@ const ACCOUNTS: Record<
   master: { owner: "azadka", username: "azadka", envKey: "CGP_KAGGLE_MASTER_TOKEN" },
 };
 
+export function kaggleActionAccountIds(): string[] {
+  return Object.keys(ACCOUNTS).sort();
+}
+
 function object(value: unknown): Rec {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("action payload/body must be an object");

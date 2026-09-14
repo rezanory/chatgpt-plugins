@@ -1,5 +1,5 @@
 import canonicalWorker from "./index";
-import { executeKaggleOidcAction } from "./control-plane-v3-action";
+import { executeKaggleOidcAction, kaggleActionAccountIds } from "./control-plane-v3-action";
 import {
   kaggleLiveLog,
   kaggleOutputJsonFiles,
@@ -140,6 +140,7 @@ export default {
         github_oidc_action_broker: true,
         trusted_repository_id: "1337215097",
         mutation_default_enabled: env.CGP_CONTROL_V3_MUTATION_ENABLED === "1",
+        kaggle_action_accounts: kaggleActionAccountIds(),
       });
     }
 

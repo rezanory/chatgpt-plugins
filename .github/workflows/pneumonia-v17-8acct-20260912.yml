@@ -811,7 +811,7 @@ jobs:
           PY
 
   soilbin_q1_v3_external_model_selection:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V3_EXTERNAL_LAUNCH_KG09_ALLOWED' }}
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V3_EXTERNAL_LAUNCH_KG09_FIX1_ALLOWED' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

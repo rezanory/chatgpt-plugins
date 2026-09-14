@@ -65,5 +65,7 @@ jobs:
           if($h.service -ne 'chatgpt-kaggle-gateway' -or $h.status -ne 'ready'){throw 'canonical gateway unhealthy'}
           $v3=Invoke-RestMethod -Uri "$base/control-plane/v3/healthz" -Method Get -TimeoutSec 30
           if($v3.status -ne 'ready' -or $v3.github_oidc_read_broker -ne $true -or $v3.github_oidc_action_broker -ne $true){throw 'v3 control plane unhealthy'}
+          $requiredActionAccounts=@('kg-08','kg-09','kg-10','kg-11')
+          foreach($account in $requiredActionAccounts){if(-not (@($v3.kaggle_action_accounts) -contains $account)){throw "v3 action broker missing required Kaggle account: $account"}}
           Write-Host ('CLOUDFLARE_GATEWAY_READY service={0} configured={1} master={2}' -f $h.service,$h.kaggle_tokens_configured,$h.master_configured)
           Write-Host 'CONTROL_PLANE_V3_READY'

@@ -137,6 +137,8 @@ jobs:
           if($v3.service -ne 'chatgpt-control-plane-v3' -or $v3.github_oidc_read_broker -ne $true){throw 'v3 OIDC read broker health failed'}
           if($v3.github_oidc_action_broker -ne $true){throw 'v3 OIDC action broker health failed'}
           if($v3.mutation_default_enabled -ne $false){throw 'v3 mutation default must remain disabled'}
+          $requiredActionAccounts=@('kg-08','kg-09','kg-10','kg-11')
+          foreach($account in $requiredActionAccounts){if(-not (@($v3.kaggle_action_accounts) -contains $account)){throw "v3 action broker missing required Kaggle account: $account"}}
           try{
             Invoke-WebRequest -UseBasicParsing -Uri "$base/control/v6-2-3/p0/status" -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 30 | Out-Null
             throw 'temporary P0 status route reappeared'
