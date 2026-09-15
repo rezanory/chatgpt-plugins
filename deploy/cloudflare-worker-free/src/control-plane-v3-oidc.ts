@@ -10,7 +10,10 @@ const TRUSTED_REF = "refs/heads/main";
 const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   [
     "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main",
-    new Set(["issue_comment"]),
+    // Issue #33 reached GitHub's 2,500-comment ceiling.  The query workflow
+    // now also accepts an actor-restricted workflow_dispatch transport; both
+    // paths remain read-only and are still pinned to the main workflow ref.
+    new Set(["issue_comment", "workflow_dispatch"]),
   ],
 ]);
 const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
