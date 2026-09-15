@@ -16,7 +16,12 @@ permissions:
   issues: write
 
 concurrency:
-  group: pneumonia-v17-d260914d-m07-continuation-v1
+  group: >-
+    ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R320_') &&
+        'pneumonia-v17-d260914d-m07-r320' ||
+        startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R384_') &&
+        'pneumonia-v17-d260914d-m07-r384' ||
+        'pneumonia-v17-d260914d-m07-continuation-v1' }}
   cancel-in-progress: false
 
 jobs:
@@ -45,10 +50,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout canonical main source
+      - name: Checkout exact workflow revision
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
 
       - name: Build continuation notebook from exact final-five-fold evidence
         shell: powershell
@@ -83,6 +88,8 @@ jobs:
           RUNTIME_ATTEMPT = int(runtime_match.group(2)) if runtime_match else None
           if RUNTIME_MODE and not 1 <= RUNTIME_ATTEMPT <= 99:
               raise SystemExit("M07_RUNTIME_ATTEMPT_OUT_OF_RANGE")
+          RUNTIME_ACCOUNT = "kg-05" if RUNTIME_RESOLUTION == 384 else "kg-03"
+          RUNTIME_OWNER = "trickermark" if RUNTIME_RESOLUTION == 384 else "rezanory"
           headers = {
               "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
               "Accept": "application/vnd.github+json",
@@ -503,15 +510,53 @@ jobs:
           '''
               notebook["cells"][gate_index]["source"] = (definitions + stage_runner).splitlines(keepends=True)
               notebook["cells"] = notebook["cells"][:gate_index + 1]
-          # The canonical notebook derives a full handle as owner/slug.  Keep
-          # the persisted dataset slug unqualified to avoid owner duplication.
+          # The immutable R224 predecessor always remains owned by rezanory,
+          # while new per-resolution state belongs to the execution account.
+          # Keeping these identities explicit prevents a cross-account R384
+          # worker from looking for the predecessor under its own username.
           persist_slug = PERSIST_HANDLE.split("/", 1)[1]
+          source_handle_default = "\n".join([
+              "PERSIST_DATASET_HANDLE = os.environ.get(",
+              "    \"M07_PERSIST_DATASET_HANDLE\",",
+              "    \"\",",
+              ").strip() or None",
+          ])
+          source_handle_bound = "\n".join([
+              "PERSIST_DATASET_HANDLE = os.environ.get(",
+              "    \"M07_PERSIST_DATASET_HANDLE\",",
+              "    \"\",",
+              f").strip() or {PERSIST_HANDLE!r}",
+          ])
+          phase2_owner_default = "\n".join([
+              "PHASE2_PERSIST_OWNER = os.environ.get(",
+              "    \"PHASE2_PERSIST_OWNER\",",
+              "    \"\",",
+              ").strip() or None",
+          ])
+          phase2_owner_bound = "\n".join([
+              "PHASE2_PERSIST_OWNER = os.environ.get(",
+              "    \"PHASE2_PERSIST_OWNER\",",
+              "    \"\",",
+              f").strip() or {RUNTIME_OWNER!r}",
+          ])
+          source_handle_hits = 0
+          phase2_owner_hits = 0
           for cell in notebook["cells"][:2]:
               source = "".join(cell.get("source", []))
               source = source.replace('"m07-multires-gate-run-safe-v17"', json.dumps(persist_slug))
+              if source_handle_default in source:
+                  source = source.replace(source_handle_default, source_handle_bound, 1)
+                  source_handle_hits += 1
+              if phase2_owner_default in source:
+                  source = source.replace(phase2_owner_default, phase2_owner_bound, 1)
+                  phase2_owner_hits += 1
               cell["source"] = source.splitlines(keepends=True)
+          if source_handle_hits != 1:
+              raise SystemExit(f"M07_SOURCE_HANDLE_BINDING_COUNT={source_handle_hits}")
+          if phase2_owner_hits != 1:
+              raise SystemExit(f"M07_PHASE2_OWNER_BINDING_COUNT={phase2_owner_hits}")
           kernel_slug = (
-              f"rezanory/m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-20260915"
+              f"{RUNTIME_OWNER}/m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-20260915"
               if RUNTIME_MODE else
               "rezanory/m07-phase2-unlock-20260915"
               if UNLOCK_MODE else
@@ -542,6 +587,9 @@ jobs:
                   "enabled": bool(RUNTIME_MODE),
                   "resolution": RUNTIME_RESOLUTION,
                   "attempt": RUNTIME_ATTEMPT,
+                  "account_id": RUNTIME_ACCOUNT,
+                  "owner": RUNTIME_OWNER,
+                  "source_persistence_handle": PERSIST_HANDLE,
                   "max_new_folds": 1 if RUNTIME_MODE else None,
               },
               "manual_approval": {
@@ -560,6 +608,8 @@ jobs:
           pathlib.Path(os.environ["RUNNER_TEMP"], "m07_kernel_slug.txt").write_text(kernel_slug, encoding="utf-8")
           pathlib.Path(os.environ["RUNNER_TEMP"], "m07_kernel_title.txt").write_text(kernel_title, encoding="utf-8")
           pathlib.Path(os.environ["RUNNER_TEMP"], "m07_request_id.txt").write_text(request_id, encoding="utf-8")
+          pathlib.Path(os.environ["RUNNER_TEMP"], "m07_account_id.txt").write_text(RUNTIME_ACCOUNT, encoding="utf-8")
+          pathlib.Path(os.environ["RUNNER_TEMP"], "m07_owner.txt").write_text(RUNTIME_OWNER, encoding="utf-8")
           '@
           $builderOutput = @($script | & $python - 2>&1)
           $builderCode = $LASTEXITCODE
@@ -568,10 +618,22 @@ jobs:
           "CGP_KERNEL_SLUG=$((Get-Content $env:RUNNER_TEMP\m07_kernel_slug.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_KERNEL_TITLE=$((Get-Content $env:RUNNER_TEMP\m07_kernel_title.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_REQUEST_ID=$((Get-Content $env:RUNNER_TEMP\m07_request_id.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_ACCOUNT_ID=$((Get-Content $env:RUNNER_TEMP\m07_account_id.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_ACCOUNT_OWNER=$((Get-Content $env:RUNNER_TEMP\m07_owner.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_PHASE2_UNLOCK=$env:M07_PHASE2_UNLOCK" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_RUNTIME_STAGE=$env:M07_RUNTIME_STAGE" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Preserve exact generated notebook
+        if: ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-runtime-notebook-${{ github.run_id }}
+          path: ${{ env.CGP_NOTEBOOK_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Request trusted action OIDC identity
+        if: ${{ github.ref == 'refs/heads/main' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -584,6 +646,7 @@ jobs:
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
       - name: Submit M07 continuation or approved Phase-2 kernel
+        if: ${{ github.ref == 'refs/heads/main' }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -595,7 +658,7 @@ jobs:
           notebook = pathlib.Path(os.environ["CGP_NOTEBOOK_PATH"]).read_text(encoding="utf-8")
           payload = {
               "request_id": os.environ["CGP_REQUEST_ID"].strip(),
-              "provider": "kaggle", "operation_class": "compute", "account_id": "kg-03",
+              "provider": "kaggle", "operation_class": "compute", "account_id": os.environ["CGP_ACCOUNT_ID"].strip(),
               "purpose": (f"d260914d bounded M07 runtime recovery {os.environ.get('CGP_RUNTIME_STAGE')}: restore only sealed folds, complete at most one missing fold, persist it, and exit successfully."
                           if os.environ.get("CGP_RUNTIME_STAGE", "").startswith("M07_RUNTIME_M07_R")
                           else "d260914d M07 explicit manual unlock: complete R320/R384 M07 Gate, then run the remaining M01-M06/M08-M12 Phase-2 matrix; reuse exact persisted R224 five folds, never retrain M07 in Phase-2."
@@ -612,13 +675,13 @@ jobs:
               raise SystemExit(f"Continuation SaveKernel HTTP {error.code}: {error.read(4000).decode('utf-8', 'replace')[:1800]}")
           if not result.get("ok"):
               raise SystemExit("Continuation action broker returned ok=false")
-          print(json.dumps({"accepted": True, "provider_ref": result.get("provider_ref") or (result.get("result") or {}).get("ref"), "broker_run_id": result.get("broker_run_id"), "broker_sha": result.get("broker_sha"), "phase2_unlocked": "PHASE2_UNLOCK" in os.environ["CGP_NOTEBOOK_PATH"]}, ensure_ascii=False))
+          print(json.dumps({"accepted": True, "account_id": os.environ["CGP_ACCOUNT_ID"], "owner": os.environ["CGP_ACCOUNT_OWNER"], "provider_ref": result.get("provider_ref") or (result.get("result") or {}).get("ref"), "broker_run_id": result.get("broker_run_id"), "broker_sha": result.get("broker_sha"), "phase2_unlocked": "PHASE2_UNLOCK" in os.environ["CGP_NOTEBOOK_PATH"]}, ensure_ascii=False))
           '@
           $script | & $python -
           if($LASTEXITCODE -ne 0){throw 'M07 continuation SaveKernel submission failed'}
 
       - name: Publish continuation launch receipt
-        if: always()
+        if: ${{ always() && github.ref == 'refs/heads/main' }}
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -627,7 +690,7 @@ jobs:
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
           $mode=if($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'PHASE2 UNLOCK'}else{'LOCKED TEST DIAGNOSTICS FIX1'}
           $approval=if($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'M07_PHASE2_UNLOCK_APPROVED_BY_USER'}else{'none'}
-          $body="## PNEUMONIA V1.7 d260914d M07 $mode ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted five-fold evidence reused; bounded runtime mode completes at most one missing fold`n- Approval token: ``$approval```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
+          $body="## PNEUMONIA V1.7 d260914d M07 $mode ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Account: ``$env:CGP_ACCOUNT_ID`` / ``$env:CGP_ACCOUNT_OWNER```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted five-fold evidence reused; bounded runtime mode completes at most one missing fold`n- Approval token: ``$approval```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
   soilbin_q1_v4_raw_waveform:
     if: >-
