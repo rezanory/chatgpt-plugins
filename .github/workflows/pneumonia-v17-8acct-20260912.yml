@@ -3,6 +3,14 @@ name: pneumonia-v17-8acct-20260912
 on:
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Authorized task selector"
+        required: true
+        type: choice
+        options:
+          - soilbin-v4-raw-waveform
 
 permissions:
   id-token: write
@@ -870,7 +878,9 @@ jobs:
           PY
 
   soilbin_q1_v4_raw_waveform:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V4_RAW_WAVEFORM_LAUNCH_KG09_ALLOWED' }}
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && github.actor_id == 62356000 && inputs.task == 'soilbin-v4-raw-waveform') ||
+          (github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V4_RAW_WAVEFORM_LAUNCH_KG09_ALLOWED') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -897,16 +907,33 @@ jobs:
           set -euo pipefail
           python control-plane-payloads/soilbin-q1-v4/launch_soilbin_v4_cloudflare.py
       - name: Publish SoilBin V4 launch receipt
+        if: always()
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           python - <<'PY'
-          import json,os,pathlib,urllib.request
+          import json, os, pathlib, urllib.request
           p=os.environ.get('SOILBIN_V4_RECEIPT_PATH','')
           if p and pathlib.Path(p).exists():
-              r=json.loads(pathlib.Path(p).read_text()); body=(f"## SOILBIN Q1/Q2 V4 LAUNCH ACCEPTED\n\n- Run: `{os.environ['GITHUB_RUN_ID']}`\n- Kernel: `{r['kernel_ref']}`\n- Notebook SHA256: `{r['notebook_sha256']}`\n- Runner SHA256: `{r['runner_sha256']}`\n- Raw timeseries SHA256: `{r['raw_timeseries_source_sha256']}`\n- CPU only: `true`\n- Current-pass waveform used: `false`\n- External labels used: `false`\n")
-          else: body=f"## SOILBIN Q1/Q2 V4 LAUNCH FAILED\n\n- Run: `{os.environ['GITHUB_RUN_ID']}`"
-          req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/33/comments",data=json.dumps({'body':body}).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'soilbin-v4-launch-receipt/1.0'})
-          with urllib.request.urlopen(req,timeout=30): pass
+              r=json.loads(pathlib.Path(p).read_text(encoding='utf-8'))
+              body=(f"## SOILBIN Q1/Q2 V4 LAUNCH ACCEPTED\n\n- Run: `{os.environ['GITHUB_RUN_ID']}`\n- Kernel: `{r['kernel_ref']}`\n- Notebook SHA256: `{r['notebook_sha256']}`\n- Runner SHA256: `{r['runner_sha256']}`\n- Raw timeseries SHA256: `{r['raw_timeseries_source_sha256']}`\n- CPU only: `true`\n- Current-pass waveform used: `false`\n- External labels used: `false`\n")
+          else:
+              body=f"## SOILBIN Q1/Q2 V4 LAUNCH FAILED\n\n- Run: `{os.environ['GITHUB_RUN_ID']}`"
+          summary=pathlib.Path(os.environ['RUNNER_TEMP'])/'soilbin_v4_launch_summary.md'
+          summary.write_text(body,encoding='utf-8')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write(f"SOILBIN_V4_SUMMARY_PATH={summary}\n")
+          print(body)
+          if os.environ.get('GITHUB_EVENT_NAME') == 'issue_comment':
+              req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/33/comments",data=json.dumps({'body':body}).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'soilbin-v4-launch-receipt/1.0'})
+              with urllib.request.urlopen(req,timeout=30): pass
           PY
+      - name: Upload SoilBin V4 launch receipt artifact
+        if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: soilbin-v4-launch-${{ github.run_id }}
+          path: ${{ env.SOILBIN_V4_SUMMARY_PATH }}
+          if-no-files-found: error
+          retention-days: 30
