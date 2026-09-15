@@ -1,0 +1,14 @@
+{
+  "comparison": "D_delta_prev_peak vs E_delta_prev_peak_waveform",
+  "D_joint_Group_MAE": 24.28878365273039,
+  "E_joint_Group_MAE": 26.80583445967398,
+  "relative_improvement_pct": -10.36301711494161,
+  "mean_group_paired_improvement_N": -2.517050806943589,
+  "group_bootstrap_95CI_N": [
+    -4.291950971895545,
+    -0.9192187942037824
+  ],
+  "exact_group_signflip_one_sided_p": 0.9921875,
+  "n_groups": 9,
+  "interpretation_guard": "Group-level paired evidence only; nine VxW groups limit inferential precision."
+}

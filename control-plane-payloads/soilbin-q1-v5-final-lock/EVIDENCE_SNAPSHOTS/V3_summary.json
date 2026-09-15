@@ -1,0 +1,163 @@
+{
+  "schema": "soilbin.q1.v3",
+  "response_status": "CALIBRATED_VERTICAL_FORCE_PROXY_N_PENDING_SENSOR_AREA_OR_STRESS_CALIBRATION",
+  "depth_mapping_status": "PROVISIONAL_LC5_5CM_LC1_15CM_PENDING_LAYOUT_CONFIRMATION",
+  "validation": "Nested grouped CV; outer leave-one-VxW-sequence-out; inner GroupKFold; no random split; external labels never used for tuning.",
+  "n_runs": 51,
+  "n_history_pairs": 41,
+  "n_groups": 9,
+  "tasks": [
+    "A_conditions_abs",
+    "B_prev_peak_abs",
+    "C_prev_waveform_abs",
+    "D_delta_prev_peak",
+    "E_delta_prev_peak_waveform"
+  ],
+  "primary_champion_internal_only": {
+    "complete_oof": true,
+    "expected_n": 41,
+    "n": 41,
+    "n_groups": 9,
+    "LC1_proxy_N_Group_MAE": 12.785420282422,
+    "LC1_proxy_N_MAE": 12.960179355429897,
+    "LC1_proxy_N_RMSE": 18.72504714990605,
+    "LC1_proxy_N_Bias": 2.233420704425057,
+    "LC1_proxy_N_R2": 0.53290647759627,
+    "LC5_proxy_N_Group_MAE": 35.79214702303878,
+    "LC5_proxy_N_MAE": 35.340601033464075,
+    "LC5_proxy_N_RMSE": 44.07612118754346,
+    "LC5_proxy_N_Bias": -3.3569105902238814,
+    "LC5_proxy_N_R2": 0.6164787930286839,
+    "joint_Group_MAE": 24.28878365273039,
+    "task": "D_delta_prev_peak",
+    "scheme": "VW",
+    "qc_only": false,
+    "model": "Selected_inner"
+  },
+  "delta_peak_vs_waveform": {
+    "comparison": "D_delta_prev_peak vs E_delta_prev_peak_waveform",
+    "D_joint_Group_MAE": 24.28878365273039,
+    "E_joint_Group_MAE": 26.80583445967398,
+    "relative_improvement_pct": -10.36301711494161,
+    "mean_group_paired_improvement_N": -2.517050806943589,
+    "group_bootstrap_95CI_N": [
+      -4.291950971895545,
+      -0.9192187942037824
+    ],
+    "exact_group_signflip_one_sided_p": 0.9921875,
+    "n_groups": 9,
+    "interpretation_guard": "Group-level paired evidence only; nine VxW groups limit inferential precision."
+  },
+  "external_validation": {
+    "schema": "soilbin.q1.v3.external",
+    "independent_numeric_rows": 70,
+    "independent_numeric_datasets": [
+      "EV_CANADA_AYETAN_2026",
+      "EV_ERDC_CRREL_2009"
+    ],
+    "corroboration_datasets": [
+      "EV_KELLER_2014",
+      "EV_ARVIDSSON_KELLER_2007",
+      "EV_KELLER_2016",
+      "EV_BAHRAMI_2023"
+    ],
+    "near_domain_replication": [
+      "REP_GHESHLAGHI_MARDANI_2021",
+      "REP_FARHADI_2025"
+    ],
+    "structured_corroboration_rows": 10,
+    "canada": {
+      "n_rows": 48,
+      "rear_gt_front_fraction": 1,
+      "deflated_lower_than_inflated_fraction": 0.8333333333333334,
+      "depth_15_gt_50_fraction": 0.75,
+      "role": "independent numeric external physics/trend validation",
+      "absolute_prediction_test": false,
+      "reason_not_absolute": "kPa external stress cannot be directly compared with SoilBin force proxy N until sensor effective area/direct stress calibration is established."
+    },
+    "erdc": {
+      "n_rows": 22,
+      "sequential_mdt_rows": 12,
+      "civ_trial_rows": 10,
+      "groups": [
+        {
+          "evidence_type": "sequential_pass",
+          "vehicle": "MDT",
+          "mode": "rolling",
+          "soil": "dry_sand",
+          "depth_cm": 12.7,
+          "n": 4,
+          "pass_slope_kpa_per_pass": 8.563288558114662,
+          "first_to_last_pct": 15.143403441682604,
+          "monotonic_increase": true,
+          "monotonic_decrease": false
+        },
+        {
+          "evidence_type": "sequential_pass",
+          "vehicle": "MDT",
+          "mode": "rolling",
+          "soil": "silt",
+          "depth_cm": 5.08,
+          "n": 4,
+          "pass_slope_kpa_per_pass": 8.949394966532065,
+          "first_to_last_pct": 14.548126377663486,
+          "monotonic_increase": false,
+          "monotonic_decrease": false
+        },
+        {
+          "evidence_type": "sequential_pass",
+          "vehicle": "MDT",
+          "mode": "rolling",
+          "soil": "wet_sand",
+          "depth_cm": 5.08,
+          "n": 4,
+          "pass_slope_kpa_per_pass": -8.05997127571337,
+          "first_to_last_pct": -0.7218355246197358,
+          "monotonic_increase": false,
+          "monotonic_decrease": false
+        },
+        {
+          "evidence_type": "independent_trial_force_pressure",
+          "vehicle": "CIV",
+          "mode": "rolling",
+          "soil": "sand",
+          "depth_cm": 5.08,
+          "n": 3,
+          "pressure_vs_force_slope_kpa_per_lb": 0.3551436240478398,
+          "mean_pressure_kpa": 486.35617946007073
+        },
+        {
+          "evidence_type": "independent_trial_force_pressure",
+          "vehicle": "CIV",
+          "mode": "rolling",
+          "soil": "silt",
+          "depth_cm": 5.08,
+          "n": 4,
+          "pressure_vs_force_slope_kpa_per_lb": 4.322439564865922,
+          "mean_pressure_kpa": 358.0619831274472
+        },
+        {
+          "evidence_type": "independent_trial_force_pressure",
+          "vehicle": "CIV",
+          "mode": "traction",
+          "soil": "sand",
+          "depth_cm": 5.08,
+          "n": 3,
+          "pressure_vs_force_slope_kpa_per_lb": 2.348355543048955,
+          "mean_pressure_kpa": 237.96105671153825
+        }
+      ],
+      "mdt_positive_pass_slope_fraction": 0.6666666666666666,
+      "role": "independent numeric external evidence: MDT sequential-pass validation plus CIV force/pressure trial corroboration",
+      "device_limitation": "Original ERDC report flags pressure-pad reliability and wheel-load synchronization limitations; retained in interpretation."
+    },
+    "external_labels_used_for_tuning": false,
+    "external_validation_level": "independent numeric trend/physics validation plus literature corroboration; not absolute cross-unit prediction",
+    "absolute_external_validation": false,
+    "absolute_external_blocker": "Sensor effective area/direct N-to-kPa calibration and confirmed depth mapping are required."
+  },
+  "external_validation_absolute": false,
+  "external_validation_trend_physics": true,
+  "external_validation_independent_numeric_rows": 70,
+  "external_validation_pending_for_absolute_transfer": "effective sensor area/direct stress calibration"
+}

@@ -1,0 +1,53 @@
+{
+  "schema": "soilbin.q1.v5.reproducibility-lock",
+  "created_utc": "2026-09-15T10:33:12.716627+00:00",
+  "policy_sha256": "c3c802b74ee0426e23d6c8ea6e4fd9ca26cf1128f5da3a32ca2b0b20aa6c7c02",
+  "source_packages": [
+    {
+      "version": "V1",
+      "filename": "SoilBin_Q1_Q2_V1_COMPLETE_PACKAGE_20260914.zip",
+      "bytes": 929311,
+      "sha256": "b22f4944090d2c910a8b8f34d6a12bec4c09833f8d5dd9674870964a5d85c838",
+      "zip_entries": 39
+    },
+    {
+      "version": "V2",
+      "filename": "SoilBin_Q1_Q2_V2_WAVEFORM_COMPLETE_PACKAGE_20260914.zip",
+      "bytes": 298335,
+      "sha256": "1dba04d1a3142fc471dae09d0ca25ec8f78ce6f797aa0f7d11fc3bb390778b40",
+      "zip_entries": 23
+    },
+    {
+      "version": "V3",
+      "filename": "SoilBin_Q1_Q2_V3_VALIDATED_EVIDENCE_PACKAGE_20260914.zip",
+      "bytes": 69230,
+      "sha256": "766c02b8619fb951b5bf9b5ba0b2fdf244913fa3831b428759b7f99a11031ab5",
+      "zip_entries": 23
+    },
+    {
+      "version": "V4",
+      "filename": "SoilBin_Q1_Q2_V4_VALIDATED_EVIDENCE_PACKAGE_20260915.zip",
+      "bytes": 105824,
+      "sha256": "3b2600a132f80270a36176f0f03737603bb640f12720cc15c70f0b3416dbe954",
+      "zip_entries": 20
+    }
+  ],
+  "data_fingerprints": {
+    "all_features_csv": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+    "raw_timeseries_csv": "ea227f412827a962a1876ceb9aeb9946034b435052e9e74115e32bd7dca73cb0"
+  },
+  "kaggle_runs": {
+    "V1": 34858070601,
+    "V2": 34869786753,
+    "V3": 34903726949,
+    "V4": 34955651700
+  },
+  "notebook_sha256": {
+    "V1": "1f0e6e98bd1a36c2915e2aa800bd2724edbdc3710d6e192130293158f933d450",
+    "V2": "266bc63950b03efac68a1a4a0d36cad9b35ddfbfaaa17c79339c4f01ee1df128",
+    "V3": "3e49c016049d32ff4b147a2455b5695a3999a4a9f2ae9536a001b6a8bf593486",
+    "V4": "d014cbb49257d5f47a766faa08183054b3eb2a8ed067de394455fe87d0831f1d"
+  },
+  "v5_new_scientific_compute": false,
+  "v5_no_retraining_reason": "Model/representation selection and performance claims were frozen after V3/V4. V5 is a final evidence/claims/manuscript lock; rerunning selection after seeing results would add post-selection bias without new independent data."
+}

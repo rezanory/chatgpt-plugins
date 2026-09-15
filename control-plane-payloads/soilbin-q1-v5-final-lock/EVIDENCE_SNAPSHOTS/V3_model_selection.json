@@ -1,0 +1,206 @@
+{
+  "primary_champion_internal_only": {
+    "complete_oof": true,
+    "expected_n": 41,
+    "n": 41,
+    "n_groups": 9,
+    "LC1_proxy_N_Group_MAE": 12.785420282422,
+    "LC1_proxy_N_MAE": 12.960179355429897,
+    "LC1_proxy_N_RMSE": 18.72504714990605,
+    "LC1_proxy_N_Bias": 2.233420704425057,
+    "LC1_proxy_N_R2": 0.53290647759627,
+    "LC5_proxy_N_Group_MAE": 35.79214702303878,
+    "LC5_proxy_N_MAE": 35.340601033464075,
+    "LC5_proxy_N_RMSE": 44.07612118754346,
+    "LC5_proxy_N_Bias": -3.3569105902238814,
+    "LC5_proxy_N_R2": 0.6164787930286839,
+    "joint_Group_MAE": 24.28878365273039,
+    "task": "D_delta_prev_peak",
+    "scheme": "VW",
+    "qc_only": false,
+    "model": "Selected_inner"
+  },
+  "selection_counts": {
+    "A_conditions_abs": {
+      "HistGradientBoosting": 5,
+      "SVR": 1,
+      "Ridge": 2,
+      "CatBoost": 1
+    },
+    "B_prev_peak_abs": {
+      "RandomForest": 9
+    },
+    "C_prev_waveform_abs": {
+      "RandomForest": 7,
+      "ExtraTrees": 1,
+      "Ridge": 1
+    },
+    "D_delta_prev_peak": {
+      "RandomForest": 4,
+      "ExtraTrees": 5
+    },
+    "E_delta_prev_peak_waveform": {
+      "RandomForest": 8,
+      "ExtraTrees": 1
+    }
+  },
+  "candidate_catalog": [
+    {
+      "model": "Linear",
+      "params": {}
+    },
+    {
+      "model": "Ridge",
+      "params": {
+        "alpha": 1
+      }
+    },
+    {
+      "model": "Ridge",
+      "params": {
+        "alpha": 10
+      }
+    },
+    {
+      "model": "PolynomialRidge",
+      "params": {
+        "alpha": 1
+      }
+    },
+    {
+      "model": "PolynomialRidge",
+      "params": {
+        "alpha": 10
+      }
+    },
+    {
+      "model": "SplineRidgeGAM",
+      "params": {
+        "n_knots": 3,
+        "alpha": 1
+      }
+    },
+    {
+      "model": "SplineRidgeGAM",
+      "params": {
+        "n_knots": 4,
+        "alpha": 10
+      }
+    },
+    {
+      "model": "SVR",
+      "params": {
+        "C": 10,
+        "epsilon": 0.1
+      }
+    },
+    {
+      "model": "SVR",
+      "params": {
+        "C": 100,
+        "epsilon": 0.1
+      }
+    },
+    {
+      "model": "GPR",
+      "params": {}
+    },
+    {
+      "model": "RandomForest",
+      "params": {
+        "max_depth": null,
+        "min_samples_leaf": 1
+      }
+    },
+    {
+      "model": "RandomForest",
+      "params": {
+        "max_depth": 4,
+        "min_samples_leaf": 2
+      }
+    },
+    {
+      "model": "ExtraTrees",
+      "params": {
+        "max_depth": null,
+        "min_samples_leaf": 1
+      }
+    },
+    {
+      "model": "ExtraTrees",
+      "params": {
+        "max_depth": 4,
+        "min_samples_leaf": 2
+      }
+    },
+    {
+      "model": "HistGradientBoosting",
+      "params": {
+        "learning_rate": 0.05,
+        "max_leaf_nodes": 7,
+        "l2": 1
+      }
+    },
+    {
+      "model": "MLP",
+      "params": {
+        "hidden": [
+          16
+        ],
+        "alpha": 0.01
+      }
+    },
+    {
+      "model": "MLP",
+      "params": {
+        "hidden": [
+          32,
+          16
+        ],
+        "alpha": 0.01
+      }
+    },
+    {
+      "model": "CatBoost",
+      "params": {
+        "depth": 3,
+        "learning_rate": 0.03
+      }
+    },
+    {
+      "model": "CatBoost",
+      "params": {
+        "depth": 4,
+        "learning_rate": 0.05
+      }
+    },
+    {
+      "model": "XGBoost",
+      "params": {
+        "max_depth": 2,
+        "learning_rate": 0.03
+      }
+    },
+    {
+      "model": "XGBoost",
+      "params": {
+        "max_depth": 3,
+        "learning_rate": 0.05
+      }
+    },
+    {
+      "model": "LightGBM",
+      "params": {
+        "num_leaves": 7,
+        "learning_rate": 0.03
+      }
+    },
+    {
+      "model": "LightGBM",
+      "params": {
+        "num_leaves": 15,
+        "learning_rate": 0.05
+      }
+    }
+  ]
+}

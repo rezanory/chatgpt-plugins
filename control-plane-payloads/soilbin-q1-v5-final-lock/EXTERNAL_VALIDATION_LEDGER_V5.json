@@ -1,0 +1,157 @@
+{
+  "status": "FROZEN_AFTER_INTERNAL_SELECTION",
+  "external_labels_used_for_tuning": false,
+  "absolute_external_validation": false,
+  "level": "independent numeric trend/physics validation plus literature corroboration; not absolute cross-unit prediction",
+  "independent_numeric_rows": 70,
+  "independent_numeric_datasets": [
+    "EV_CANADA_AYETAN_2026",
+    "EV_ERDC_CRREL_2009"
+  ],
+  "corroboration_datasets": [
+    "EV_KELLER_2014",
+    "EV_ARVIDSSON_KELLER_2007",
+    "EV_KELLER_2016",
+    "EV_BAHRAMI_2023"
+  ],
+  "near_domain_replication": [
+    "REP_GHESHLAGHI_MARDANI_2021",
+    "REP_FARHADI_2025"
+  ],
+  "canada": {
+    "n_rows": 48,
+    "rear_gt_front_fraction": 1,
+    "deflated_lower_than_inflated_fraction": 0.8333333333333334,
+    "depth_15_gt_50_fraction": 0.75,
+    "role": "independent numeric external physics/trend validation",
+    "absolute_prediction_test": false,
+    "reason_not_absolute": "kPa external stress cannot be directly compared with SoilBin force proxy N until sensor effective area/direct stress calibration is established."
+  },
+  "erdc": {
+    "n_rows": 22,
+    "sequential_mdt_rows": 12,
+    "civ_trial_rows": 10,
+    "groups": [
+      {
+        "evidence_type": "sequential_pass",
+        "vehicle": "MDT",
+        "mode": "rolling",
+        "soil": "dry_sand",
+        "depth_cm": 12.7,
+        "n": 4,
+        "pass_slope_kpa_per_pass": 8.563288558114662,
+        "first_to_last_pct": 15.143403441682604,
+        "monotonic_increase": true,
+        "monotonic_decrease": false
+      },
+      {
+        "evidence_type": "sequential_pass",
+        "vehicle": "MDT",
+        "mode": "rolling",
+        "soil": "silt",
+        "depth_cm": 5.08,
+        "n": 4,
+        "pass_slope_kpa_per_pass": 8.949394966532065,
+        "first_to_last_pct": 14.548126377663486,
+        "monotonic_increase": false,
+        "monotonic_decrease": false
+      },
+      {
+        "evidence_type": "sequential_pass",
+        "vehicle": "MDT",
+        "mode": "rolling",
+        "soil": "wet_sand",
+        "depth_cm": 5.08,
+        "n": 4,
+        "pass_slope_kpa_per_pass": -8.05997127571337,
+        "first_to_last_pct": -0.7218355246197358,
+        "monotonic_increase": false,
+        "monotonic_decrease": false
+      },
+      {
+        "evidence_type": "independent_trial_force_pressure",
+        "vehicle": "CIV",
+        "mode": "rolling",
+        "soil": "sand",
+        "depth_cm": 5.08,
+        "n": 3,
+        "pressure_vs_force_slope_kpa_per_lb": 0.3551436240478398,
+        "mean_pressure_kpa": 486.35617946007073
+      },
+      {
+        "evidence_type": "independent_trial_force_pressure",
+        "vehicle": "CIV",
+        "mode": "rolling",
+        "soil": "silt",
+        "depth_cm": 5.08,
+        "n": 4,
+        "pressure_vs_force_slope_kpa_per_lb": 4.322439564865922,
+        "mean_pressure_kpa": 358.0619831274472
+      },
+      {
+        "evidence_type": "independent_trial_force_pressure",
+        "vehicle": "CIV",
+        "mode": "traction",
+        "soil": "sand",
+        "depth_cm": 5.08,
+        "n": 3,
+        "pressure_vs_force_slope_kpa_per_lb": 2.348355543048955,
+        "mean_pressure_kpa": 237.96105671153825
+      }
+    ],
+    "mdt_positive_pass_slope_fraction": 0.6666666666666666,
+    "role": "independent numeric external evidence: MDT sequential-pass validation plus CIV force/pressure trial corroboration",
+    "device_limitation": "Original ERDC report flags pressure-pad reliability and wheel-load synchronization limitations; retained in interpretation."
+  },
+  "absolute_blocker": "Sensor effective area/direct N-to-kPa calibration and confirmed depth mapping are required.",
+  "sources": [
+    {
+      "id": "EV_CANADA_AYETAN_2026",
+      "role": "primary_external_numeric",
+      "doi": "10.1002/saj2.70200",
+      "url": "https://acsess.onlinelibrary.wiley.com/doi/10.1002/saj2.70200"
+    },
+    {
+      "id": "EV_ERDC_CRREL_2009",
+      "role": "primary_external_numeric",
+      "doi": null,
+      "url": "https://digitalcommons.unl.edu/usarmyresearch/47/"
+    },
+    {
+      "id": "EV_KELLER_2014",
+      "role": "external_physics_corroboration",
+      "doi": "10.1016/j.still.2014.03.001",
+      "url": "https://www.mcgill.ca/civil/files/civil/269.pdf"
+    },
+    {
+      "id": "EV_ARVIDSSON_KELLER_2007",
+      "role": "external_physics_corroboration",
+      "doi": "10.1016/j.still.2007.06.012",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0167198707001146"
+    },
+    {
+      "id": "EV_KELLER_2016",
+      "role": "external_physics_corroboration",
+      "doi": "10.2136/sssaj2015.07.0252",
+      "url": "https://acsess.onlinelibrary.wiley.com/doi/10.2136/sssaj2015.07.0252"
+    },
+    {
+      "id": "EV_BAHRAMI_2023",
+      "role": "external_near_mechanistic_corroboration",
+      "doi": "10.1016/j.biosystemseng.2023.04.013",
+      "url": "https://www.sciencedirect.com/science/article/pii/S1537511023000958"
+    },
+    {
+      "id": "REP_GHESHLAGHI_MARDANI_2021",
+      "role": "near_domain_replication_only",
+      "doi": "10.1016/j.jterra.2021.02.004",
+      "url": "https://www.sciencedirect.com/science/article/abs/pii/S0022489821000161"
+    },
+    {
+      "id": "REP_FARHADI_2025",
+      "role": "near_domain_replication_only",
+      "doi": "10.1038/s41598-025-13535-w",
+      "url": "https://www.nature.com/articles/s41598-025-13535-w"
+    }
+  ]
+}

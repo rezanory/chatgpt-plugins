@@ -1,0 +1,20 @@
+{
+  "allowed": [
+    "The study contains 51 valid experimental runs organized into nine V×W groups and 41 consecutive history pairs for V2–V5 paired modeling.",
+    "Under frozen nested grouped validation, the selected V3/V5 protocol D_delta_prev_peak achieved joint group-equal MAE 24.288784 N.",
+    "Target-specific group-equal MAE was 12.785420 N for LC1 and 35.792147 N for LC5.",
+    "Adding previous-pass engineered waveform morphology in V3 worsened joint Group-MAE from 24.288784 to 26.805834 N.",
+    "The best V4 raw-waveform representation (SPECTRAL) achieved 25.068462 N and did not replace the simpler frozen V3 protocol under the pre-registered policy.",
+    "Independent external evidence includes 70 numeric rows from Canada/Ayetan 2026 and ERDC/CRREL 2009, used only for trend/physics validation after internal selection was frozen.",
+    "Keller/Arvidsson/Bahrami evidence is mechanistic/literature corroboration, while the Urmia-domain studies are near-domain replication rather than independent external validation."
+  ],
+  "prohibited_until_additional_calibration": [
+    "Do not call the response verified soil stress or report SoilBin predictions in kPa.",
+    "Do not claim absolute external predictive validation across N and kPa.",
+    "Do not claim LC5=5 cm and LC1=15 cm as physically confirmed; the mapping remains provisional.",
+    "Do not call 102 sensor-depth observations independent experiments; there are 51 experimental runs.",
+    "Do not use V1's 23.09 N historical metric to rank against V3/V4 without noting the different observation/target structure.",
+    "Do not claim universal generalization across soils, vehicles, or field conditions from nine internal V×W groups."
+  ],
+  "statistical_guard": "Exact paired group inference uses only nine V×W groups and is descriptive; avoid overstating significance/generalizability."
+}

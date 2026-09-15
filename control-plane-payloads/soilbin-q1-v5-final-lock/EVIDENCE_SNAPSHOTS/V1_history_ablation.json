@@ -1,0 +1,88 @@
+{
+  "rows": [
+    {
+      "model": "Linear",
+      "A_paired_Group_MAE": 44.903372939362725,
+      "B_history_Group_MAE": 25.983763400807113,
+      "C_delta_Group_MAE": 25.98376340080712,
+      "history_improvement_vs_A": 18.919609538555612
+    },
+    {
+      "model": "PolynomialRidge",
+      "A_paired_Group_MAE": 51.51849040137617,
+      "B_history_Group_MAE": 39.23835133145604,
+      "C_delta_Group_MAE": 25.898555123952974,
+      "history_improvement_vs_A": 12.280139069920132
+    },
+    {
+      "model": "GAM",
+      "A_paired_Group_MAE": 42.361723844850445,
+      "B_history_Group_MAE": 25.049927473091337,
+      "C_delta_Group_MAE": 24.122993263298117,
+      "history_improvement_vs_A": 17.311796371759108
+    },
+    {
+      "model": "SVR",
+      "A_paired_Group_MAE": 53.975742248858275,
+      "B_history_Group_MAE": 34.09228755277059,
+      "C_delta_Group_MAE": 25.131814498761486,
+      "history_improvement_vs_A": 19.883454696087682
+    },
+    {
+      "model": "GPR",
+      "A_paired_Group_MAE": 48.46350778240885,
+      "B_history_Group_MAE": 28.400305012805322,
+      "C_delta_Group_MAE": 25.406461779643077,
+      "history_improvement_vs_A": 20.063202769603524
+    },
+    {
+      "model": "RandomForest",
+      "A_paired_Group_MAE": 47.90714855237786,
+      "B_history_Group_MAE": 25.55711267688885,
+      "C_delta_Group_MAE": 23.08770460487868,
+      "history_improvement_vs_A": 22.350035875489013
+    },
+    {
+      "model": "ExtraTrees",
+      "A_paired_Group_MAE": 47.64949193565314,
+      "B_history_Group_MAE": 29.161646735403778,
+      "C_delta_Group_MAE": 23.51536265695983,
+      "history_improvement_vs_A": 18.48784520024936
+    },
+    {
+      "model": "CatBoost",
+      "A_paired_Group_MAE": 45.613382445529965,
+      "B_history_Group_MAE": 29.19582642927283,
+      "C_delta_Group_MAE": 23.639211041149377,
+      "history_improvement_vs_A": 16.417556016257134
+    },
+    {
+      "model": "MLP",
+      "A_paired_Group_MAE": 46.616844224922254,
+      "B_history_Group_MAE": 28.718946176751615,
+      "C_delta_Group_MAE": 24.253503120187688,
+      "history_improvement_vs_A": 17.89789804817064
+    },
+    {
+      "model": "Median",
+      "A_paired_Group_MAE": 49.561478664483325,
+      "B_history_Group_MAE": 49.561478664483325,
+      "C_delta_Group_MAE": 31.157634806634253,
+      "history_improvement_vs_A": 0.0
+    },
+    {
+      "model": "Persistence",
+      "A_paired_Group_MAE": 35.08990586844814,
+      "B_history_Group_MAE": 35.08990586844814,
+      "C_delta_Group_MAE": 35.08990586844814,
+      "history_improvement_vs_A": 0.0
+    },
+    {
+      "model": "Selected_inner",
+      "A_paired_Group_MAE": 40.493614949622234,
+      "B_history_Group_MAE": 25.173955540603092,
+      "C_delta_Group_MAE": 24.18060776552936,
+      "history_improvement_vs_A": 15.319659409019142
+    }
+  ]
+}

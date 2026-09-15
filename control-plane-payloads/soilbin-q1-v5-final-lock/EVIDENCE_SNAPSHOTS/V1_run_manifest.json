@@ -1,0 +1,70 @@
+{
+  "schema": "soilbin.q1.v1",
+  "finished_utc": "2026-09-14T15:03:46.432961+00:00",
+  "seed": 20260914,
+  "python": "3.12.13",
+  "cpu_count": 4,
+  "n_jobs": 4,
+  "models": [
+    "Linear",
+    "PolynomialRidge",
+    "GAM",
+    "SVR",
+    "GPR",
+    "RandomForest",
+    "ExtraTrees",
+    "CatBoost",
+    "MLP"
+  ],
+  "input_hashes": {
+    "conditions": "afbf4b0538f18a5bf4b26038ed4b2b670d207b3a0c12039b7f47c254aebdd216",
+    "targets": "fa403077b4ec023ffe82a79caeef5ff49a4a43ef5e06ff441a10826a050db488"
+  },
+  "data_freeze": {
+    "runs": 51,
+    "long_rows": 102,
+    "history_rows": 82
+  },
+  "depth_map": {
+    "LC5_peak_magnitude_N": 5,
+    "LC1_peak_magnitude_N": 15
+  },
+  "depth_map_status": "PROVISIONAL_INFERRED_FROM_RESPONSE_MAGNITUDE_PENDING_EXPERIMENTAL_LAYOUT_CONFIRMATION",
+  "response_status": "CALIBRATED_VERTICAL_FORCE_PROXY_N_PENDING_SENSOR_AREA_OR_STRESS_CALIBRATION",
+  "external_validation": false,
+  "evidence_files": [
+    "qc.json",
+    "history_ablation.json",
+    "publication_manifest.json",
+    "summary.json",
+    "FINAL_REPORT.md",
+    "statistical_effects.json",
+    "uncertainty.json",
+    "tables/statistical_effects.csv",
+    "tables/hyperparameter_search.csv",
+    "tables/oof_predictions.csv",
+    "tables/by_pass.csv",
+    "tables/fold_results.csv",
+    "tables/gpr_intervals.csv",
+    "tables/history_ablation.csv",
+    "tables/by_group.csv",
+    "tables/summary.csv",
+    "tables/history_pairs_proxy_N.csv",
+    "tables/permutation_importance.csv",
+    "tables/soilstress_long_proxy_N.csv",
+    "tables/descriptive_statistics.csv",
+    "figures/07_unified_vs_depth_specific.png",
+    "figures/06_history_improvement.png",
+    "figures/10_gpr_coverage.png",
+    "figures/04_model_ranking_A_all.png",
+    "figures/01_response_by_pass_depth.png",
+    "figures/08_error_by_pass_A_all.png",
+    "figures/09_error_by_pass_B_history.png",
+    "figures/05b_observed_predicted_B_history.png",
+    "figures/05_model_ranking_B_history.png",
+    "figures/03_response_by_speed_depth.png",
+    "figures/02_response_by_load_depth.png",
+    "figures/04b_observed_predicted_A_all.png",
+    "state/progress.json"
+  ]
+}

@@ -1,0 +1,5 @@
+version,candidate,primary_value_N,metric,rankable_with_V3_V4,note
+V1,C_delta / RandomForest,23.08770460487868,Group-equal MAE over 82 sensor-depth history observations,False,Historical context only; observation/target structure differs from the 41-pair dual-target joint metric used from V2 onward.
+V2,D_delta_waveform_coupled / Selected_inner,26.735896259973096,joint Group-equal MAE over 41 dual-target history pairs,True,Engineered previous-pass waveform morphology.
+V3,D_delta_prev_peak / Selected_inner,24.28878365273039,joint Group-equal MAE over 41 dual-target history pairs,True,Frozen final champion feature set.
+V4,SPECTRAL,25.06846224345774,joint Group-equal MAE over same 41 dual-target history pairs,True,Best previous-pass raw waveform representation; rejected by pre-registered V5 policy.

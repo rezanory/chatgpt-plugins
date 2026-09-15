@@ -1,0 +1,5 @@
+task,scheme,qc_only,target,nominal,n,empirical_coverage,mean_half_width_N
+D_delta_prev_peak,VW,False,LC1_proxy_N,0.8,41,0.8292682926829268,22.321616204846194
+D_delta_prev_peak,VW,False,LC1_proxy_N,0.95,41,0.9512195121951219,49.01825971214755
+D_delta_prev_peak,VW,False,LC5_proxy_N,0.8,41,0.7073170731707317,50.49582128326421
+D_delta_prev_peak,VW,False,LC5_proxy_N,0.95,41,0.926829268292683,98.89600349223045

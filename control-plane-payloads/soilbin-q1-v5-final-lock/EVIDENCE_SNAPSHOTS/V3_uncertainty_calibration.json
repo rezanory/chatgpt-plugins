@@ -1,0 +1,445 @@
+{
+  "method": "Inner GroupKFold absolute-residual higher-quantile calibration using outer-training groups only; development coverage, not external guarantee.",
+  "rows": [
+    {
+      "task": "A_conditions_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.8048780487804879,
+      "mean_half_width_N": 42.54563993647486
+    },
+    {
+      "task": "A_conditions_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.975609756097561,
+      "mean_half_width_N": 59.287485609379964
+    },
+    {
+      "task": "A_conditions_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.6585365853658537,
+      "mean_half_width_N": 93.32709349713569
+    },
+    {
+      "task": "A_conditions_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.8292682926829268,
+      "mean_half_width_N": 143.7087984342363
+    },
+    {
+      "task": "B_prev_peak_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.8292682926829268,
+      "mean_half_width_N": 27.874770852840356
+    },
+    {
+      "task": "B_prev_peak_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.9512195121951219,
+      "mean_half_width_N": 48.12962401645017
+    },
+    {
+      "task": "B_prev_peak_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.7804878048780488,
+      "mean_half_width_N": 57.97312128509069
+    },
+    {
+      "task": "B_prev_peak_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.975609756097561,
+      "mean_half_width_N": 113.2795420504559
+    },
+    {
+      "task": "C_prev_waveform_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.8536585365853658,
+      "mean_half_width_N": 35.86533514503781
+    },
+    {
+      "task": "C_prev_waveform_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.975609756097561,
+      "mean_half_width_N": 53.10175769765085
+    },
+    {
+      "task": "C_prev_waveform_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.8048780487804879,
+      "mean_half_width_N": 59.367698704018
+    },
+    {
+      "task": "C_prev_waveform_abs",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.926829268292683,
+      "mean_half_width_N": 116.59650378568456
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.8292682926829268,
+      "mean_half_width_N": 22.321616204846194
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.9512195121951219,
+      "mean_half_width_N": 49.01825971214755
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.7073170731707317,
+      "mean_half_width_N": 50.49582128326421
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.926829268292683,
+      "mean_half_width_N": 98.89600349223045
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "VW",
+      "qc_only": true,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 39,
+      "empirical_coverage": 0.7948717948717948,
+      "mean_half_width_N": 23.68817333876424
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "VW",
+      "qc_only": true,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 39,
+      "empirical_coverage": 0.9487179487179487,
+      "mean_half_width_N": 45.68945939143499
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "VW",
+      "qc_only": true,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 39,
+      "empirical_coverage": 0.7692307692307693,
+      "mean_half_width_N": 50.5805215453292
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "VW",
+      "qc_only": true,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 39,
+      "empirical_coverage": 0.9487179487179487,
+      "mean_half_width_N": 95.26792144314352
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "load",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.7073170731707317,
+      "mean_half_width_N": 22.95112115767805
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "load",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.9024390243902439,
+      "mean_half_width_N": 34.70436766606453
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "load",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.7073170731707317,
+      "mean_half_width_N": 54.56105699144924
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "load",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.926829268292683,
+      "mean_half_width_N": 88.40075288405944
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "speed",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.8292682926829268,
+      "mean_half_width_N": 24.600497134499136
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "speed",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.975609756097561,
+      "mean_half_width_N": 44.77669707886795
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "speed",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.7073170731707317,
+      "mean_half_width_N": 48.3851249961636
+    },
+    {
+      "task": "D_delta_prev_peak",
+      "scheme": "speed",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.926829268292683,
+      "mean_half_width_N": 89.530564947757
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.7804878048780488,
+      "mean_half_width_N": 19.89611593988041
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.9512195121951219,
+      "mean_half_width_N": 47.83685127145378
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.7560975609756098,
+      "mean_half_width_N": 55.24695206864242
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "VW",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.9512195121951219,
+      "mean_half_width_N": 94.79103242631516
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "VW",
+      "qc_only": true,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 39,
+      "empirical_coverage": 0.7435897435897436,
+      "mean_half_width_N": 22.11854664810611
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "VW",
+      "qc_only": true,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 39,
+      "empirical_coverage": 0.9487179487179487,
+      "mean_half_width_N": 47.422942784371294
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "VW",
+      "qc_only": true,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 39,
+      "empirical_coverage": 0.7435897435897436,
+      "mean_half_width_N": 58.48940148889959
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "VW",
+      "qc_only": true,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 39,
+      "empirical_coverage": 0.9230769230769231,
+      "mean_half_width_N": 98.40104199147844
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "load",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.7560975609756098,
+      "mean_half_width_N": 25.043711852918694
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "load",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.9512195121951219,
+      "mean_half_width_N": 42.404119745867334
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "load",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.6097560975609756,
+      "mean_half_width_N": 50.83401629768027
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "load",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.9024390243902439,
+      "mean_half_width_N": 84.2416462530141
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "speed",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.7804878048780488,
+      "mean_half_width_N": 23.69046306864861
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "speed",
+      "qc_only": false,
+      "target": "LC1_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.926829268292683,
+      "mean_half_width_N": 44.36033717446537
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "speed",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.8,
+      "n": 41,
+      "empirical_coverage": 0.8536585365853658,
+      "mean_half_width_N": 60.62652061267137
+    },
+    {
+      "task": "E_delta_prev_peak_waveform",
+      "scheme": "speed",
+      "qc_only": false,
+      "target": "LC5_proxy_N",
+      "nominal": 0.95,
+      "n": 41,
+      "empirical_coverage": 0.926829268292683,
+      "mean_half_width_N": 83.76665208989418
+    }
+  ]
+}

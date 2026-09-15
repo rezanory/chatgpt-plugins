@@ -1,0 +1,26 @@
+{
+  "checklist": {
+    "raw_previous_pass_waveform": true,
+    "current_pass_waveform_forbidden": true,
+    "event_resampling_deterministic": true,
+    "nested_grouped_cv": true,
+    "random_split_used": false,
+    "v3_champion_reproduced_same_run": true,
+    "v3_champion_expected_joint_Group_MAE": 24.28878365273039,
+    "dct_representation": true,
+    "spectral_representation": true,
+    "raw_flat_ridge_tree_benchmark": true,
+    "compact_cnn_if_available": true,
+    "paired_group_tests": true,
+    "pre_registered_v5_complexity_policy_applied": true,
+    "external_labels_used": false
+  },
+  "limitations": [
+    "Only 41 history pairs across nine VxW groups; deep learning is exploratory and must beat the frozen V3 baseline under grouped OOF evaluation.",
+    "Event-centered resampling is derived only from previous-pass traces.",
+    "Response remains calibrated vertical force proxy N; depth mapping remains provisional.",
+    "V4 does not re-tune against any external dataset.",
+    "The V3 baseline is reproduced in-run solely to permit paired internal comparison; V3 external labels remain absent."
+  ],
+  "figure_count": 3
+}

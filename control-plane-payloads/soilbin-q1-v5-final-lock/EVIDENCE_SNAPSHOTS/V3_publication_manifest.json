@@ -1,0 +1,82 @@
+{
+  "checklist": {
+    "data_qc": true,
+    "current_waveform_leakage_guard": true,
+    "nested_grouped_cv": true,
+    "random_split_used": false,
+    "delta_previous_peak_ablation": true,
+    "delta_previous_peak_plus_waveform_ablation": true,
+    "paired_group_inference": true,
+    "xgboost_benchmarked_if_available": true,
+    "lightgbm_benchmarked_if_available": true,
+    "catboost_benchmarked_if_available": true,
+    "leave_speed_out": true,
+    "leave_load_out": true,
+    "qc_sensitivity": true,
+    "group_calibrated_uncertainty": true,
+    "independent_external_numeric_datasets": true,
+    "external_labels_used_for_tuning": false,
+    "absolute_external_validation": false,
+    "depth_mapping_confirmed": false,
+    "force_to_stress_conversion_confirmed": false
+  },
+  "limitations": [
+    "Only 41 consecutive next-pass pairs across nine VxW groups are available.",
+    "One run has a QC REVIEW flag; all-data and QC-OK sensitivity are both reported.",
+    "External numeric data are independent but reported in kPa, whereas SoilBin response is a calibrated vertical force proxy in N.",
+    "Therefore V3 external validation is a trend/physics validation, not an absolute cross-unit prediction test.",
+    "ERDC pressure-pad study reports device/synchronization limitations; those rows are retained with caution.",
+    "Depth mapping remains provisional and independent external absolute validation awaits effective sensor area/direct stress calibration."
+  ],
+  "external_sources": [
+    {
+      "id": "EV_CANADA_AYETAN_2026",
+      "role": "primary_external_numeric",
+      "doi": "10.1002/saj2.70200",
+      "url": "https://acsess.onlinelibrary.wiley.com/doi/10.1002/saj2.70200"
+    },
+    {
+      "id": "EV_ERDC_CRREL_2009",
+      "role": "primary_external_numeric",
+      "doi": null,
+      "url": "https://digitalcommons.unl.edu/usarmyresearch/47/"
+    },
+    {
+      "id": "EV_KELLER_2014",
+      "role": "external_physics_corroboration",
+      "doi": "10.1016/j.still.2014.03.001",
+      "url": "https://www.mcgill.ca/civil/files/civil/269.pdf"
+    },
+    {
+      "id": "EV_ARVIDSSON_KELLER_2007",
+      "role": "external_physics_corroboration",
+      "doi": "10.1016/j.still.2007.06.012",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0167198707001146"
+    },
+    {
+      "id": "EV_KELLER_2016",
+      "role": "external_physics_corroboration",
+      "doi": "10.2136/sssaj2015.07.0252",
+      "url": "https://acsess.onlinelibrary.wiley.com/doi/10.2136/sssaj2015.07.0252"
+    },
+    {
+      "id": "EV_BAHRAMI_2023",
+      "role": "external_near_mechanistic_corroboration",
+      "doi": "10.1016/j.biosystemseng.2023.04.013",
+      "url": "https://www.sciencedirect.com/science/article/pii/S1537511023000958"
+    },
+    {
+      "id": "REP_GHESHLAGHI_MARDANI_2021",
+      "role": "near_domain_replication_only",
+      "doi": "10.1016/j.jterra.2021.02.004",
+      "url": "https://www.sciencedirect.com/science/article/abs/pii/S0022489821000161"
+    },
+    {
+      "id": "REP_FARHADI_2025",
+      "role": "near_domain_replication_only",
+      "doi": "10.1038/s41598-025-13535-w",
+      "url": "https://www.nature.com/articles/s41598-025-13535-w"
+    }
+  ],
+  "figure_count": 4
+}

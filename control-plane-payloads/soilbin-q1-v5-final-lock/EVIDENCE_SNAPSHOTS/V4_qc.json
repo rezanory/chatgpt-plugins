@@ -1,0 +1,23 @@
+{
+  "schema": "soilbin.q1.v4",
+  "created_utc": "2026-09-15T10:01:52.901477+00:00",
+  "source_model_csv_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "source_raw_timeseries_sha256": "ea227f412827a962a1876ceb9aeb9946034b435052e9e74115e32bd7dca73cb0",
+  "waveform_used_columns_compact_blob_sha256": "786cd72be8a6e37aa0e34cee044f70b047c9a84f5a9230abc9028117db765677",
+  "valid_runs": 51,
+  "history_pairs": 41,
+  "groups": 9,
+  "resample_n": 256,
+  "wave_shape": [
+    41,
+    256,
+    2
+  ],
+  "response_status": "CALIBRATED_VERTICAL_FORCE_PROXY_N_PENDING_SENSOR_AREA_OR_STRESS_CALIBRATION",
+  "depth_mapping_status": "PROVISIONAL_LC5_5CM_LC1_15CM_PENDING_LAYOUT_CONFIRMATION",
+  "leakage_guard": "Only previous-pass raw LC1/LC5 waveforms, previous peaks, and current operating conditions are predictors. Current-pass waveform is never used.",
+  "external_labels_used": false,
+  "scientific_compute_location": "Kaggle",
+  "v3_frozen_baseline_expected_joint_Group_MAE": 24.28878365273039,
+  "v5_policy_sha256": "c3c802b74ee0426e23d6c8ea6e4fd9ca26cf1128f5da3a32ca2b0b20aa6c7c02"
+}

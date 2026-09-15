@@ -1,0 +1,42 @@
+{
+  "schema": "soilbin.q1.v4",
+  "finished_utc": "2026-09-15T10:18:20.257666+00:00",
+  "seed": 20260914,
+  "python": "3.12.13",
+  "cpu_count": 4,
+  "source_fingerprints": {
+    "model_csv": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+    "raw_timeseries_source": "ea227f412827a962a1876ceb9aeb9946034b435052e9e74115e32bd7dca73cb0",
+    "waveform_used_columns_compact_blob": "786cd72be8a6e37aa0e34cee044f70b047c9a84f5a9230abc9028117db765677",
+    "waveform_used_columns_compact_xz": "6ccca93e5e146e67908e37cf07575bdf1ed44b0f3b84fcf0ee3198cd2ffa02c9"
+  },
+  "models_available": {
+    "CatBoost": true,
+    "XGBoost": true,
+    "LightGBM": true,
+    "PyTorch": true
+  },
+  "v3_baseline_expected_joint_Group_MAE": 24.28878365273039,
+  "v5_policy_sha256": "c3c802b74ee0426e23d6c8ea6e4fd9ca26cf1128f5da3a32ca2b0b20aa6c7c02",
+  "response_status": "CALIBRATED_VERTICAL_FORCE_PROXY_N_PENDING_SENSOR_AREA_OR_STRESS_CALIBRATION",
+  "depth_mapping_status": "PROVISIONAL_LC5_5CM_LC1_15CM_PENDING_LAYOUT_CONFIRMATION",
+  "external_labels_used": false,
+  "evidence_files": [
+    "figures/01_raw_representation_ranking_v4.png",
+    "figures/02_LC1_proxy_N_observed_predicted_v4.png",
+    "figures/03_LC5_proxy_N_observed_predicted_v4.png",
+    "paired_representation_tests_v4.json",
+    "publication_manifest_v4.json",
+    "qc_v4.json",
+    "state/progress_v4.json",
+    "summary_v4.json",
+    "tables/hyperparameter_search_v4.csv",
+    "tables/oof_predictions_v4.csv",
+    "tables/paired_representation_tests_v4.csv",
+    "tables/previous_waveform_event_windows_v4.csv",
+    "tables/selection_v4.csv",
+    "tables/summary_v4.csv",
+    "v3_champion_reproduction_v4.json",
+    "v3_vs_raw_waveform_v4.json"
+  ]
+}

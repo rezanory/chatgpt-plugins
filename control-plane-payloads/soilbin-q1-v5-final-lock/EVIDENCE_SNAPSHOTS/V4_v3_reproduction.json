@@ -1,0 +1,9 @@
+{
+  "representation": "V3_D_DELTA_PREV_PEAK_FROZEN",
+  "expected_joint_Group_MAE": 24.28878365273039,
+  "observed_joint_Group_MAE": 24.28878365273039,
+  "absolute_delta_N": 0,
+  "tolerance_N": 1e-06,
+  "reproduced": true,
+  "candidate_count": 23
+}

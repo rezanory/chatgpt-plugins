@@ -1,0 +1,51 @@
+{
+  "rows": [
+    {
+      "champion": "V3_D_DELTA_PREV_PEAK_FROZEN",
+      "comparator": "COMPACT_CNN",
+      "mean_group_improvement_N": 6.310986359991161,
+      "exact_signflip_one_sided_p": 0.01171875,
+      "n_groups": 9
+    },
+    {
+      "champion": "V3_D_DELTA_PREV_PEAK_FROZEN",
+      "comparator": "DCT",
+      "mean_group_improvement_N": 1.6631460553433846,
+      "exact_signflip_one_sided_p": 0.060546875,
+      "n_groups": 9
+    },
+    {
+      "champion": "V3_D_DELTA_PREV_PEAK_FROZEN",
+      "comparator": "RAW_FLAT",
+      "mean_group_improvement_N": 2.4094593688219503,
+      "exact_signflip_one_sided_p": 0.03125,
+      "n_groups": 9
+    },
+    {
+      "champion": "V3_D_DELTA_PREV_PEAK_FROZEN",
+      "comparator": "SPECTRAL",
+      "mean_group_improvement_N": 0.7796785907273526,
+      "exact_signflip_one_sided_p": 0.185546875,
+      "n_groups": 9
+    }
+  ],
+  "v3_vs_best_raw": {
+    "baseline_representation": "V3_D_DELTA_PREV_PEAK_FROZEN",
+    "baseline_joint_Group_MAE": 24.28878365273039,
+    "raw_waveform_champion": "SPECTRAL",
+    "raw_joint_Group_MAE": 25.06846224345774,
+    "relative_raw_improvement_pct": -3.2100355533435847,
+    "mean_paired_group_raw_improvement_N": -0.7796785907273526,
+    "exact_signflip_one_sided_p": 0.81640625,
+    "n_groups": 9,
+    "LC1_baseline_Group_MAE": 12.785420282422,
+    "LC1_raw_Group_MAE": 13.421210739929784,
+    "LC5_baseline_Group_MAE": 35.79214702303878,
+    "LC5_raw_Group_MAE": 36.7157137469857,
+    "target_guard_no_worse_than_5pct": true,
+    "v5_policy_sha256": "c3c802b74ee0426e23d6c8ea6e4fd9ca26cf1128f5da3a32ca2b0b20aa6c7c02",
+    "v5_admission_decision": "RETAIN_V3_BASELINE_COMPLEXITY_TIE_RULE",
+    "policy_note": "Frozen before V3/V4 results: <2% chooses simpler; raw/deep replacement requires >=5% gain OR materially stronger exact paired evidence, plus <=5% worsening per target. Material paired evidence operationalized here as positive mean paired improvement and exact one-sided sign-flip p<=0.05."
+  },
+  "guard": "Nine VxW groups; inferential precision is limited."
+}
