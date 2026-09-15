@@ -888,12 +888,17 @@ jobs:
           name: m07-runtime-notebook-${{ github.run_id }}
           path: exact-runtime
 
+      - name: Install read-only Kaggle identity client
+        shell: bash
+        run: python -m pip install -q 'kagglehub>=1.0,<2'
+
       - name: Verify identity, exact bytes and immutable runtime contract
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           import base64, hashlib, json, os, pathlib, urllib.request
+          import kagglehub
 
           token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
           if not token:
@@ -924,14 +929,8 @@ jobs:
                   raw=response.read().decode('utf-8','replace')
                   return response.status,(json.loads(raw) if raw else {})
 
-          _,listed=post('kernels.KernelsApiService','ListKernels',{'group':'PROFILE','pageSize':10})
-          detected=''
-          for item in listed.get('kernels') or []:
-              detected=(item.get('author') or '').strip()
-              if not detected:
-                  ref=(item.get('ref') or '').strip()
-                  if '/' in ref: detected=ref.split('/',1)[0]
-              if detected: break
+          me=kagglehub.whoami()
+          detected=str((me or {}).get('username') or '').strip()
           if detected.lower()!=owner.lower():
               raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: expected={owner} detected={detected or "UNKNOWN"}')
 
