@@ -16,7 +16,7 @@ const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
 const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   [
     "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-8acct-20260912.yml@refs/heads/main",
-    new Set(["issue_comment"]),
+    new Set(["issue_comment", "workflow_dispatch"]),
   ],
 ]);
 const CLOCK_SKEW_SECONDS = 60;
