@@ -90,6 +90,21 @@ jobs:
               raise SystemExit("M07_RUNTIME_ATTEMPT_OUT_OF_RANGE")
           RUNTIME_ACCOUNT = "kg-05" if RUNTIME_RESOLUTION == 384 else "kg-03"
           RUNTIME_OWNER = "trickermark" if RUNTIME_RESOLUTION == 384 else "rezanory"
+          # A03 completed successfully but had been launched without the
+          # four-fold R320 state input.  It consequently published a new
+          # one-fold snapshot as dataset Version 5.  A04 must restore the
+          # immutable Version 4 snapshot (folds 1-4) and may then append only
+          # the missing fold 5 as a new dataset version.
+          RUNTIME_SOURCE_STATE_HANDLE = (
+              "rezanory/m07-gate-r320-state-v1-7/versions/4"
+              if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A04"
+              else None
+          )
+          RUNTIME_DATE = (
+              "20260916"
+              if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A04"
+              else "20260915"
+          )
           headers = {
               "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
               "Accept": "application/vnd.github+json",
@@ -443,6 +458,26 @@ jobs:
                   "",
               ])
               run_source = run_source.replace(persist_anchor, bounded_return, 1)
+              restore_download_old = (
+                  "        kagglehub.dataset_download(phase2_handle(model_id, resolution), "
+                  "output_dir=str(temp), force_download=True)"
+              )
+              restore_download_new = "\n".join([
+                  "        restore_handle = (",
+                  "            globals().get('CGP_RUNTIME_SOURCE_STATE_HANDLE')",
+                  "            or phase2_handle(model_id, resolution)",
+                  "        )",
+                  "        kagglehub.dataset_download(",
+                  "            restore_handle, output_dir=str(temp), force_download=True",
+                  "        )",
+              ])
+              if run_source.count(restore_download_old) != 1:
+                  raise SystemExit("M07_RUNTIME_RESTORE_DOWNLOAD_ANCHOR_DRIFT")
+              run_source = run_source.replace(
+                  restore_download_old,
+                  restore_download_new,
+                  1,
+              )
               notebook["cells"][run_index]["source"] = run_source.splitlines(keepends=True)
 
               gate_cell_hits = []
@@ -458,9 +493,16 @@ jobs:
               stage_runner = f'''# M07 bounded runtime recovery stage.
           CGP_RUNTIME_RESOLUTION = {RUNTIME_RESOLUTION!r}
           CGP_RUNTIME_ATTEMPT = {RUNTIME_ATTEMPT!r}
-          CGP_RUNTIME_PHASE2_STATE_ATTACH_OPTIONAL = True
+          CGP_RUNTIME_SOURCE_STATE_HANDLE = {RUNTIME_SOURCE_STATE_HANDLE!r}
+          CGP_RUNTIME_PHASE2_STATE_ATTACH_OPTIONAL = (
+              CGP_RUNTIME_RESOLUTION == 384 and CGP_RUNTIME_ATTEMPT == 1
+          )
           _restored_folds = phase2_restore("M07", CGP_RUNTIME_RESOLUTION)
-          if CGP_RUNTIME_RESOLUTION == 320 and CGP_RUNTIME_ATTEMPT == 1 and _restored_folds != 4:
+          if (
+              CGP_RUNTIME_RESOLUTION == 320
+              and CGP_RUNTIME_ATTEMPT in {{1, 4}}
+              and _restored_folds != 4
+          ):
               raise RuntimeError(
                   f"M07 R320 exact recovery expected 4 sealed folds, observed {{_restored_folds}}"
               )
@@ -618,7 +660,7 @@ jobs:
           if phase2_owner_hits != 1:
               raise SystemExit(f"M07_PHASE2_OWNER_BINDING_COUNT={phase2_owner_hits}")
           kernel_slug = (
-              f"{RUNTIME_OWNER}/m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-20260915"
+              f"{RUNTIME_OWNER}/m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-{RUNTIME_DATE}"
               if RUNTIME_MODE else
               "rezanory/m07-phase2-unlock-20260915"
               if UNLOCK_MODE else
@@ -652,6 +694,7 @@ jobs:
                   "account_id": RUNTIME_ACCOUNT,
                   "owner": RUNTIME_OWNER,
                   "source_persistence_handle": PERSIST_HANDLE,
+                  "source_phase2_state_handle": RUNTIME_SOURCE_STATE_HANDLE,
                   "max_new_folds": 1 if RUNTIME_MODE else None,
               },
               "manual_approval": {
