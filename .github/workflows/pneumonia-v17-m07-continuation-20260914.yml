@@ -713,7 +713,7 @@ jobs:
       EXPECTED_RESOLUTION: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '320' || '384' }}
       EXPECTED_ATTEMPT: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '2' || '1' }}
       EXPECTED_TITLE: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'M07 Runtime R320 A02 20260915' || 'M07 Runtime R384 A01 20260915' }}
-      EXPECTED_MACHINE_SHAPE: NvidiaTeslaP100
+      EXPECTED_MACHINE_SHAPE: NvidiaTeslaT4
     steps:
       - name: Download the exact notebook built by this run
         uses: actions/download-artifact@v4
