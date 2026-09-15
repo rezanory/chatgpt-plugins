@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       recovery:
-        description: One-time recovery gate; use M07_PHASE2_UNLOCK_APPROVED_BY_USER only after explicit M07 approval
+        description: One-time recovery gate; Phase2 unlock or M07_RUNTIME_M07_R{320|384}_A{NN}
         required: true
         type: string
 
@@ -39,7 +39,9 @@ jobs:
           (github.event_name == 'workflow_dispatch' &&
           github.event.inputs.recovery == 'M07_PERSIST_UPLOAD_RETRY_FIX1') ||
           (github.event_name == 'workflow_dispatch' &&
-          github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER') }}
+          github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER') ||
+          (github.event_name == 'workflow_dispatch' &&
+          startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R')) }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -52,7 +54,8 @@ jobs:
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          M07_PHASE2_UNLOCK: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER' }}
+          M07_PHASE2_UNLOCK: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER' || startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R')) }}
+          M07_RUNTIME_STAGE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.recovery || '' }}
         run: |
           $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
@@ -71,6 +74,15 @@ jobs:
           PERSIST_HANDLE = "rezanory/m07-final-5fold-fix2-d260914d"
           RECIPE_FP = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
           UNLOCK_MODE = os.environ.get("M07_PHASE2_UNLOCK", "").lower() == "true"
+          RUNTIME_TOKEN = os.environ.get("M07_RUNTIME_STAGE", "").strip()
+          runtime_match = re.fullmatch(r"M07_RUNTIME_M07_R(320|384)_A([0-9]{2})", RUNTIME_TOKEN)
+          if RUNTIME_TOKEN.startswith("M07_RUNTIME_") and runtime_match is None:
+              raise SystemExit("M07_RUNTIME_STAGE_TOKEN_INVALID")
+          RUNTIME_MODE = runtime_match is not None
+          RUNTIME_RESOLUTION = int(runtime_match.group(1)) if runtime_match else None
+          RUNTIME_ATTEMPT = int(runtime_match.group(2)) if runtime_match else None
+          if RUNTIME_MODE and not 1 <= RUNTIME_ATTEMPT <= 99:
+              raise SystemExit("M07_RUNTIME_ATTEMPT_OUT_OF_RANGE")
           headers = {
               "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
               "Accept": "application/vnd.github+json",
@@ -183,7 +195,7 @@ jobs:
               # this one-shot workflow token; never unlock on the old issue
               # comment or any recovery token.
               print("M07_PHASE2_MANUAL_APPROVAL_ACCEPTED", {
-                  "approval_token": "M07_PHASE2_UNLOCK_APPROVED_BY_USER",
+                  "approval_token": RUNTIME_TOKEN if RUNTIME_MODE else "M07_PHASE2_UNLOCK_APPROVED_BY_USER",
                   "source": "user_campaign_directive_d260914d",
               })
 
@@ -359,6 +371,138 @@ jobs:
               ]
           else:
               notebook["cells"] = notebook["cells"][:13] + notebook["cells"][14:24]
+
+          if RUNTIME_MODE:
+              # A Kaggle session must complete at most one previously missing fold.
+              # Every completed fold is sealed and uploaded before this controlled
+              # success return, so a later immutable candidate resumes exact state.
+              config_source = "".join(notebook["cells"][1].get("source", []))
+              config_source += "\nCGP_MAX_NEW_FOLDS_PER_RUN = 1\n"
+              notebook["cells"][1]["source"] = config_source.splitlines(keepends=True)
+
+              run_cell_hits = []
+              for index, cell in enumerate(notebook["cells"]):
+                  source = "".join(cell.get("source", []))
+                  if "def run_phase2_model_resolution(" in source:
+                      run_cell_hits.append((index, source))
+              if len(run_cell_hits) != 1:
+                  raise SystemExit(f"M07_RUNTIME_RUN_CELL_COUNT={len(run_cell_hits)}")
+              run_index, run_source = run_cell_hits[0]
+              counter_anchor = "    thresholds = {}\n"
+              if run_source.count(counter_anchor) != 1:
+                  raise SystemExit("M07_RUNTIME_COUNTER_ANCHOR_DRIFT")
+              run_source = run_source.replace(
+                  counter_anchor,
+                  counter_anchor + "    new_folds_completed = 0\n",
+                  1,
+              )
+              persist_anchor = "\n".join([
+                  "            phase2_persist_fold(",
+                  "                model_id,",
+                  "                resolution,",
+                  "                fold,",
+                  "            )",
+                  "",
+              ])
+              if run_source.count(persist_anchor) != 1:
+                  raise SystemExit("M07_RUNTIME_PERSIST_ANCHOR_DRIFT")
+              bounded_return = persist_anchor + "\n".join([
+                  "            new_folds_completed += 1",
+                  "            if (",
+                  "                new_folds_completed >= CGP_MAX_NEW_FOLDS_PER_RUN",
+                  "                and fold < 5",
+                  "                and not all(",
+                  "                    (folds_root / f'fold_{candidate_fold}' / 'COMPLETED.json').is_file()",
+                  "                    for candidate_fold in range(1, 6)",
+                  "                )",
+                  "            ):",
+                  "                partial = {",
+                  "                    'status': 'PARTIAL_FOLD_UNIT_COMPLETE',",
+                  "                    'model_id': model_id,",
+                  "                    'resolution': int(resolution),",
+                  "                    'completed_fold': int(fold),",
+                  "                    'new_folds_completed': int(new_folds_completed),",
+                  "                    'next_action': 'LAUNCH_NEW_IMMUTABLE_CANDIDATE',",
+                  "                }",
+                  "                atomic_write_json(",
+                  "                    out / 'PARTIAL_RUN_RECEIPT.json',",
+                  "                    seal_receipt(",
+                  "                        partial,",
+                  "                        phase2_contract(model_id, resolution, stage='phase2_campaign'),",
+                  "                        {'campaign_state': phase2_state_root(model_id, resolution) / 'CAMPAIGN_STATE.json'},",
+                  "                    ),",
+                  "                )",
+                  "                return partial",
+                  "",
+              ])
+              run_source = run_source.replace(persist_anchor, bounded_return, 1)
+              notebook["cells"][run_index]["source"] = run_source.splitlines(keepends=True)
+
+              gate_cell_hits = []
+              gate_marker = "# 1) Complete M07 at R320/R384 using the exact frozen R224 recipe."
+              for index, cell in enumerate(notebook["cells"]):
+                  source = "".join(cell.get("source", []))
+                  if gate_marker in source:
+                      gate_cell_hits.append((index, source))
+              if len(gate_cell_hits) != 1:
+                  raise SystemExit(f"M07_RUNTIME_GATE_CELL_COUNT={len(gate_cell_hits)}")
+              gate_index, gate_source = gate_cell_hits[0]
+              definitions = gate_source.split(gate_marker, 1)[0]
+              stage_runner = f'''# M07 bounded runtime recovery stage.
+          CGP_RUNTIME_RESOLUTION = {RUNTIME_RESOLUTION!r}
+          CGP_RUNTIME_ATTEMPT = {RUNTIME_ATTEMPT!r}
+          _restored_folds = phase2_restore("M07", CGP_RUNTIME_RESOLUTION)
+          if CGP_RUNTIME_RESOLUTION == 320 and CGP_RUNTIME_ATTEMPT == 1 and _restored_folds != 4:
+              raise RuntimeError(
+                  f"M07 R320 exact recovery expected 4 sealed folds, observed {{_restored_folds}}"
+              )
+          if not 0 <= int(_restored_folds) <= 5:
+              raise RuntimeError("M07 recovery fold inventory is out of range")
+          m07_highres_accumulation_preflight(CGP_RUNTIME_RESOLUTION)
+          _stage_report = run_m07_gate_resolution(CGP_RUNTIME_RESOLUTION)
+          _stage_status = str(_stage_report.get("status", ""))
+          if _stage_status not in {{"PARTIAL_FOLD_UNIT_COMPLETE", "COMPLETE"}}:
+              raise RuntimeError(f"Unexpected M07 runtime stage status: {{_stage_status}}")
+          _stage_artifacts = {{
+              "campaign_state": phase2_state_root("M07", CGP_RUNTIME_RESOLUTION) / "CAMPAIGN_STATE.json",
+          }}
+          _final_report_path = phase2_output_root("M07", CGP_RUNTIME_RESOLUTION) / "FINAL_REPORT.json"
+          if _final_report_path.is_file():
+              phase2_validate_report("M07", CGP_RUNTIME_RESOLUTION)
+              _stage_artifacts["final_report"] = _final_report_path
+          _stage_receipt_path = OUTPUT_ROOT / (
+              f"M07_RUNTIME_R{{CGP_RUNTIME_RESOLUTION}}_A{{CGP_RUNTIME_ATTEMPT:02d}}_RECEIPT.json"
+          )
+          atomic_write_json(
+              _stage_receipt_path,
+              seal_receipt(
+                  {{
+                      "status": _stage_status,
+                      "model_id": "M07",
+                      "resolution": int(CGP_RUNTIME_RESOLUTION),
+                      "attempt": int(CGP_RUNTIME_ATTEMPT),
+                      "restored_folds": int(_restored_folds),
+                      "max_new_folds": int(CGP_MAX_NEW_FOLDS_PER_RUN),
+                      "persistence_handle": phase2_handle("M07", CGP_RUNTIME_RESOLUTION),
+                      "source_incident": "rezanory/m07-phase2-unlock-20260915:CANCEL_ACKNOWLEDGED",
+                  }},
+                  phase2_contract("M07", CGP_RUNTIME_RESOLUTION, stage="phase2_campaign"),
+                  _stage_artifacts,
+              ),
+          )
+          print(
+              "M07_RUNTIME_STAGE_SUCCESS",
+              json.dumps({{
+                  "resolution": CGP_RUNTIME_RESOLUTION,
+                  "attempt": CGP_RUNTIME_ATTEMPT,
+                  "restored_folds": _restored_folds,
+                  "status": _stage_status,
+                  "receipt": str(_stage_receipt_path),
+              }}, sort_keys=True),
+          )
+          '''
+              notebook["cells"][gate_index]["source"] = (definitions + stage_runner).splitlines(keepends=True)
+              notebook["cells"] = notebook["cells"][:gate_index + 1]
           # The canonical notebook derives a full handle as owner/slug.  Keep
           # the persisted dataset slug unqualified to avoid owner duplication.
           persist_slug = PERSIST_HANDLE.split("/", 1)[1]
@@ -367,29 +511,41 @@ jobs:
               source = source.replace('"m07-multires-gate-run-safe-v17"', json.dumps(persist_slug))
               cell["source"] = source.splitlines(keepends=True)
           kernel_slug = (
+              f"rezanory/m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-20260915"
+              if RUNTIME_MODE else
               "rezanory/m07-phase2-unlock-20260915"
-              if UNLOCK_MODE
-              else "rezanory/m07-locked-test-diagnostics-fix1-20260914"
+              if UNLOCK_MODE else
+              "rezanory/m07-locked-test-diagnostics-fix1-20260914"
           )
           kernel_title = (
+              f"M07 Runtime R{RUNTIME_RESOLUTION} A{RUNTIME_ATTEMPT:02d} 20260915"
+              if RUNTIME_MODE else
               "M07 Phase2 Unlock 20260915"
-              if UNLOCK_MODE
-              else "M07 Locked Test Diagnostics Fix1 20260914"
+              if UNLOCK_MODE else
+              "M07 Locked Test Diagnostics Fix1 20260914"
           )
           request_id = (
+              f"pneumonia-v17-d260914d-m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-v1"
+              if RUNTIME_MODE else
               "pneumonia-v17-d260914d-m07-phase2-unlock-v1"
-              if UNLOCK_MODE
-              else "pneumonia-v17-d260914d-m07-locked-test-diagnostics-fix1-v1"
+              if UNLOCK_MODE else
+              "pneumonia-v17-d260914d-m07-locked-test-diagnostics-fix1-v1"
           )
           notebook.setdefault("metadata", {})["cgp_continuation"] = {
-              "schema": "m07.d260914d.phase2_unlock.builder.v1" if UNLOCK_MODE else "m07.d260914d.continuation.builder.v2",
+              "schema": "m07.d260914d.runtime_partition.builder.v1" if RUNTIME_MODE else "m07.d260914d.phase2_unlock.builder.v1" if UNLOCK_MODE else "m07.d260914d.continuation.builder.v2",
               "campaign_id": "d260914d", "winner_candidate_id": 2,
               "final5_kernel_ref": FINAL5_REF, "final5_code_sha256": PREDECESSOR_LAUNCH_SHA,
               "persistence_handle": PERSIST_HANDLE, "split_fingerprint": "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9",
               "artifact_evidence": {"status": "PASS", **(artifact_green or {})},
               "locked_test_used": False, "external_used": False, "phase2_unlocked": bool(UNLOCK_MODE),
+              "runtime_partition": {
+                  "enabled": bool(RUNTIME_MODE),
+                  "resolution": RUNTIME_RESOLUTION,
+                  "attempt": RUNTIME_ATTEMPT,
+                  "max_new_folds": 1 if RUNTIME_MODE else None,
+              },
               "manual_approval": {
-                  "token": "M07_PHASE2_UNLOCK_APPROVED_BY_USER" if UNLOCK_MODE else None,
+                  "token": RUNTIME_TOKEN if RUNTIME_MODE else "M07_PHASE2_UNLOCK_APPROVED_BY_USER" if UNLOCK_MODE else None,
                   "source": "user_campaign_directive_d260914d" if UNLOCK_MODE else None,
               },
               "persistence_upload_retry": "M07_PERSIST_UPLOAD_RETRY_FIX1",
@@ -413,6 +569,7 @@ jobs:
           "CGP_KERNEL_TITLE=$((Get-Content $env:RUNNER_TEMP\m07_kernel_title.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_REQUEST_ID=$((Get-Content $env:RUNNER_TEMP\m07_request_id.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_PHASE2_UNLOCK=$env:M07_PHASE2_UNLOCK" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_RUNTIME_STAGE=$env:M07_RUNTIME_STAGE" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Request trusted action OIDC identity
         shell: powershell
@@ -439,7 +596,9 @@ jobs:
           payload = {
               "request_id": os.environ["CGP_REQUEST_ID"].strip(),
               "provider": "kaggle", "operation_class": "compute", "account_id": "kg-03",
-              "purpose": ("d260914d M07 explicit manual unlock: complete R320/R384 M07 Gate, then run the remaining M01-M06/M08-M12 Phase-2 matrix; reuse exact persisted R224 five folds, never retrain M07 in Phase-2."
+              "purpose": (f"d260914d bounded M07 runtime recovery {os.environ.get('CGP_RUNTIME_STAGE')}: restore only sealed folds, complete at most one missing fold, persist it, and exit successfully."
+                          if os.environ.get("CGP_RUNTIME_STAGE", "").startswith("M07_RUNTIME_M07_R")
+                          else "d260914d M07 explicit manual unlock: complete R320/R384 M07 Gate, then run the remaining M01-M06/M08-M12 Phase-2 matrix; reuse exact persisted R224 five folds, never retrain M07 in Phase-2."
                           if "PHASE2_UNLOCK" in os.environ["CGP_NOTEBOOK_PATH"]
                           else "d260914d M07 continuation after exact final-five-fold PASS; reuse persisted folds, run OOF/one-time Locked Test/diagnostics/figures/XAI/casebook/external/final gate; Phase2 remains locked."),
               "service": "kernels.KernelsApiService", "method": "SaveKernel",
@@ -466,7 +625,9 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $body="## PNEUMONIA V1.7 d260914d M07 $(if($env:CGP_PHASE2_UNLOCK -eq 'true'){'PHASE2 UNLOCK'}else{'LOCKED TEST DIAGNOSTICS FIX1'}) ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted five-fold evidence reused; M07 is never retrained in Phase-2`n- Approval token: ``$(if($env:CGP_PHASE2_UNLOCK -eq 'true'){'M07_PHASE2_UNLOCK_APPROVED_BY_USER'}else{'none'})```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
+          $mode=if($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'PHASE2 UNLOCK'}else{'LOCKED TEST DIAGNOSTICS FIX1'}
+          $approval=if($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'M07_PHASE2_UNLOCK_APPROVED_BY_USER'}else{'none'}
+          $body="## PNEUMONIA V1.7 d260914d M07 $mode ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted five-fold evidence reused; bounded runtime mode completes at most one missing fold`n- Approval token: ``$approval```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
   soilbin_q1_v4_raw_waveform:
     if: >-
