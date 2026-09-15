@@ -10,7 +10,7 @@ const TRUSTED_REF = "refs/heads/main";
 const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   [
     "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main",
-    new Set(["issue_comment"]),
+    new Set(["issue_comment", "workflow_dispatch"]),
   ],
 ]);
 const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
