@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       recovery:
-        description: One-time recovery gate after a deterministic continuation failure
+        description: One-time recovery gate; use M07_PHASE2_UNLOCK_APPROVED_BY_USER only after explicit M07 approval
         required: true
         type: string
 
@@ -37,7 +37,9 @@ jobs:
           (github.event_name == 'workflow_dispatch' &&
           github.event.inputs.recovery == 'M07_HPO_ROOT_FIX1') ||
           (github.event_name == 'workflow_dispatch' &&
-          github.event.inputs.recovery == 'M07_PERSIST_UPLOAD_RETRY_FIX1') }}
+          github.event.inputs.recovery == 'M07_PERSIST_UPLOAD_RETRY_FIX1') ||
+          (github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER') }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -50,6 +52,7 @@ jobs:
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          M07_PHASE2_UNLOCK: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER' }}
         run: |
           $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
@@ -67,6 +70,7 @@ jobs:
           FINAL5_REF = "rezanory/m07-final-5fold-fix2-20260914"
           PERSIST_HANDLE = "rezanory/m07-final-5fold-fix2-d260914d"
           RECIPE_FP = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
+          UNLOCK_MODE = os.environ.get("M07_PHASE2_UNLOCK", "").lower() == "true"
           headers = {
               "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
               "Accept": "application/vnd.github+json",
@@ -172,6 +176,16 @@ jobs:
               raise SystemExit("CONTINUATION_BLOCKED_FINAL5_ARTIFACTS_NOT_EXACT_GREEN")
           if not artifact_green.get("query_request_id") or not artifact_green.get("query_broker_run_id"):
               raise SystemExit("CONTINUATION_BLOCKED_ARTIFACT_EVIDENCE_IDENTITY_MISSING")
+
+          if UNLOCK_MODE:
+              # The user's campaign directive authorizes completion of the
+              # remaining models.  Keep the approval explicit and bound to
+              # this one-shot workflow token; never unlock on the old issue
+              # comment or any recovery token.
+              print("M07_PHASE2_MANUAL_APPROVAL_ACCEPTED", {
+                  "approval_token": "M07_PHASE2_UNLOCK_APPROVED_BY_USER",
+                  "source": "user_campaign_directive_d260914d",
+              })
 
           notebook_path = pathlib.Path("control-plane-payloads/pneumonia-v17-20260912/PNEUMONIA_MASTER_M01_M12_M07_GATE_RUN_SAFE_V1_7.ipynb")
           notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
@@ -333,7 +347,18 @@ jobs:
                   retry_hits += 1
           if retry_hits != 1:
               raise SystemExit(f"M07_PERSIST_UPLOAD_RETRY_FIX1 expected one _persist_upload patch, got {retry_hits}")
-          notebook["cells"] = notebook["cells"][:13] + notebook["cells"][14:24]
+          # Skip HPO and its figure cell: the exact R224 HPO/five-fold
+          # predecessor is immutable.  Unlock mode keeps the multi-resolution
+          # Gate and the Phase-2 orchestrator (cells 27/28); the recovery mode
+          # stops after the R224 diagnostics/evidence cells.
+          if UNLOCK_MODE:
+              notebook["cells"] = notebook["cells"][:13] + notebook["cells"][14:]
+              notebook["cells"][1]["source"] = [
+                  line.replace("UNLOCK_REMAINING_MODELS = False", "UNLOCK_REMAINING_MODELS = True", 1)
+                  for line in notebook["cells"][1]["source"]
+              ]
+          else:
+              notebook["cells"] = notebook["cells"][:13] + notebook["cells"][14:24]
           # The canonical notebook derives a full handle as owner/slug.  Keep
           # the persisted dataset slug unqualified to avoid owner duplication.
           persist_slug = PERSIST_HANDLE.split("/", 1)[1]
@@ -341,23 +366,53 @@ jobs:
               source = "".join(cell.get("source", []))
               source = source.replace('"m07-multires-gate-run-safe-v17"', json.dumps(persist_slug))
               cell["source"] = source.splitlines(keepends=True)
+          kernel_slug = (
+              "rezanory/m07-phase2-unlock-20260915"
+              if UNLOCK_MODE
+              else "rezanory/m07-locked-test-diagnostics-fix1-20260914"
+          )
+          kernel_title = (
+              "M07 Phase2 Unlock 20260915"
+              if UNLOCK_MODE
+              else "M07 Locked Test Diagnostics Fix1 20260914"
+          )
+          request_id = (
+              "pneumonia-v17-d260914d-m07-phase2-unlock-v1"
+              if UNLOCK_MODE
+              else "pneumonia-v17-d260914d-m07-locked-test-diagnostics-fix1-v1"
+          )
           notebook.setdefault("metadata", {})["cgp_continuation"] = {
-              "schema": "m07.d260914d.continuation.builder.v2",
+              "schema": "m07.d260914d.phase2_unlock.builder.v1" if UNLOCK_MODE else "m07.d260914d.continuation.builder.v2",
               "campaign_id": "d260914d", "winner_candidate_id": 2,
               "final5_kernel_ref": FINAL5_REF, "final5_code_sha256": PREDECESSOR_LAUNCH_SHA,
               "persistence_handle": PERSIST_HANDLE, "split_fingerprint": "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9",
               "artifact_evidence": {"status": "PASS", **(artifact_green or {})},
-              "locked_test_used": False, "external_used": False, "phase2_unlocked": False,
+              "locked_test_used": False, "external_used": False, "phase2_unlocked": bool(UNLOCK_MODE),
+              "manual_approval": {
+                  "token": "M07_PHASE2_UNLOCK_APPROVED_BY_USER" if UNLOCK_MODE else None,
+                  "source": "user_campaign_directive_d260914d" if UNLOCK_MODE else None,
+              },
               "persistence_upload_retry": "M07_PERSIST_UPLOAD_RETRY_FIX1",
           }
-          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "PNEUMONIA_V17_D260914D_M07_LOCKED_TEST_DIAGNOSTICS_FIX1.ipynb"
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / (
+              "PNEUMONIA_V17_D260914D_M07_PHASE2_UNLOCK.ipynb"
+              if UNLOCK_MODE
+              else "PNEUMONIA_V17_D260914D_M07_LOCKED_TEST_DIAGNOSTICS_FIX1.ipynb"
+          )
           out.write_text(json.dumps(notebook, ensure_ascii=False, indent=1), encoding="utf-8")
-          print("M07_CONTINUATION_NOTEBOOK_BUILT", out.name, "cells=23", "final5=exact-green")
+          print("M07_CONTINUATION_NOTEBOOK_BUILT", out.name, "cells=" + str(len(notebook["cells"])), "final5=exact-green", "phase2_unlocked=" + str(UNLOCK_MODE))
+          pathlib.Path(os.environ["RUNNER_TEMP"], "m07_kernel_slug.txt").write_text(kernel_slug, encoding="utf-8")
+          pathlib.Path(os.environ["RUNNER_TEMP"], "m07_kernel_title.txt").write_text(kernel_title, encoding="utf-8")
+          pathlib.Path(os.environ["RUNNER_TEMP"], "m07_request_id.txt").write_text(request_id, encoding="utf-8")
           '@
           $builderOutput = @($script | & $python - 2>&1)
           $builderCode = $LASTEXITCODE
           if($builderCode -ne 0){throw ('M07_CONTINUATION_BUILDER_FAILURE=' + ($builderOutput -join "`n"))}
-          "CGP_NOTEBOOK_PATH=$env:RUNNER_TEMP\PNEUMONIA_V17_D260914D_M07_LOCKED_TEST_DIAGNOSTICS_FIX1.ipynb" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_NOTEBOOK_PATH=$env:RUNNER_TEMP\PNEUMONIA_V17_D260914D_M07_$(if($env:M07_PHASE2_UNLOCK -eq 'true'){'PHASE2_UNLOCK'}else{'LOCKED_TEST_DIAGNOSTICS_FIX1'}).ipynb" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_KERNEL_SLUG=$((Get-Content $env:RUNNER_TEMP\m07_kernel_slug.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_KERNEL_TITLE=$((Get-Content $env:RUNNER_TEMP\m07_kernel_title.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_REQUEST_ID=$((Get-Content $env:RUNNER_TEMP\m07_request_id.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "CGP_PHASE2_UNLOCK=$env:M07_PHASE2_UNLOCK" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Request trusted action OIDC identity
         shell: powershell
@@ -371,7 +426,7 @@ jobs:
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
-      - name: Submit locked-test and diagnostics continuation kernel
+      - name: Submit M07 continuation or approved Phase-2 kernel
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -382,11 +437,13 @@ jobs:
           endpoint = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
           notebook = pathlib.Path(os.environ["CGP_NOTEBOOK_PATH"]).read_text(encoding="utf-8")
           payload = {
-              "request_id": "pneumonia-v17-d260914d-m07-locked-test-diagnostics-fix1-v1",
+              "request_id": os.environ["CGP_REQUEST_ID"].strip(),
               "provider": "kaggle", "operation_class": "compute", "account_id": "kg-03",
-              "purpose": "d260914d M07 continuation after exact final-five-fold PASS; reuse persisted folds, run OOF/one-time Locked Test/diagnostics/figures/XAI/casebook/external/final gate; Phase2 remains locked.",
+              "purpose": ("d260914d M07 explicit manual unlock: complete R320/R384 M07 Gate, then run the remaining M01-M06/M08-M12 Phase-2 matrix; reuse exact persisted R224 five folds, never retrain M07 in Phase-2."
+                          if "PHASE2_UNLOCK" in os.environ["CGP_NOTEBOOK_PATH"]
+                          else "d260914d M07 continuation after exact final-five-fold PASS; reuse persisted folds, run OOF/one-time Locked Test/diagnostics/figures/XAI/casebook/external/final gate; Phase2 remains locked."),
               "service": "kernels.KernelsApiService", "method": "SaveKernel",
-              "body": {"slug": "rezanory/m07-locked-test-diagnostics-fix1-20260914", "newTitle": "M07 Locked Test Diagnostics Fix1 20260914", "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": ["paultimothymooney/chest-xray-pneumonia", "rezanory/m07-final-5fold-fix2-d260914d"]},
+              "body": {"slug": os.environ["CGP_KERNEL_SLUG"].strip(), "newTitle": os.environ["CGP_KERNEL_TITLE"].strip(), "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": ["paultimothymooney/chest-xray-pneumonia", "rezanory/m07-final-5fold-fix2-d260914d"]},
           }
           req = urllib.request.Request(endpoint, data=json.dumps(payload, separators=(",", ":")).encode(), method="POST", headers={"Authorization": "Bearer " + os.environ["CGP_ACTION_OIDC_TOKEN"], "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "pneumonia-v17-continuation/1.0"})
           try:
@@ -396,7 +453,7 @@ jobs:
               raise SystemExit(f"Continuation SaveKernel HTTP {error.code}: {error.read(4000).decode('utf-8', 'replace')[:1800]}")
           if not result.get("ok"):
               raise SystemExit("Continuation action broker returned ok=false")
-          print(json.dumps({"accepted": True, "provider_ref": result.get("provider_ref") or (result.get("result") or {}).get("ref"), "broker_run_id": result.get("broker_run_id"), "broker_sha": result.get("broker_sha")}, ensure_ascii=False))
+          print(json.dumps({"accepted": True, "provider_ref": result.get("provider_ref") or (result.get("result") or {}).get("ref"), "broker_run_id": result.get("broker_run_id"), "broker_sha": result.get("broker_sha"), "phase2_unlocked": "PHASE2_UNLOCK" in os.environ["CGP_NOTEBOOK_PATH"]}, ensure_ascii=False))
           '@
           $script | & $python -
           if($LASTEXITCODE -ne 0){throw 'M07 continuation SaveKernel submission failed'}
@@ -409,5 +466,5 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $body="## PNEUMONIA V1.7 d260914d M07 LOCKED TEST DIAGNOSTICS FIX1 ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kernel: ``rezanory/m07-locked-test-diagnostics-fix1-20260914```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: continuation reuses persisted five folds; Phase2 remains locked`n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
+          $body="## PNEUMONIA V1.7 d260914d M07 $(if($env:CGP_PHASE2_UNLOCK -eq 'true'){'PHASE2 UNLOCK'}else{'LOCKED TEST DIAGNOSTICS FIX1'}) ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted five-fold evidence reused; M07 is never retrained in Phase-2`n- Approval token: ``$(if($env:CGP_PHASE2_UNLOCK -eq 'true'){'M07_PHASE2_UNLOCK_APPROVED_BY_USER'}else{'none'})```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
