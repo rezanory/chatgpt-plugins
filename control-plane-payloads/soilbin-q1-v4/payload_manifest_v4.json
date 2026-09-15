@@ -1,0 +1,40 @@
+{
+  "schema": "soilbin.q1.v4.compact-waveform-payload",
+  "source_raw_csv_sha256": "ea227f412827a962a1876ceb9aeb9946034b435052e9e74115e32bd7dca73cb0",
+  "waveform_used_columns": [
+    "Run_ID",
+    "time_ms",
+    "LC1_force_delta_N",
+    "LC5_force_delta_N"
+  ],
+  "waveform_compact_blob_sha256": "786cd72be8a6e37aa0e34cee044f70b047c9a84f5a9230abc9028117db765677",
+  "waveform_compact_xz_sha256": "6ccca93e5e146e67908e37cf07575bdf1ed44b0f3b84fcf0ee3198cd2ffa02c9",
+  "v3_baseline_joint_group_mae": 24.28878365273039,
+  "v5_policy_sha256": "c3c802b74ee0426e23d6c8ea6e4fd9ca26cf1128f5da3a32ca2b0b20aa6c7c02",
+  "files": {
+    "PROVENANCE_V4.md": {
+      "sha256": "68b8cebd52188b34b65d78967b652d5e8ae1f7c7f83f76d702a396fbe0d8385b",
+      "bytes": 1960
+    },
+    "all_features_51.csv.gz.b64": {
+      "sha256": "dc2ddaefe8edbc00831843a20353b4c4c859ee83d316b4543efb56bb86e7469f",
+      "bytes": 15852
+    },
+    "launch_soilbin_v4_cloudflare.py": {
+      "sha256": "f82d30a7cdcd4d2589b8c335943c1d5f8000ec890ec76aa5cda3541f716164d1",
+      "bytes": 5239
+    },
+    "soilbin_v4_raw_waveform_runner.py": {
+      "sha256": "19d586f04500146e5f06f158ddf1e70053c1bb1c0e993220d371665b32f9ba95",
+      "bytes": 35722
+    },
+    "waveform_used_columns.bin.xz.b64": {
+      "sha256": "a8bfdacd303ad75f6d68862076a10db26862fa8ba0fa2b6f1a20eff7db3af175",
+      "bytes": 69616
+    },
+    "workflow_job_v4.yml": {
+      "sha256": "14953a88d67079d750c1ed1da6e50599e35257bf5cbea462469a7823aa752930",
+      "bytes": 2667
+    }
+  }
+}
