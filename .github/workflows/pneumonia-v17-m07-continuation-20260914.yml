@@ -692,6 +692,203 @@ jobs:
           $approval=if($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'M07_PHASE2_UNLOCK_APPROVED_BY_USER'}else{'none'}
           $body="## PNEUMONIA V1.7 d260914d M07 $mode ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Account: ``$env:CGP_ACCOUNT_ID`` / ``$env:CGP_ACCOUNT_OWNER```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted five-fold evidence reused; bounded runtime mode completes at most one missing fold`n- Approval token: ``$approval```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
+
+  launch-r384-a01-from-exact-artifact:
+    name: Launch exact R384 A01 on kg-05
+    needs: launch-m07-continuation
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.ref != 'refs/heads/main' &&
+          github.event.inputs.recovery == 'M07_RUNTIME_M07_R384_A01' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: kaggle-05
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      EXPECTED_SHA256: 5b33160907ce01624b00b4c3be89f3226fd4b6f61141cef7c149eb22c288a6c9
+      EXPECTED_OWNER: trickermark
+      EXPECTED_ACCOUNT: kg-05
+      EXPECTED_KERNEL_REF: trickermark/m07-runtime-r384-a01-20260915
+    steps:
+      - name: Download the exact notebook built by this run
+        uses: actions/download-artifact@v4
+        with:
+          name: m07-runtime-notebook-${{ github.run_id }}
+          path: exact-r384
+
+      - name: Verify identity, exact bytes and immutable runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, hashlib, json, os, pathlib, urllib.request
+
+          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          if not token:
+              raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: kg-05 token absent')
+          owner=os.environ['EXPECTED_OWNER']
+          auth=('Bearer '+token if token.startswith('KGAT_') else
+                'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
+
+          def post(service, method, body, timeout=60):
+              req=urllib.request.Request(
+                  f'https://api.kaggle.com/v1/{service}/{method}',
+                  data=json.dumps(body,separators=(',',':')).encode(),
+                  method='POST',
+                  headers={'Authorization':auth,'Content-Type':'application/json',
+                           'Accept':'application/json','User-Agent':'m07-r384-exact-launch/1.0'},
+              )
+              with urllib.request.urlopen(req,timeout=timeout) as response:
+                  raw=response.read().decode('utf-8','replace')
+                  return response.status,(json.loads(raw) if raw else {})
+
+          _,listed=post('kernels.KernelsApiService','ListKernels',{'group':'PROFILE','pageSize':10})
+          detected=''
+          for item in listed.get('kernels') or []:
+              detected=(item.get('author') or '').strip()
+              if not detected:
+                  ref=(item.get('ref') or '').strip()
+                  if '/' in ref: detected=ref.split('/',1)[0]
+              if detected: break
+          if detected.lower()!=owner.lower():
+              raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: expected={owner} detected={detected or "UNKNOWN"}')
+
+          paths=list(pathlib.Path('exact-r384').rglob('*.ipynb'))
+          if len(paths)!=1:
+              raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: notebook_count={len(paths)}')
+          path=paths[0]
+          raw=path.read_bytes()
+          sha=hashlib.sha256(raw).hexdigest()
+          if sha!=os.environ['EXPECTED_SHA256']:
+              raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: sha={sha}')
+          notebook=json.loads(raw.decode('utf-8'))
+          meta=notebook.get('metadata',{}).get('cgp_continuation',{})
+          runtime=meta.get('runtime_partition') or {}
+          required={
+              'campaign_id':'d260914d',
+              'persistence_handle':'rezanory/m07-final-5fold-fix2-d260914d',
+              'locked_test_used':False,
+              'external_used':False,
+              'phase2_unlocked':True,
+          }
+          for key,value in required.items():
+              if meta.get(key)!=value:
+                  raise SystemExit(f'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: {key}={meta.get(key)!r}')
+          runtime_required={
+              'enabled':True,'resolution':384,'attempt':1,'account_id':'kg-05',
+              'owner':'trickermark','source_persistence_handle':'rezanory/m07-final-5fold-fix2-d260914d',
+              'max_new_folds':1,
+          }
+          for key,value in runtime_required.items():
+              if runtime.get(key)!=value:
+                  raise SystemExit(f'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime.{key}={runtime.get(key)!r}')
+          pathlib.Path('verified-notebook-path.txt').write_text(str(path),encoding='utf-8')
+          print(json.dumps({'identity':'PASS','owner':detected,'sha256':sha,
+                            'kernel_ref':os.environ['EXPECTED_KERNEL_REF'],
+                            'runtime_partition':runtime},sort_keys=True))
+          PY
+
+      - name: Submit once and prove the Kaggle session is admitted
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, json, os, pathlib, time, urllib.error, urllib.request
+
+          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          owner=os.environ['EXPECTED_OWNER']
+          auth=('Bearer '+token if token.startswith('KGAT_') else
+                'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
+          notebook_path=pathlib.Path(pathlib.Path('verified-notebook-path.txt').read_text(encoding='utf-8'))
+          kernel_ref=os.environ['EXPECTED_KERNEL_REF']
+          kernel_owner,slug=kernel_ref.split('/',1)
+          if kernel_owner!=owner:
+              raise SystemExit('BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: kernel owner drift')
+
+          def post(service, method, body, timeout=240, allow_missing=False):
+              req=urllib.request.Request(
+                  f'https://api.kaggle.com/v1/{service}/{method}',
+                  data=json.dumps(body,separators=(',',':')).encode(),
+                  method='POST',
+                  headers={'Authorization':auth,'Content-Type':'application/json',
+                           'Accept':'application/json','User-Agent':'m07-r384-exact-launch/1.0'},
+              )
+              try:
+                  with urllib.request.urlopen(req,timeout=timeout) as response:
+                      raw=response.read().decode('utf-8','replace')
+                      return response.status,(json.loads(raw) if raw else {})
+              except urllib.error.HTTPError as exc:
+                  raw=exc.read(4000).decode('utf-8','replace')
+                  if allow_missing and exc.code in (400,404):
+                      return exc.code,{'missing':True,'detail':raw[:600]}
+                  raise RuntimeError(f'HTTP {exc.code}: {raw[:1200]}') from exc
+
+          _,before=post('kernels.KernelsApiService','GetKernelSessionStatus',
+                        {'userName':owner,'kernelSlug':slug},timeout=60,allow_missing=True)
+          _,listed=post('kernels.KernelsApiService','ListKernels',
+                        {'group':'PROFILE','pageSize':100},timeout=60)
+          exact_exists=any(
+              (item.get('ref') or '').lower()==kernel_ref.lower()
+              for item in (listed.get('kernels') or []) if isinstance(item,dict)
+          )
+          existing_text=json.dumps(before,sort_keys=True).upper()
+          active_or_complete=any(state in existing_text for state in ('RUNNING','QUEUED','COMPLETE'))
+          if exact_exists and not active_or_complete:
+              raise SystemExit(
+                  'BLOCKED_IMMUTABLE_SOURCE_HYGIENE: R384 A01 already exists '
+                  f'without admissible active/complete state: {existing_text[:800]}'
+              )
+          action='REUSED_EXISTING' if active_or_complete else 'SUBMITTED_NEW'
+          if not active_or_complete:
+              body={
+                  'slug':kernel_ref,
+                  'newTitle':'M07 Runtime R384 A01 20260915',
+                  'text':notebook_path.read_text(encoding='utf-8'),
+                  'language':'PYTHON','kernelType':'NOTEBOOK',
+                  'kernelExecutionType':'SAVE_AND_RUN_ALL',
+                  'isPrivate':True,'enableGpu':True,'enableInternet':True,
+                  'datasetDataSources':['paultimothymooney/chest-xray-pneumonia',
+                                        'rezanory/m07-final-5fold-fix2-d260914d'],
+              }
+              _,saved=post('kernels.KernelsApiService','SaveKernel',body)
+              provider_code=saved.get('code') if isinstance(saved,dict) else None
+              if isinstance(provider_code,(int,float)) and provider_code>=400:
+                  raise SystemExit(f'KAGGLE_SAVE_REJECTED: {saved}')
+          else:
+              saved={'preflight':before}
+
+          observed=None
+          for _ in range(4):
+              time.sleep(5)
+              _,observed=post('kernels.KernelsApiService','GetKernelSessionStatus',
+                              {'userName':owner,'kernelSlug':slug},timeout=60)
+              text=json.dumps(observed,sort_keys=True).upper()
+              if any(state in text for state in ('RUNNING','QUEUED','COMPLETE','ERROR','CANCEL')):
+                  break
+          evidence={'schema':'m07.d260914d.runtime.launch.receipt.v1','action':action,
+                    'account_id':'kg-05','owner':owner,'kernel_ref':kernel_ref,
+                    'notebook_sha256':os.environ['EXPECTED_SHA256'],'save_result':saved,
+                    'session_status':observed,'github_run_id':os.environ['GITHUB_RUN_ID'],
+                    'source_sha':os.environ['GITHUB_SHA']}
+          pathlib.Path('r384-a01-launch-receipt.json').write_text(
+              json.dumps(evidence,ensure_ascii=False,indent=2),encoding='utf-8')
+          status_text=json.dumps(observed,sort_keys=True).upper()
+          if not any(state in status_text for state in ('RUNNING','QUEUED','COMPLETE')):
+              raise SystemExit(f'BLOCKED_VALIDATION_INFRASTRUCTURE: session not admitted: {status_text[:1200]}')
+          print(json.dumps({'launch':'PASS','action':action,'kernel_ref':kernel_ref,
+                            'notebook_sha256':os.environ['EXPECTED_SHA256'],
+                            'session_status':observed},ensure_ascii=False,sort_keys=True))
+          PY
+
+      - name: Preserve R384 A01 launch receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-r384-a01-launch-receipt-${{ github.run_id }}
+          path: r384-a01-launch-receipt.json
+          if-no-files-found: warn
+          retention-days: 30
+
   soilbin_q1_v4_raw_waveform:
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
