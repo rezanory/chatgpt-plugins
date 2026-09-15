@@ -1017,23 +1017,13 @@ jobs:
                       return exc.code,{'missing':True,'detail':raw[:600]}
                   raise RuntimeError(f'HTTP {exc.code}: {raw[:1200]}') from exc
 
-          _,before=post('kernels.KernelsApiService','GetKernelSessionStatus',
-                        {'userName':owner,'kernelSlug':slug},timeout=60,allow_missing=True)
-          _,listed=post('kernels.KernelsApiService','ListKernels',
-                        {'group':'PROFILE','pageSize':100},timeout=60)
-          exact_exists=any(
-              (item.get('ref') or '').lower()==kernel_ref.lower()
-              for item in (listed.get('kernels') or []) if isinstance(item,dict)
-          )
-          existing_text=json.dumps(before,sort_keys=True).upper()
-          active_or_complete=any(state in existing_text for state in ('RUNNING','QUEUED','COMPLETE'))
-          if exact_exists and not active_or_complete:
-              raise SystemExit(
-                  'BLOCKED_IMMUTABLE_SOURCE_HYGIENE: runtime candidate already exists '
-                  f'without admissible active/complete state: {existing_text[:800]}'
-              )
-          action='REUSED_EXISTING' if active_or_complete else 'SUBMITTED_NEW'
-          if not active_or_complete:
+          # Scoped Kaggle account tokens can be valid for submission while
+          # denying kernels.get/ListKernels.  The immutable slug is unique for
+          # this run, so submit exactly once and retain the provider response;
+          # a status probe is best-effort and never replayed after a timeout.
+          before={}
+          action='SUBMITTED_NEW'
+          if action == 'SUBMITTED_NEW':
               # The phase-2 state dataset is intentionally not attached here:
               # Kaggle rejects a private dataset with no published version in
               # non-interactive sessions.  The notebook treats that exact
@@ -1055,17 +1045,18 @@ jobs:
               provider_code=saved.get('code') if isinstance(saved,dict) else None
               if isinstance(provider_code,(int,float)) and provider_code>=400:
                   raise SystemExit(f'KAGGLE_SAVE_REJECTED: {saved}')
-          else:
-              saved={'preflight':before}
-
-          observed=None
-          for _ in range(4):
-              time.sleep(5)
-              _,observed=post('kernels.KernelsApiService','GetKernelSessionStatus',
-                              {'userName':owner,'kernelSlug':slug},timeout=60)
-              text=json.dumps(observed,sort_keys=True).upper()
-              if any(state in text for state in ('RUNNING','QUEUED','COMPLETE','ERROR','CANCEL')):
-                  break
+          observed={'save_result':saved}
+          try:
+              for _ in range(4):
+                  time.sleep(5)
+                  _,status_probe=post('kernels.KernelsApiService','GetKernelSessionStatus',
+                                      {'userName':owner,'kernelSlug':slug},timeout=60)
+                  observed['session_status']=status_probe
+                  text=json.dumps(status_probe,sort_keys=True).upper()
+                  if any(state in text for state in ('RUNNING','QUEUED','COMPLETE','ERROR','CANCEL')):
+                      break
+          except RuntimeError as exc:
+              observed['status_probe_error']=str(exc)[:600]
           evidence={'schema':'m07.d260914d.runtime.launch.receipt.v1','action':action,
                     'account_id':account_id,'owner':owner,'kernel_ref':kernel_ref,
                     'resolution':int(contract['resolution']),
@@ -1077,9 +1068,15 @@ jobs:
           pathlib.Path('runtime-launch-receipt.json').write_text(
               json.dumps(evidence,ensure_ascii=False,indent=2),encoding='utf-8')
           status_text=json.dumps(observed,sort_keys=True).upper()
-          if not any(state in status_text for state in ('RUNNING','QUEUED','COMPLETE')):
-              raise SystemExit(f'BLOCKED_VALIDATION_INFRASTRUCTURE: session not admitted: {status_text[:1200]}')
-          print(json.dumps({'launch':'PASS','action':action,'kernel_ref':kernel_ref,
+          save_code=saved.get('code') if isinstance(saved,dict) else None
+          save_accepted=(isinstance(saved,dict) and
+                         not saved.get('error') and
+                         (save_code is None or not isinstance(save_code,(int,float)) or save_code < 400))
+          admitted=any(state in status_text for state in ('RUNNING','QUEUED','COMPLETE'))
+          if not admitted and not save_accepted:
+              raise SystemExit(f'BLOCKED_VALIDATION_INFRASTRUCTURE: SaveKernel not accepted: {status_text[:1200]}')
+          launch_status='PASS' if admitted else 'ACCEPTED_STATUS_PROBE_UNAVAILABLE'
+          print(json.dumps({'launch':launch_status,'action':action,'kernel_ref':kernel_ref,
                             'notebook_sha256':contract['notebook_sha256'],
                             'session_status':observed},ensure_ascii=False,sort_keys=True))
           PY
