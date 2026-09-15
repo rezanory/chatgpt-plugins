@@ -458,6 +458,8 @@ jobs:
                   "",
               ])
               run_source = run_source.replace(persist_anchor, bounded_return, 1)
+              notebook["cells"][run_index]["source"] = run_source.splitlines(keepends=True)
+
               restore_download_old = (
                   "        kagglehub.dataset_download(phase2_handle(model_id, resolution), "
                   "output_dir=str(temp), force_download=True)"
@@ -471,14 +473,21 @@ jobs:
                   "            restore_handle, output_dir=str(temp), force_download=True",
                   "        )",
               ])
-              if run_source.count(restore_download_old) != 1:
-                  raise SystemExit("M07_RUNTIME_RESTORE_DOWNLOAD_ANCHOR_DRIFT")
-              run_source = run_source.replace(
-                  restore_download_old,
-                  restore_download_new,
-                  1,
-              )
-              notebook["cells"][run_index]["source"] = run_source.splitlines(keepends=True)
+              restore_download_hits = 0
+              for cell in notebook["cells"]:
+                  source = "".join(cell.get("source", []))
+                  if restore_download_old in source:
+                      source = source.replace(
+                          restore_download_old,
+                          restore_download_new,
+                          1,
+                      )
+                      cell["source"] = source.splitlines(keepends=True)
+                      restore_download_hits += 1
+              if restore_download_hits != 1:
+                  raise SystemExit(
+                      f"M07_RUNTIME_RESTORE_DOWNLOAD_ANCHOR_COUNT={restore_download_hits}"
+                  )
 
               gate_cell_hits = []
               gate_marker = "# 1) Complete M07 at R320/R384 using the exact frozen R224 recipe."
