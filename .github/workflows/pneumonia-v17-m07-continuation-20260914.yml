@@ -468,3 +468,63 @@ jobs:
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
           $body="## PNEUMONIA V1.7 d260914d M07 $(if($env:CGP_PHASE2_UNLOCK -eq 'true'){'PHASE2 UNLOCK'}else{'LOCKED TEST DIAGNOSTICS FIX1'}) ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted five-fold evidence reused; M07 is never retrained in Phase-2`n- Approval token: ``$(if($env:CGP_PHASE2_UNLOCK -eq 'true'){'M07_PHASE2_UNLOCK_APPROVED_BY_USER'}else{'none'})```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
+  soilbin_q1_v4_raw_waveform:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.actor_id == 62356000 &&
+          github.event.inputs.recovery == 'SOILBIN_V4_RAW_WAVEFORM' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout frozen SoilBin V4 payload
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Request trusted action OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']; sep='&' if '?' in base else '?'
+          req=urllib.request.Request(base+sep+'audience=cgp-control-plane-v3-action',headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
+          with urllib.request.urlopen(req,timeout=30) as r: token=json.load(r)['value']
+          if len(token)<100: raise SystemExit('OIDC unavailable')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h: h.write('CGP_ACTION_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Validate, build and launch SoilBin V4 through Cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          python control-plane-payloads/soilbin-q1-v4/launch_soilbin_v4_cloudflare.py
+
+      - name: Build SoilBin V4 launch receipt
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          p=os.environ.get('SOILBIN_V4_RECEIPT_PATH','')
+          if p and pathlib.Path(p).exists():
+              r=json.loads(pathlib.Path(p).read_text(encoding='utf-8'))
+              body=(f"## SOILBIN Q1/Q2 V4 LAUNCH ACCEPTED\n\n- Run: `{os.environ['GITHUB_RUN_ID']}`\n- Kernel: `{r['kernel_ref']}`\n- Notebook SHA256: `{r['notebook_sha256']}`\n- Runner SHA256: `{r['runner_sha256']}`\n- Raw timeseries SHA256: `{r['raw_timeseries_source_sha256']}`\n- CPU only: `true`\n- Current-pass waveform used: `false`\n- External labels used: `false`\n")
+          else:
+              body=f"## SOILBIN Q1/Q2 V4 LAUNCH FAILED\n\n- Run: `{os.environ['GITHUB_RUN_ID']}`"
+          summary=pathlib.Path(os.environ['RUNNER_TEMP'])/'soilbin_v4_launch_summary.md'
+          summary.write_text(body,encoding='utf-8')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write(f"SOILBIN_V4_SUMMARY_PATH={summary}\n")
+          print(body)
+          PY
+
+      - name: Upload SoilBin V4 launch receipt artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soilbin-v4-launch-${{ github.run_id }}
+          path: ${{ env.SOILBIN_V4_SUMMARY_PATH }}
+          if-no-files-found: error
+          retention-days: 30
