@@ -16,7 +16,7 @@ const READ_WORKFLOW_REF =
 const ACTION_WORKFLOW_EVENTS = new Map([
   [
     "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-8acct-20260912.yml@refs/heads/main",
-    new Set(["issue_comment"]),
+    new Set(["issue_comment", "workflow_dispatch"]),
   ],
   [
     "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/main",
@@ -168,7 +168,7 @@ async function verifyBrokerOidc(
     ? workflowRef === expectedWorkflow
     : ACTION_WORKFLOW_EVENTS.has(workflowRef);
   const eventAllowed = kind === "read"
-    ? eventName === "issue_comment"
+    ? eventName === "issue_comment" || eventName === "workflow_dispatch"
     : ACTION_WORKFLOW_EVENTS.get(workflowRef)?.has(eventName) === true;
   const eventMismatch = eventName !== "issue_comment" && !eventAllowed;
   if (!workflowAllowed || eventMismatch || ref !== TRUSTED_REF) {
