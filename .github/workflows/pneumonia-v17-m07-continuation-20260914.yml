@@ -458,6 +458,7 @@ jobs:
               stage_runner = f'''# M07 bounded runtime recovery stage.
           CGP_RUNTIME_RESOLUTION = {RUNTIME_RESOLUTION!r}
           CGP_RUNTIME_ATTEMPT = {RUNTIME_ATTEMPT!r}
+          CGP_RUNTIME_PHASE2_STATE_ATTACH_OPTIONAL = True
           _restored_folds = phase2_restore("M07", CGP_RUNTIME_RESOLUTION)
           if CGP_RUNTIME_RESOLUTION == 320 and CGP_RUNTIME_ATTEMPT == 1 and _restored_folds != 4:
               raise RuntimeError(
@@ -510,6 +511,67 @@ jobs:
           '''
               notebook["cells"][gate_index]["source"] = (definitions + stage_runner).splitlines(keepends=True)
               notebook["cells"] = notebook["cells"][:gate_index + 1]
+              # A runtime stage may legitimately be the first publisher of its
+              # per-resolution Phase-2 state dataset.  Kaggle exposes an exact
+              # non-interactive error for that empty dataset, which is a
+              # deterministic empty-state admission rather than a permission or
+              # network failure.  Keep every other restore error fail-closed.
+              state_helper = "\n".join([
+                  "def _is_noninteractive_empty_state(exc, expected_handle):",
+                  '    if exc.__class__.__name__ != "BackendError":',
+                  "        return False",
+                  "    text = str(exc).strip()",
+                  '    marker = "POST failed with:"',
+                  "    if marker not in text:",
+                  "        return False",
+                  "    try:",
+                  "        payload = json.loads(text.split(marker, 1)[1].strip())",
+                  "    except Exception:",
+                  "        return False",
+                  "    expected_error = (",
+                  '        "New Datasets cannot be attached in non-interactive sessions. "',
+                  '        f"Found no versions attached for Dataset [{expected_handle}]."',
+                  "    )",
+                  "    return (",
+                  "        isinstance(payload, dict)",
+                  '        and payload.get("wasSuccessful") is False',
+                  '        and isinstance(payload.get("error"), dict)',
+                  '        and payload["error"].get("code") == 9',
+                  '        and payload.get("errors") == [expected_error]',
+                  "    )",
+              ]) + "\n"
+              state_old = 'def phase2_restore(model_id, resolution):'
+              state_raise_old = '        raise RuntimeError(f"{model_id} R{resolution}: restore unavailable; refusing blind continuation/upload.") from exc'
+              state_conditional = "\n".join([
+                  "        if (",
+                  '            globals().get("CGP_RUNTIME_PHASE2_STATE_ATTACH_OPTIONAL") is True',
+                  "            and _is_noninteractive_empty_state(exc, phase2_handle(model_id, resolution))",
+                  "        ):",
+                  "            PHASE2_RESTORE_VERIFIED.add(identity)",
+                  "            print(",
+                  '                "M07_PHASE2_STATE_FIRST_RUN_EMPTY",',
+                  "                json.dumps(",
+                  "                    {",
+                  '                        "model_id": model_id,',
+                  '                        "resolution": int(resolution),',
+                  '                        "restored_folds": 0,',
+                  '                        "reason": "NON_INTERACTIVE_EMPTY_STATE_DATASET",',
+                  "                    },",
+                  "                    sort_keys=True,",
+                  "                ),",
+                  "            )",
+                  "            return 0",
+              ]) + "\n"
+              state_patch_hits = 0
+              for cell in notebook["cells"]:
+                  source = "".join(cell.get("source", []))
+                  if state_old in source and state_raise_old in source:
+                      source = source.replace(state_old, state_helper + state_old, 1)
+                      source = source.replace(state_raise_old, state_conditional + state_raise_old, 1)
+                      cell["source"] = source.splitlines(keepends=True)
+                      state_patch_hits += 1
+              if state_patch_hits != 1:
+                  raise SystemExit(f"M07_RUNTIME_OPTIONAL_STATE_PATCH_COUNT={state_patch_hits}")
           # The immutable R224 predecessor always remains owned by rezanory,
           # while new per-resolution state belongs to the execution account.
           # Keeping these identities explicit prevents a cross-account R384
@@ -700,19 +762,20 @@ jobs:
       ${{ github.event_name == 'workflow_dispatch' &&
           github.ref != 'refs/heads/main' &&
           (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' ||
+           github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' ||
            github.event.inputs.recovery == 'M07_RUNTIME_M07_R384_A01') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'kaggle-03' || 'kaggle-05' }}
+    environment: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'kaggle-03' || 'kaggle-05' }}
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-      EXPECTED_SHA256: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '5f5d06cb073f4f96f4ae361a7c5d153ad94a254b0faa0ea38e1c0e985b5b75da' || '5b33160907ce01624b00b4c3be89f3226fd4b6f61141cef7c149eb22c288a6c9' }}
-      EXPECTED_OWNER: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'rezanory' || 'trickermark' }}
-      EXPECTED_ACCOUNT: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'kg-03' || 'kg-05' }}
-      EXPECTED_KERNEL_REF: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'rezanory/m07-runtime-r320-a02-20260915' || 'trickermark/m07-runtime-r384-a01-20260915' }}
-      EXPECTED_RESOLUTION: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '320' || '384' }}
-      EXPECTED_ATTEMPT: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '2' || '1' }}
-      EXPECTED_TITLE: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'M07 Runtime R320 A02 20260915' || 'M07 Runtime R384 A01 20260915' }}
+      EXPECTED_SHA256: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '5f5d06cb073f4f96f4ae361a7c5d153ad94a254b0faa0ea38e1c0e985b5b75da' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && '2c538a32e13e4a7af8c454b87490b30eea8d996e64abab37e32b092b914aca73' || '5b33160907ce01624b00b4c3be89f3226fd4b6f61141cef7c149eb22c288a6c9' }}
+      EXPECTED_OWNER: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'rezanory' || 'trickermark' }}
+      EXPECTED_ACCOUNT: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'kg-03' || 'kg-05' }}
+      EXPECTED_KERNEL_REF: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'rezanory/m07-runtime-r320-a02-20260915' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && 'rezanory/m07-runtime-r320-a03-20260915' || 'trickermark/m07-runtime-r384-a01-20260915' }}
+      EXPECTED_RESOLUTION: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && '320' || '384' }}
+      EXPECTED_ATTEMPT: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '2' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && '3' || '1' }}
+      EXPECTED_TITLE: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'M07 Runtime R320 A02 20260915' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && 'M07 Runtime R320 A03 20260915' || 'M07 Runtime R384 A01 20260915' }}
       EXPECTED_MACHINE_SHAPE: NvidiaTeslaT4
     steps:
       - name: Download the exact notebook built by this run
@@ -848,10 +911,13 @@ jobs:
               )
           action='REUSED_EXISTING' if active_or_complete else 'SUBMITTED_NEW'
           if not active_or_complete:
+              # The phase-2 state dataset is intentionally not attached here:
+              # Kaggle rejects a private dataset with no published version in
+              # non-interactive sessions.  The notebook treats that exact
+              # first-run condition as an explicit empty-state admission and
+              # creates the state snapshot only after the stage completes.
               dataset_sources=['paultimothymooney/chest-xray-pneumonia',
                                'rezanory/m07-final-5fold-fix2-d260914d']
-              if os.environ['EXPECTED_RESOLUTION']=='320':
-                  dataset_sources.append('rezanory/m07-gate-r320-state-v1-7')
               body={
                   'slug':kernel_ref,
                   'newTitle':os.environ['EXPECTED_TITLE'],
