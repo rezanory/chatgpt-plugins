@@ -3,6 +3,12 @@ name: control-plane-v3-query
 on:
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      query_json:
+        description: "Bounded read-only control-plane query JSON"
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -13,14 +19,15 @@ permissions:
 jobs:
   query:
     if: >-
-      ${{ github.event.issue.number == 33 &&
-          github.event.comment.user.id == 62356000 &&
-          startsWith(github.event.comment.body, 'CONTROL_PLANE_V3_QUERY ') }}
+      ${{ (github.event_name == 'workflow_dispatch' && github.actor_id == 62356000) ||
+          (github.event.issue.number == 33 &&
+           github.event.comment.user.id == 62356000 &&
+           startsWith(github.event.comment.body, 'CONTROL_PLANE_V3_QUERY ')) }}
     runs-on: windows-latest
     environment: cloudflare-production
     timeout-minutes: 20
     concurrency:
-      group: control-plane-v3-read-query-${{ github.event.comment.id }}
+      group: control-plane-v3-read-query-${{ github.run_id }}
       cancel-in-progress: false
     steps:
       - name: Resolve exact v3 query implementation
@@ -38,6 +45,7 @@ jobs:
           "CGP_QUERY_IMPL_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Publish query start marker
+        if: ${{ github.event_name == 'issue_comment' }}
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -47,6 +55,13 @@ jobs:
           $body="CONTROL PLANE V3 QUERY START | run=$env:GITHUB_RUN_ID | impl=$env:CGP_QUERY_IMPL_SHA | read_only=true | cloudflare_deploy=false | kaggle_compute=false"
           $p=@{body=$body}|ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
+
+      - name: Publish workflow-dispatch query start marker
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Write-Host "CONTROL PLANE V3 QUERY START | run=$env:GITHUB_RUN_ID | read_only=true | cloudflare_deploy=false | kaggle_compute=false | transport=workflow_dispatch"
 
       - name: Checkout exact v3 query implementation
         uses: actions/checkout@v4
@@ -58,12 +73,16 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $event=Get-Content -Raw $env:GITHUB_EVENT_PATH | ConvertFrom-Json
-          if([string]$event.repository.id -ne '1337215097'){throw 'repository id mismatch'}
-          if([string]$event.comment.user.id -ne '62356000'){throw 'actor id mismatch'}
-          $body=[string]$event.comment.body
-          $prefix='CONTROL_PLANE_V3_QUERY '
-          if(-not $body.StartsWith($prefix)){throw 'query prefix mismatch'}
-          $raw=$body.Substring($prefix.Length).Trim()
+          if($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch'){
+            $raw=[string]$event.inputs.query_json
+          } else {
+            if([string]$event.repository.id -ne '1337215097'){throw 'repository id mismatch'}
+            if([string]$event.comment.user.id -ne '62356000'){throw 'actor id mismatch'}
+            $body=[string]$event.comment.body
+            $prefix='CONTROL_PLANE_V3_QUERY '
+            if(-not $body.StartsWith($prefix)){throw 'query prefix mismatch'}
+            $raw=$body.Substring($prefix.Length).Trim()
+          }
           if($raw.Length -lt 2 -or $raw.Length -gt 30000){throw 'query payload length invalid'}
           $obj=$raw | ConvertFrom-Json
           if(-not $obj.provider){throw 'query provider missing'}
@@ -111,6 +130,7 @@ jobs:
           exit 0
 
       - name: Publish sanitized query receipt
+        if: ${{ github.event_name == 'issue_comment' }}
         shell: powershell
         continue-on-error: true
         env:
@@ -146,8 +166,17 @@ jobs:
           $script | & $python -
           if($LASTEXITCODE -ne 0){throw 'sanitized query receipt publish failed'}
 
+      - name: Upload durable query result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-plane-v3-query-${{ github.run_id }}
+          path: ${{ runner.temp }}/control-plane-v3-query-result.json
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Publish query workflow diagnostic
-        if: failure()
+        if: ${{ failure() && github.event_name == 'issue_comment' }}
         continue-on-error: true
         shell: powershell
         env:
