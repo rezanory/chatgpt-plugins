@@ -729,16 +729,21 @@ jobs:
               if old_restore in source:
                   source = source.replace(old_restore, "PERSIST_SOURCE_DATASET_HANDLE, output_dir=str(restore_dir)", 1)
                   restore_handle_hits += 1
-              old_invocation = "RESTORE_SUMMARY = _try_restore_persisted_state()"
-              if old_invocation in source:
-                  new_invocation = "\n".join([
-                      old_invocation,
-                      "if PERSIST_WRITE_DATASET_HANDLE != PERSIST_SOURCE_DATASET_HANDLE:",
-                      "    PERSIST_DATASET_HANDLE = PERSIST_WRITE_DATASET_HANDLE",
-                      "    print(\"M07 persistence write handle:\", PERSIST_DATASET_HANDLE)",
-                  ])
-                  source = source.replace(old_invocation, new_invocation, 1)
-                  restore_invocation_hits += 1
+              invocation_candidates = [
+                  "RESTORE_SUMMARY = _try_restore_persisted_state_compat()",
+                  "RESTORE_SUMMARY = _try_restore_persisted_state()",
+              ]
+              for old_invocation in invocation_candidates:
+                  if old_invocation in source:
+                      new_invocation = "\n".join([
+                          old_invocation,
+                          "if PERSIST_WRITE_DATASET_HANDLE != PERSIST_SOURCE_DATASET_HANDLE:",
+                          "    PERSIST_DATASET_HANDLE = PERSIST_WRITE_DATASET_HANDLE",
+                          "    print(\"M07 persistence write handle:\", PERSIST_DATASET_HANDLE)",
+                      ])
+                      source = source.replace(old_invocation, new_invocation, 1)
+                      restore_invocation_hits += 1
+                      break
               cell["source"] = source.splitlines(keepends=True)
           if restore_handle_hits != 1:
               raise SystemExit(f"M07_SOURCE_RESTORE_HANDLE_COUNT={restore_handle_hits}")
