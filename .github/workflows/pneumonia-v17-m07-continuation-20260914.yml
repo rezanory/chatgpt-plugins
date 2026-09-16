@@ -1156,8 +1156,12 @@ jobs:
                       headers={'Authorization':'Bearer '+broker_token,'Content-Type':'application/json',
                                'Accept':'application/json','User-Agent':'m07-exact-runtime-launch-broker/1.0'},
                   )
-                  with urllib.request.urlopen(broker_req,timeout=240) as response:
-                      envelope=json.loads(response.read().decode('utf-8','replace') or '{}')
+                  try:
+                      with urllib.request.urlopen(broker_req,timeout=240) as response:
+                          envelope=json.loads(response.read().decode('utf-8','replace') or '{}')
+                  except urllib.error.HTTPError as error:
+                      detail=error.read(4000).decode('utf-8','replace')[:1800]
+                      raise SystemExit(f'KAGGLE_BROKER_SAVE_HTTP_{error.code}: {detail}')
                   if envelope.get('ok') is not True or envelope.get('account_id') != account_id:
                       raise SystemExit(f'KAGGLE_BROKER_SAVE_REJECTED: {envelope!r}')
                   saved=envelope.get('result') or {}
