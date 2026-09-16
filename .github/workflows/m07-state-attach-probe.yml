@@ -1,0 +1,65 @@
+name: M07 state attach probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Request trusted action OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" || -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]; then
+            echo 'OIDC context unavailable' >&2
+            exit 1
+          fi
+          sep='?'
+          [[ "$ACTIONS_ID_TOKEN_REQUEST_URL" == *\?* ]] && sep='&'
+          raw="$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}${sep}audience=cgp-control-plane-v3-action")"
+          token="$(RAW_JSON="$raw" python - <<'PY'
+          import json, os
+          value=json.loads(os.environ['RAW_JSON']).get('value','')
+          if not isinstance(value,str) or len(value)<100:
+              raise SystemExit('OIDC token unavailable')
+          print(value)
+          PY
+          )"
+          echo "::add-mask::$token"
+          printf 'CGP_ACTION_OIDC_TOKEN=%s\n' "$token" >> "$GITHUB_ENV"
+
+      - name: Submit isolated CPU mount probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.request, urllib.error
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+          run_id=os.environ['GITHUB_RUN_ID']
+          ref=f'trickermark/m07-state-attach-probe-v4-{run_id}'
+          title=f'M07 State Attach Probe V4 {run_id}'
+          source='''from pathlib import Path\nimport json\nimport kagglehub\n\nhandle = "rezanory/m07-gate-r320-state-v1-7/versions/4"\nout = Path("/kaggle/working/m07_state_probe")\nout.mkdir(parents=True, exist_ok=True)\ndownloaded = Path(kagglehub.dataset_download(handle, output_dir=str(out), force_download=True))\nfiles = sorted(p.relative_to(downloaded).as_posix() for p in downloaded.rglob("*") if p.is_file())\nrequired = ["CAMPAIGN_STATE.json", "FOLD_4_RECOVERY/FOLDS/fold_4/COMPLETED.json"]\nprint("M07_STATE_ATTACH_PROBE", json.dumps({"downloaded": str(downloaded), "file_count": len(files), "required": {x: x in files for x in required}}, sort_keys=True))\nif not all(x in files for x in required):\n    raise RuntimeError("M07_STATE_ATTACH_PROBE_REQUIRED_FILES_MISSING")\nprint("M07_STATE_ATTACH_PROBE_PASS")\n'''
+          payload={
+              'request_id':f'm07-state-attach-probe-{run_id}',
+              'provider':'kaggle','operation_class':'compute','account_id':'kg-05',
+              'purpose':'Read-only mount probe for immutable d260914d M07 R320 state Version 4; no training or persistence mutation.',
+              'service':'kernels.KernelsApiService','method':'SaveKernel',
+              'body':{'slug':ref,'newTitle':title,'text':source,'language':'PYTHON','kernelType':'SCRIPT','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':False,'enableInternet':False,'datasetDataSources':['rezanory/m07-gate-r320-state-v1-7']},
+          }
+          req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['CGP_ACTION_OIDC_TOKEN'],'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-state-attach-probe/1.0'})
+          try:
+              with urllib.request.urlopen(req,timeout=240) as response:
+                  result=json.loads(response.read().decode('utf-8','replace') or '{}')
+          except urllib.error.HTTPError as error:
+              raise SystemExit(f'BROKER_HTTP_{error.code}: {error.read(3000).decode("utf-8","replace")[:1200]}')
+          if result.get('ok') is not True:
+              raise SystemExit('BROKER_REJECTED')
+          print(json.dumps({'kernel_ref':ref,'title':title,'account_id':'kg-05','provider_ref':result.get('provider_ref') or (result.get('result') or {}).get('ref'),'broker_run_id':result.get('broker_run_id')}, sort_keys=True))
+          PY
