@@ -8,11 +8,15 @@ the notebook requests ``/versions/1`` deterministically.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
 import pathlib
 import shutil
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any
 
 import kagglehub
@@ -36,36 +40,106 @@ def fail(message: str) -> None:
     raise SystemExit(message)
 
 
-def assert_target_absent() -> None:
-    """Fail closed if the fixed clone handle already exists.
+def _kaggle_authorization_header() -> str:
+    """Build an auth header without ever logging credential material."""
 
-    A missing dataset is the only condition that permits creating Version 1.
-    Any non-404 response (including auth or transport failures) is a blocker,
-    not permission to create a second version.
+    token = os.environ.get("KAGGLE_API_TOKEN", "").strip()
+    if not token:
+        fail("BLOCKED_VALIDATION_INFRASTRUCTURE: KAGGLE_API_TOKEN is unavailable")
+    if token.startswith("KGAT_"):
+        return f"Bearer {token}"
+    username = os.environ.get("KAGGLE_USERNAME", "trickermark").strip() or "trickermark"
+    encoded = base64.b64encode(f"{username}:{token}".encode("utf-8")).decode("ascii")
+    return f"Basic {encoded}"
+
+
+def assert_target_absent() -> None:
+    """Fail closed unless the exact target is absent from the owner's dataset list.
+
+    ``dataset_download`` is intentionally not used for an absence check: Kaggle
+    can return HTTP 403 for a missing/private target, which is ambiguous. The
+    authenticated datasets/list endpoint is read-only and distinguishes an
+    existing own dataset from an absent one without attempting an attachment.
     """
 
-    probe = ROOT / "target-probe"
-    try:
-        kagglehub.dataset_download(
-            TARGET_HANDLE,
-            path="dataset-metadata.json",
-            output_dir=str(probe),
-            force_download=True,
+    owner, slug = TARGET_HANDLE.split("/", 1)
+    if owner != "trickermark":
+        fail("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: target owner drift")
+
+    auth = _kaggle_authorization_header()
+    base = "https://www.kaggle.com/api/v1/datasets/list"
+    exact_ref = TARGET_HANDLE.lower()
+    seen: set[str] = set()
+
+    for page in range(1, 11):
+        query = urllib.parse.urlencode(
+            {
+                "group": "my",
+                "sortBy": "updated",
+                "size": "all",
+                "filetype": "all",
+                "license": "all",
+                "tagids": "",
+                "search": slug,
+                "user": "",
+                "page": page,
+            }
         )
-    except Exception as exc:  # noqa: BLE001 - preserve provider diagnosis
-        detail = str(exc)
-        lowered = detail.lower()
-        status_code = getattr(exc, "status_code", None)
-        if status_code is None:
-            response = getattr(exc, "response", None)
-            status_code = getattr(response, "status_code", None)
-        if status_code == 404 or "404" in lowered or "not found" in lowered or "does not exist" in lowered:
-            return
-        fail(
-            "BLOCKED_VALIDATION_INFRASTRUCTURE: target preflight failed: "
-            f"{type(exc).__name__} status={status_code or 'UNKNOWN'}"
+        request = urllib.request.Request(
+            f"{base}?{query}",
+            headers={
+                "Authorization": auth,
+                "User-Agent": "radlina-m07-source-freeze/1.0",
+                "Accept": "application/json",
+            },
+            method="GET",
         )
-    fail("BLOCKED_IMMUTABLE_SOURCE_HYGIENE: target clone handle already exists")
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                if response.status != 200:
+                    fail(
+                        "BLOCKED_VALIDATION_INFRASTRUCTURE: target list preflight "
+                        f"HTTP {response.status}"
+                    )
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            fail(
+                "BLOCKED_VALIDATION_INFRASTRUCTURE: target list preflight "
+                f"HTTP {exc.code}"
+            )
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            fail(
+                "BLOCKED_VALIDATION_INFRASTRUCTURE: target list preflight failed: "
+                f"{type(exc).__name__}"
+            )
+
+        if isinstance(payload, list):
+            rows = payload
+        elif isinstance(payload, dict) and isinstance(payload.get("datasets"), list):
+            rows = payload["datasets"]
+        else:
+            fail("BLOCKED_VALIDATION_INFRASTRUCTURE: unexpected datasets/list response shape")
+
+        for row in rows:
+            if isinstance(row, dict):
+                ref = str(row.get("ref", "")).strip().lower()
+                if ref:
+                    seen.add(ref)
+        if exact_ref in seen:
+            fail("BLOCKED_IMMUTABLE_SOURCE_HYGIENE: target clone handle already exists")
+        if len(rows) < 20:
+            break
+
+    print(
+        json.dumps(
+            {
+                "target_absence_probe": "PASS",
+                "target_handle": TARGET_HANDLE,
+                "matching_refs_seen": len(seen),
+            },
+            sort_keys=True,
+        )
+    )
 
 
 def main() -> int:
