@@ -830,6 +830,7 @@ jobs:
               "machine_shape": "NvidiaTeslaT4",
               "notebook_sha256": __import__("hashlib").sha256(out.read_bytes()).hexdigest(),
               "runtime_stage": RUNTIME_TOKEN,
+              "source_phase2_state_attachment": RUNTIME_SOURCE_STATE_ATTACHMENT,
           }
           pathlib.Path(os.environ["RUNNER_TEMP"], "m07_runtime_contract.json").write_text(
               json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8"
