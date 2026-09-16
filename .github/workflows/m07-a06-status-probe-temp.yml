@@ -1,0 +1,55 @@
+name: m07-a06-status-probe-temp
+
+on:
+  push:
+    branches:
+      - fix/m07-multiaccount-20260916
+    paths:
+      - .github/workflows/m07-a06-status-probe-temp.yml
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: [self-hosted, windows, x64, v622]
+    environment: kaggle-05
+    timeout-minutes: 10
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: trickermark
+      KERNEL_SLUG: m07-runtime-r320-a06-20260916-35097401885
+    steps:
+      - name: Read exact A06 live status only
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import base64, json, os, urllib.request, urllib.error
+          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          owner=os.environ['KAGGLE_USERNAME'].strip()
+          slug=os.environ['KERNEL_SLUG'].strip()
+          if not token:
+              raise SystemExit('KG05_TOKEN_MISSING')
+          auth=('Bearer '+token if token.startswith('KGAT_') else
+                'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
+          req=urllib.request.Request(
+              'https://api.kaggle.com/v1/kernels.KernelsApiService/GetKernelSessionStatus',
+              data=json.dumps({'userName':owner,'kernelSlug':slug},separators=(',',':')).encode(),
+              method='POST',
+              headers={'Authorization':auth,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-a06-status-probe/1.0'},
+          )
+          try:
+              with urllib.request.urlopen(req,timeout=60) as response:
+                  raw=response.read().decode('utf-8','replace')
+                  obj=json.loads(raw) if raw else {}
+          except urllib.error.HTTPError as exc:
+              detail=exc.read(2000).decode('utf-8','replace')
+              print(json.dumps({'probe':'HTTP_ERROR','code':exc.code,'detail':detail[:800]},sort_keys=True))
+              raise SystemExit(2)
+          print('M07_A06_LIVE_STATUS '+json.dumps(obj,sort_keys=True))
+          '@
+          $script | & $python -
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
