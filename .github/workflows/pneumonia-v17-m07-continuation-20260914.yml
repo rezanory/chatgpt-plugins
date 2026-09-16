@@ -1292,7 +1292,8 @@ jobs:
     name: Freeze exact M07 R320 source Version 4
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
-          github.event.inputs.recovery == 'M07_FREEZE_R320_SOURCE_V4' }}
+          (github.event.inputs.recovery == 'M07_FREEZE_R320_SOURCE_V4' ||
+           github.event.inputs.recovery == 'M07_PROBE_R320_SOURCE_V4_DOWNLOAD') }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 30
     environment: kaggle-05
@@ -1300,6 +1301,7 @@ jobs:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
       SOURCE_HANDLE: rezanory/m07-gate-r320-state-v1-7/versions/4
       TARGET_HANDLE: trickermark/m07-gate-r320-state-v1-7-immutable-v4
+      PROBE_ONLY: ${{ github.event.inputs.recovery == 'M07_PROBE_R320_SOURCE_V4_DOWNLOAD' && '1' || '0' }}
     steps:
       - name: Checkout exact fix-forward source
         uses: actions/checkout@v4

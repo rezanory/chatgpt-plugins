@@ -77,7 +77,7 @@ def main() -> int:
     ROOT.mkdir(parents=True, exist_ok=True)
     DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     STAGED.mkdir(parents=True, exist_ok=True)
-    assert_target_absent()
+    probe_only = os.environ.get('PROBE_ONLY', '').strip() == '1'
 
     downloaded = pathlib.Path(
         kagglehub.dataset_download(
@@ -154,6 +154,14 @@ def main() -> int:
             sort_keys=True,
         )
     )
+
+    if probe_only:
+        receipt['upload_status'] = 'PROBE_SOURCE_VERIFIED_NO_MUTATION'
+        RECEIPT_PATH.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
+        print(json.dumps({'probe_only': True, 'source_handle': SOURCE_HANDLE, 'manifest_sha256': manifest_sha, 'file_count': len(manifest)}, sort_keys=True))
+        return 0
+
+    assert_target_absent()
 
     kagglehub.dataset_upload(
         TARGET_HANDLE,
