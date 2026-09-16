@@ -1288,6 +1288,46 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  freeze-m07-r320-source-v4:
+    name: Freeze exact M07 R320 source Version 4
+    needs: launch-m07-continuation
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_FREEZE_R320_SOURCE_V4' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 30
+    environment: kaggle-05
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      SOURCE_HANDLE: rezanory/m07-gate-r320-state-v1-7/versions/4
+      TARGET_HANDLE: trickermark/m07-gate-r320-state-v1-7-immutable-v4
+    steps:
+      - name: Checkout exact fix-forward source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install Kaggle client
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install -q 'kagglehub>=1.0,<2'
+
+      - name: Clone and upload immutable source Version 4
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python scripts/m07_freeze_r320_source_v4.py
+
+      - name: Preserve source freeze receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-source-freeze-${{ github.run_id }}
+          path: ${{ runner.temp }}\m07-source-v4-${{ github.run_id }}\m07-source-freeze-receipt.json
+          if-no-files-found: warn
+          retention-days: 30
+
   soilbin_q1_v4_raw_waveform:
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
