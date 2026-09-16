@@ -149,21 +149,23 @@ jobs:
               "M07_RUNTIME_M07_R320_A06",
               "M07_RUNTIME_M07_R320_A07",
           }
-          # Kaggle kernel metadata accepts only an unversioned dataset source.  The
-          # original reza dataset is mutable (its current version drifted to v6), so
-          # A07 resumes from the separately frozen kg-05 clone whose only version is
-          # the verified source Version 4.  Keep the original A04-A06 handles in the
-          # contract for immutable historical evidence; they are never relaunched.
+          # A04-A06 proved that Kaggle non-interactive dataset attachment always
+          # resolves the mutable owner dataset to its latest version (currently v6),
+          # even when the notebook asks for immutable Version 4.  A07 therefore keeps
+          # the exact original v4 handle but bypasses notebook auto-attach entirely:
+          # phase2_restore uses kagglehub's HTTP resolver directly.  No R320 state
+          # dataset is attached to the A07 kernel metadata.
           RUNTIME_SOURCE_STATE_HANDLE = (
-              "trickermark/m07-gate-r320-state-v1-7-immutable-v4/versions/1"
-              if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A07"
-              else "rezanory/m07-gate-r320-state-v1-7/versions/4"
+              "rezanory/m07-gate-r320-state-v1-7/versions/4"
               if RUNTIME_TOKEN in IMMUTABLE_R320_RECOVERY_TOKENS
               else None
           )
+          RUNTIME_SOURCE_STATE_HTTP_ONLY = (
+              RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A07"
+          )
           RUNTIME_SOURCE_STATE_ATTACHMENT = (
-              "trickermark/m07-gate-r320-state-v1-7-immutable-v4"
-              if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A07"
+              None
+              if RUNTIME_SOURCE_STATE_HTTP_ONLY
               else "rezanory/m07-gate-r320-state-v1-7/4"
               if RUNTIME_TOKEN in IMMUTABLE_R320_RECOVERY_TOKENS
               else None
@@ -541,9 +543,26 @@ jobs:
                   "            globals().get('CGP_RUNTIME_SOURCE_STATE_HANDLE')",
                   "            or phase2_handle(model_id, resolution)",
                   "        )",
-                  "        kagglehub.dataset_download(",
-                  "            restore_handle, output_dir=str(temp), force_download=True",
-                  "        )",
+                  "        if globals().get('CGP_RUNTIME_SOURCE_STATE_HTTP_ONLY') is True:",
+                  "            from kagglehub.handle import parse_dataset_handle as _cgp_parse_dataset_handle",
+                  "            from kagglehub.http_resolver import DatasetHttpResolver as _CgpDatasetHttpResolver",
+                  "            _cgp_restore_path, _cgp_restore_version = _CgpDatasetHttpResolver()(",
+                  "                _cgp_parse_dataset_handle(restore_handle),",
+                  "                force_download=True,",
+                  "                output_dir=str(temp),",
+                  "            )",
+                  "            if int(_cgp_restore_version or 0) != 4:",
+                  "                raise RuntimeError(",
+                  "                    f'M07 R320 HTTP restore expected source version 4, observed {_cgp_restore_version}'",
+                  "                )",
+                  "            print(",
+                  "                'M07_R320_HTTP_SOURCE_RESTORE',",
+                  "                json.dumps({'handle': restore_handle, 'version': int(_cgp_restore_version), 'path': str(_cgp_restore_path)}, sort_keys=True),",
+                  "            )",
+                  "        else:",
+                  "            kagglehub.dataset_download(",
+                  "                restore_handle, output_dir=str(temp), force_download=True",
+                  "            )",
               ])
               restore_download_hits = 0
               for cell in notebook["cells"]:
@@ -575,6 +594,7 @@ jobs:
           CGP_RUNTIME_RESOLUTION = {RUNTIME_RESOLUTION!r}
           CGP_RUNTIME_ATTEMPT = {RUNTIME_ATTEMPT!r}
           CGP_RUNTIME_SOURCE_STATE_HANDLE = {RUNTIME_SOURCE_STATE_HANDLE!r}
+          CGP_RUNTIME_SOURCE_STATE_HTTP_ONLY = {RUNTIME_SOURCE_STATE_HTTP_ONLY!r}
           CGP_RUNTIME_PHASE2_STATE_ATTACH_OPTIONAL = (
               CGP_RUNTIME_RESOLUTION == 384 and CGP_RUNTIME_ATTEMPT == 1
           )
@@ -815,6 +835,7 @@ jobs:
                   "source_persistence_handle": PERSIST_HANDLE,
                   "source_phase2_state_handle": RUNTIME_SOURCE_STATE_HANDLE,
                   "source_phase2_state_attachment": RUNTIME_SOURCE_STATE_ATTACHMENT,
+                  "source_phase2_state_http_only": bool(RUNTIME_SOURCE_STATE_HTTP_ONLY),
                   "max_new_folds": 1 if RUNTIME_MODE else None,
               },
               "manual_approval": {
@@ -841,7 +862,9 @@ jobs:
               "machine_shape": "NvidiaTeslaT4",
               "notebook_sha256": __import__("hashlib").sha256(out.read_bytes()).hexdigest(),
               "runtime_stage": RUNTIME_TOKEN,
+              "source_phase2_state_handle": RUNTIME_SOURCE_STATE_HANDLE,
               "source_phase2_state_attachment": RUNTIME_SOURCE_STATE_ATTACHMENT,
+              "source_phase2_state_http_only": bool(RUNTIME_SOURCE_STATE_HTTP_ONLY),
           }
           pathlib.Path(os.environ["RUNNER_TEMP"], "m07_runtime_contract.json").write_text(
               json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1097,6 +1120,13 @@ jobs:
           for key,value in runtime_required.items():
               if runtime.get(key)!=value:
                   raise SystemExit(f'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime.{key}={runtime.get(key)!r}')
+          if str(contract.get('runtime_stage') or '') == 'M07_RUNTIME_M07_R320_A07':
+              if runtime.get('source_phase2_state_handle') != 'rezanory/m07-gate-r320-state-v1-7/versions/4':
+                  raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: A07 source handle')
+              if runtime.get('source_phase2_state_http_only') is not True:
+                  raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: A07 HTTP restore flag')
+              if runtime.get('source_phase2_state_attachment') is not None:
+                  raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: A07 must not attach mutable R320 state')
           pathlib.Path('verified-notebook-path.txt').write_text(str(path),encoding='utf-8')
           print(json.dumps({'identity':'PASS','owner':detected,'sha256':sha,
                             'account_id':account_id,'kernel_ref':kernel_ref,
@@ -1175,8 +1205,17 @@ jobs:
                       if runtime_stage == 'M07_RUNTIME_M07_R320_A04'
                       else owner
                   )
+                  state_handle=str(contract.get('source_phase2_state_handle') or '').strip()
                   state_attachment=str(contract.get('source_phase2_state_attachment') or '').strip()
-                  if state_attachment:
+                  state_http_only=contract.get('source_phase2_state_http_only') is True
+                  if state_http_only:
+                      if runtime_stage != 'M07_RUNTIME_M07_R320_A07':
+                          raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: HTTP restore stage drift')
+                      if state_handle != 'rezanory/m07-gate-r320-state-v1-7/versions/4':
+                          raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: HTTP restore handle drift')
+                      if state_attachment:
+                          raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: HTTP restore must not attach R320 state')
+                  elif state_attachment:
                       if state_attachment != 'rezanory/m07-gate-r320-state-v1-7/4':
                           raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: R320 attachment drift')
                       dataset_sources.append(state_attachment)
