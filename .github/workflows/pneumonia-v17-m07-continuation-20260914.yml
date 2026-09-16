@@ -1128,19 +1128,26 @@ jobs:
           before={}
           action='SUBMITTED_NEW'
           if action == 'SUBMITTED_NEW':
-              # Attach the exact state dataset resolved by phase2_handle().
-              # That handle is owner-bound (PHASE2_PERSIST_OWNER), so a
-              # shared-viewer run under kg-05 must attach trickermark's
-              # validated state snapshot, not reza's similarly named dataset.
-              # Omitting or cross-wiring this parent produces Kaggle's
-              # misleading non-interactive "no versions attached" BackendError.
+              # Attach the exact state dataset for this immutable runtime
+              # partition.  A04 is the one recovery run whose source state is
+              # explicitly frozen to reza's immutable Version 4; later
+              # attempts must resume the state dataset owned by the execution
+              # account after A04 publishes its sealed successor.  The
+              # notebook still pins `/versions/4` for A04, while this parent
+              # attachment makes the non-interactive Kaggle session admit it.
               dataset_sources=['paultimothymooney/chest-xray-pneumonia',
                                'rezanory/m07-final-5fold-fix2-d260914d']
               # The artifact-launch job receives only the sealed contract;
               # derive the resolution and owner from that contract rather
               # than relying on builder-local variables.
               if int(contract.get('resolution') or 0) == 320:
-                  dataset_sources.append(f'{owner}/m07-gate-r320-state-v1-7')
+                  runtime_stage=str(contract.get('runtime_stage') or '').strip()
+                  state_owner=(
+                      'rezanory'
+                      if runtime_stage == 'M07_RUNTIME_M07_R320_A04'
+                      else owner
+                  )
+                  dataset_sources.append(f'{state_owner}/m07-gate-r320-state-v1-7')
               body={
                   'slug':kernel_ref,
                   'newTitle':kernel_title,
