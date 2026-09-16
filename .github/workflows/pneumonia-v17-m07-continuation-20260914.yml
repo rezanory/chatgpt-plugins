@@ -1293,6 +1293,38 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  inventory-m07-r320-v4-producer-output:
+    name: Inventory M07 R320 V4 producer output
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_INVENTORY_R320_V4_PRODUCER' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 15
+    environment: kaggle-03
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: rezanory
+    steps:
+      - name: Checkout exact inventory source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Read producer output manifest only
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python scripts/m07_producer_output_manifest.py
+
+      - name: Preserve sanitized producer inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-producer-output-inventory-${{ github.run_id }}
+          path: ${{ runner.temp }}\m07-producer-output-manifest.json
+          if-no-files-found: warn
+          retention-days: 30
+
   probe-m07-r320-source-v4:
     name: Probe exact M07 R320 source Version 4 mount
     if: >-
