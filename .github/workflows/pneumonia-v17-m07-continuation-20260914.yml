@@ -60,7 +60,10 @@ jobs:
           github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER') ||
           (github.event_name == 'workflow_dispatch' &&
           startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R')) }}
-    runs-on: windows-latest
+    # GitHub-hosted runners are unavailable under the repository spending limit.
+    # Use the online v622 self-hosted runner; this does not change Kaggle
+    # identity, notebook bytes, or the one-submit contract.
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 30
     steps:
       - name: Checkout exact workflow revision
@@ -915,7 +918,9 @@ jobs:
           github.ref != 'refs/heads/main' &&
           (startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R320_A') ||
            startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R384_A')) }}
-    runs-on: ubuntu-latest
+    # Keep the artifact launch on the same trusted self-hosted pool so a
+    # GitHub-hosted billing failure cannot strand an admitted candidate.
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 15
     environment: >-
       ${{ github.event.inputs.runtime_account == 'kg-03' && 'kaggle-03' ||
