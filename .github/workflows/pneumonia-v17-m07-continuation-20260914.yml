@@ -146,6 +146,7 @@ jobs:
           IMMUTABLE_R320_RECOVERY_TOKENS = {
               "M07_RUNTIME_M07_R320_A04",
               "M07_RUNTIME_M07_R320_A05",
+              "M07_RUNTIME_M07_R320_A06",
           }
           RUNTIME_SOURCE_STATE_HANDLE = (
               "rezanory/m07-gate-r320-state-v1-7/versions/4"
