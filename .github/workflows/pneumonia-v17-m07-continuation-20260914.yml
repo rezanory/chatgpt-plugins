@@ -948,7 +948,7 @@ jobs:
 
       - name: Request trusted action OIDC identity for Cloudflare-backed account
         if: ${{ env.CGP_USE_KAGGLE_BROKER == '1' }}
-        shell: '"C:/Program Files/Git/bin/bash.exe" --noprofile --norc -eo pipefail {0}'
+        shell: 'C:/PROGRA~1/Git/bin/bash.exe --noprofile --norc -eo pipefail {0}'
         run: |
           set -euo pipefail
           if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" || -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]; then
@@ -971,11 +971,11 @@ jobs:
           printf 'CGP_ACTION_OIDC_TOKEN=%s\n' "$token" >> "$GITHUB_ENV"
 
       - name: Install read-only Kaggle identity client
-        shell: '"C:/Program Files/Git/bin/bash.exe" --noprofile --norc -eo pipefail {0}'
+        shell: 'C:/PROGRA~1/Git/bin/bash.exe --noprofile --norc -eo pipefail {0}'
         run: python -m pip install -q 'kagglehub>=1.0,<2'
 
       - name: Verify identity, exact bytes and immutable runtime contract
-        shell: '"C:/Program Files/Git/bin/bash.exe" --noprofile --norc -eo pipefail {0}'
+        shell: 'C:/PROGRA~1/Git/bin/bash.exe --noprofile --norc -eo pipefail {0}'
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -1076,7 +1076,7 @@ jobs:
           PY
 
       - name: Submit once and prove the Kaggle session is admitted
-        shell: '"C:/Program Files/Git/bin/bash.exe" --noprofile --norc -eo pipefail {0}'
+        shell: 'C:/PROGRA~1/Git/bin/bash.exe --noprofile --norc -eo pipefail {0}'
         run: |
           set -euo pipefail
           python - <<'PY'
