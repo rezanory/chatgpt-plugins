@@ -15,7 +15,15 @@ import pathlib
 import shutil
 from typing import Any
 
+from kagglesdk.blobs.types.blob_api_service import ApiBlobType
+from kagglesdk.datasets.types.dataset_api_service import ApiCreateDatasetRequest
+
 import kagglehub
+from kagglehub.clients import build_kaggle_client
+from kagglehub.datasets import DEFAULT_IGNORE_PATTERNS
+from kagglehub.exceptions import handle_mutate_call
+from kagglehub.gcs_upload import normalize_patterns, upload_files_and_directories
+from kagglehub.handle import parse_dataset_handle
 
 
 SOURCE_HANDLE = os.environ.get(
@@ -36,37 +44,34 @@ def fail(message: str) -> None:
     raise SystemExit(message)
 
 
-def assert_target_absent() -> None:
-    """Fail closed if the fixed clone handle already exists.
+def create_target_dataset_once() -> None:
+    """Create the immutable clone as Version 1 only; never create a version.
 
-    A missing dataset is the only condition that permits creating Version 1.
-    Any non-404 response (including auth or transport failures) is a blocker,
-    not permission to create a second version.
+    ``kagglehub.dataset_upload`` intentionally falls back to creating a new
+    version when CreateDataset reports a conflict.  That behavior is unsafe
+    for this immutable source clone: a pre-existing target must be a hard
+    failure, not a reason to append Version 2.  Use the same official upload
+    transport but call CreateDataset directly so a conflict remains fatal.
     """
 
-    probe = ROOT / "target-probe"
-    try:
-        kagglehub.dataset_download(
-            TARGET_HANDLE,
-            path="dataset-metadata.json",
-            output_dir=str(probe),
-            force_download=True,
+    handle = parse_dataset_handle(TARGET_HANDLE)
+    uploaded = upload_files_and_directories(
+        str(STAGED),
+        item_type=ApiBlobType.DATASET,
+        ignore_patterns=normalize_patterns(default=DEFAULT_IGNORE_PATTERNS, additional=None),
+    )
+    proto = uploaded.to_proto()
+    request = ApiCreateDatasetRequest()
+    request.owner_slug = handle.owner
+    request.slug = handle.dataset
+    request.title = "M07 Gate R320 State V1.7 Immutable V4"
+    request.files = proto.files
+    request.directories = proto.directories
+    request.is_private = True
+    with build_kaggle_client() as api_client:
+        handle_mutate_call(
+            lambda: api_client.datasets.dataset_api_client.create_dataset(request)
         )
-    except Exception as exc:  # noqa: BLE001 - preserve provider diagnosis
-        detail = str(exc)
-        lowered = detail.lower()
-        status_code = getattr(exc, "status_code", None)
-        if status_code is None:
-            response = getattr(exc, "response", None)
-            status_code = getattr(response, "status_code", None)
-        if status_code == 404 or "404" in lowered or "not found" in lowered or "does not exist" in lowered:
-            return
-        fail(
-            "BLOCKED_VALIDATION_INFRASTRUCTURE: target preflight failed: "
-            f"{type(exc).__name__} status={status_code or 'UNKNOWN'}"
-        )
-    fail("BLOCKED_IMMUTABLE_SOURCE_HYGIENE: target clone handle already exists")
-
 
 def main() -> int:
     if SOURCE_HANDLE != "rezanory/m07-gate-r320-state-v1-7/versions/4":
@@ -77,7 +82,6 @@ def main() -> int:
     ROOT.mkdir(parents=True, exist_ok=True)
     DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     STAGED.mkdir(parents=True, exist_ok=True)
-    assert_target_absent()
 
     downloaded = pathlib.Path(
         kagglehub.dataset_download(
@@ -155,12 +159,8 @@ def main() -> int:
         )
     )
 
-    kagglehub.dataset_upload(
-        TARGET_HANDLE,
-        str(STAGED),
-        version_notes="d260914d immutable clone of rezanory/m07-gate-r320-state-v1-7 Version 4",
-    )
-    receipt["upload_status"] = "SUBMITTED_FIRST_VERSION"
+    create_target_dataset_once()
+    receipt["upload_status"] = "CREATE_DATASET_ACCEPTED_FIRST_VERSION"
     RECEIPT_PATH.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
     print(
         json.dumps(
