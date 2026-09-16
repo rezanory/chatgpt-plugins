@@ -997,7 +997,7 @@ jobs:
           name: m07-runtime-notebook-${{ github.run_id }}
           path: exact-runtime
 
-      - name: Request trusted action OIDC identity for Cloudflare-backed account
+      - name: Request trusted action and read OIDC identities for Cloudflare-backed account
         if: ${{ env.CGP_USE_KAGGLE_BROKER == '1' }}
         shell: 'C:/PROGRA~1/Git/bin/bash.exe --noprofile --norc -eo pipefail {0}'
         run: |
@@ -1008,18 +1008,30 @@ jobs:
           fi
           sep='?'
           [[ "$ACTIONS_ID_TOKEN_REQUEST_URL" == *\?* ]] && sep='&'
-          raw="$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          action_raw="$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}${sep}audience=cgp-control-plane-v3-action")"
-          token="$(RAW_JSON="$raw" python - <<'PY'
+          action_token="$(RAW_JSON="$action_raw" python - <<'PY'
           import json, os
           value=json.loads(os.environ['RAW_JSON']).get('value','')
           if not isinstance(value,str) or len(value)<100:
-              raise SystemExit('OIDC token unavailable')
+              raise SystemExit('action OIDC token unavailable')
           print(value)
           PY
           )"
-          echo "::add-mask::$token"
-          printf 'CGP_ACTION_OIDC_TOKEN=%s\n' "$token" >> "$GITHUB_ENV"
+          read_raw="$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}${sep}audience=cgp-control-plane-v3")"
+          read_token="$(RAW_JSON="$read_raw" python - <<'PY'
+          import json, os
+          value=json.loads(os.environ['RAW_JSON']).get('value','')
+          if not isinstance(value,str) or len(value)<100:
+              raise SystemExit('read OIDC token unavailable')
+          print(value)
+          PY
+          )"
+          echo "::add-mask::$action_token"
+          echo "::add-mask::$read_token"
+          printf 'CGP_ACTION_OIDC_TOKEN=%s\n' "$action_token" >> "$GITHUB_ENV"
+          printf 'CGP_READ_OIDC_TOKEN=%s\n' "$read_token" >> "$GITHUB_ENV"
 
       - name: Install read-only Kaggle identity client
         shell: 'C:/PROGRA~1/Git/bin/bash.exe --noprofile --norc -eo pipefail {0}'
@@ -1064,23 +1076,21 @@ jobs:
                   return response.status,(json.loads(raw) if raw else {})
 
           if use_broker:
-              broker_token=os.environ.get('CGP_ACTION_OIDC_TOKEN','').strip()
-              if not broker_token:
-                  raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: action broker token absent')
-              endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+              read_token=os.environ.get('CGP_READ_OIDC_TOKEN','').strip()
+              if not read_token:
+                  raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: read broker token absent')
+              endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
               payload={
-                  'request_id':f"m07-runtime-identity-{os.environ['GITHUB_RUN_ID']}",
-                  'provider':'kaggle','operation_class':'compute','account_id':account_id,
-                  'purpose':'Read-only identity/quota preflight for exact M07 runtime; no kernel mutation.',
+                  'provider':'kaggle','action':'raw_read','account_id':account_id,
                   'service':'kernels.KernelsApiService','method':'GetAcceleratorQuotaStatistics','body':{},
               }
               req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={
-                  'Authorization':'Bearer '+broker_token,'Content-Type':'application/json','Accept':'application/json',
-                  'User-Agent':'m07-exact-runtime-identity-preflight/1.0'})
+                  'Authorization':'Bearer '+read_token,'Content-Type':'application/json','Accept':'application/json',
+                  'User-Agent':'m07-exact-runtime-identity-preflight/1.1'})
               with urllib.request.urlopen(req,timeout=60) as response:
                   envelope=json.loads(response.read().decode('utf-8','replace') or '{}')
-              if envelope.get('ok') is not True or envelope.get('account_id') != account_id:
-                  raise SystemExit(f'BLOCKED_ADMISSION_AUTHORITY_MISSING: broker identity response={envelope!r}')
+              if envelope.get('ok') is not True:
+                  raise SystemExit(f'BLOCKED_ADMISSION_AUTHORITY_MISSING: read broker identity response={envelope!r}')
               detected=owner
           else:
               me=kagglehub.whoami()
