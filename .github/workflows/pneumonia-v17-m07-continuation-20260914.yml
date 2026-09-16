@@ -147,14 +147,24 @@ jobs:
               "M07_RUNTIME_M07_R320_A04",
               "M07_RUNTIME_M07_R320_A05",
               "M07_RUNTIME_M07_R320_A06",
+              "M07_RUNTIME_M07_R320_A07",
           }
+          # Kaggle kernel metadata accepts only an unversioned dataset source.  The
+          # original reza dataset is mutable (its current version drifted to v6), so
+          # A07 resumes from the separately frozen kg-05 clone whose only version is
+          # the verified source Version 4.  Keep the original A04-A06 handles in the
+          # contract for immutable historical evidence; they are never relaunched.
           RUNTIME_SOURCE_STATE_HANDLE = (
-              "rezanory/m07-gate-r320-state-v1-7/versions/4"
+              "trickermark/m07-gate-r320-state-v1-7-immutable-v4/versions/1"
+              if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A07"
+              else "rezanory/m07-gate-r320-state-v1-7/versions/4"
               if RUNTIME_TOKEN in IMMUTABLE_R320_RECOVERY_TOKENS
               else None
           )
           RUNTIME_SOURCE_STATE_ATTACHMENT = (
-              "rezanory/m07-gate-r320-state-v1-7/4"
+              "trickermark/m07-gate-r320-state-v1-7-immutable-v4"
+              if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A07"
+              else "rezanory/m07-gate-r320-state-v1-7/4"
               if RUNTIME_TOKEN in IMMUTABLE_R320_RECOVERY_TOKENS
               else None
           )
