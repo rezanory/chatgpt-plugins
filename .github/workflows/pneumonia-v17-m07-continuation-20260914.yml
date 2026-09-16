@@ -1128,15 +1128,16 @@ jobs:
           before={}
           action='SUBMITTED_NEW'
           if action == 'SUBMITTED_NEW':
-              # Attach the immutable R320 state dataset explicitly.  Kaggle's
-              # non-interactive resolver can only download a pinned version
-              # when the parent dataset is present in this source list; omitting
-              # it produces the misleading "no versions attached" BackendError.
-              # The notebook still requests Version 4 and validates its sealed
-              # four-fold manifest before any training or upload.
+              # Attach the exact state dataset resolved by phase2_handle().
+              # That handle is owner-bound (PHASE2_PERSIST_OWNER), so a
+              # shared-viewer run under kg-05 must attach trickermark's
+              # validated state snapshot, not reza's similarly named dataset.
+              # Omitting or cross-wiring this parent produces Kaggle's
+              # misleading non-interactive "no versions attached" BackendError.
               dataset_sources=['paultimothymooney/chest-xray-pneumonia',
-                               'rezanory/m07-final-5fold-fix2-d260914d',
-                               'rezanory/m07-gate-r320-state-v1-7']
+                               'rezanory/m07-final-5fold-fix2-d260914d']
+              if RUNTIME_MODE and RUNTIME_RESOLUTION == 320:
+                  dataset_sources.append(f'{RUNTIME_OWNER}/m07-gate-r320-state-v1-7')
               body={
                   'slug':kernel_ref,
                   'newTitle':kernel_title,
