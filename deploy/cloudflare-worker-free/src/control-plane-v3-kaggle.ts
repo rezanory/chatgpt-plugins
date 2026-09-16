@@ -187,6 +187,27 @@ function sanitizeLog(raw: string, maxChars: number): string {
   return bounded.replace(LOG_SECRET, "<redacted>");
 }
 
+function safeLogTail(raw: string, maxChars: number): { text: string; redactedLines: number } {
+  const lines = raw.split(/\r?\n/);
+  const safe: string[] = [];
+  let redactedLines = 0;
+  for (const line of lines) {
+    // Drop only lines that contain credential material.  Keeping the other
+    // lines preserves deterministic phase/error evidence without exposing a
+    // token that would otherwise cause the whole response to be redacted.
+    if (/(KGAT_[A-Za-z0-9_-]+|(?:token|secret|password|authorization)\s*[:=]\s*\S+)/i.test(line)) {
+      redactedLines += 1;
+      continue;
+    }
+    safe.push(line);
+  }
+  const text = safe.join("\n");
+  return {
+    text: text.length > maxChars ? text.slice(-maxChars) : text,
+    redactedLines,
+  };
+}
+
 async function parseResponse(response: Response): Promise<Record<string, unknown>> {
   const text = await response.text();
   let value: unknown = {};
@@ -275,6 +296,34 @@ export async function kaggleLiveLog(
     phase,
     phase_marker_found: phase !== null,
     log_tail: log,
+    bounded: true,
+  };
+}
+
+export async function kaggleSafeLogMarkers(
+  env: ControlPlaneV3Env,
+  accountId: AccountId,
+  kernelRef: string,
+  maxChars = 120_000,
+): Promise<Record<string, unknown>> {
+  if (!Number.isInteger(maxChars) || maxChars < 1000 || maxChars > 200_000) {
+    throw new Error("maxChars must be an integer between 1000 and 200000");
+  }
+  const slug = kernelSlug(accountId, kernelRef);
+  const value = await kaggleReadCall(env, {
+    accountId,
+    service: "kernels.KernelsApiService",
+    method: "ListKernelSessionOutput",
+    body: { userName: ACCOUNTS[accountId].owner, kernelSlug: slug, pageSize: 1 },
+  });
+  const raw = String(value.log ?? "");
+  const safe = safeLogTail(raw, maxChars);
+  return {
+    account_id: accountId,
+    kernel_ref: kernelRef,
+    log_tail: safe.text,
+    source_log_chars: raw.length,
+    redacted_lines: safe.redactedLines,
     bounded: true,
   };
 }

@@ -2,6 +2,7 @@ import canonicalWorker from "./index";
 import { executeKaggleOidcAction, kaggleActionAccountIds } from "./control-plane-v3-action";
 import {
   kaggleLiveLog,
+  kaggleSafeLogMarkers,
   kaggleOutputJsonFiles,
   kagglePhaseProbe,
   kaggleReadCall,
@@ -103,6 +104,9 @@ async function handleKaggleRead(request: Request, env: ControlPlaneV3Env): Promi
   } else if (action === "live_log") {
     const maxChars = Number(body.max_chars ?? 40_000);
     result = await kaggleLiveLog(env, account, String(body.kernel_ref ?? ""), maxChars);
+  } else if (action === "safe_log_markers") {
+    const maxChars = Number(body.max_chars ?? 40_000);
+    result = await kaggleSafeLogMarkers(env, account, String(body.kernel_ref ?? ""), maxChars);
   } else {
     throw new Error("unsupported Kaggle read action");
   }
