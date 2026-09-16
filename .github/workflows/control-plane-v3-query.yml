@@ -23,7 +23,9 @@ jobs:
           (github.event.issue.number == 33 &&
            github.event.comment.user.id == 62356000 &&
            startsWith(github.event.comment.body, 'CONTROL_PLANE_V3_QUERY ')) }}
-    runs-on: windows-latest
+    # Use the online, pre-provisioned self-hosted runner for read-only broker
+    # queries when GitHub-hosted capacity is unavailable due account billing.
+    runs-on: [self-hosted, windows, x64, v622]
     environment: cloudflare-production
     timeout-minutes: 20
     concurrency:
