@@ -1,4 +1,4 @@
-"""Clone the verified R320 source Version 4 into an immutable kg-05 dataset.
+"""Clone verified R320 source Version 4 into an immutable owner dataset shared read-only with kg-05.
 
 This runs on the trusted self-hosted runner, outside Kaggle's non-interactive
 notebook environment.  The clone is intentionally a new handle with one
@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import shutil
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,7 +27,7 @@ SOURCE_HANDLE = os.environ.get(
     "SOURCE_HANDLE", "rezanory/m07-gate-r320-state-v1-7/versions/4"
 ).strip()
 TARGET_HANDLE = os.environ.get(
-    "TARGET_HANDLE", "trickermark/m07-gate-r320-state-v1-7-immutable-v4"
+    "TARGET_HANDLE", "rezanory/m07-gate-r320-state-v1-7-immutable-v4"
 ).strip()
 RUN_ID = os.environ.get("GITHUB_RUN_ID", "local").strip()
 RUNNER_TEMP = pathlib.Path(os.environ.get("RUNNER_TEMP", pathlib.Path.cwd()))
@@ -48,7 +49,7 @@ def _kaggle_authorization_header() -> str:
         fail("BLOCKED_VALIDATION_INFRASTRUCTURE: KAGGLE_API_TOKEN is unavailable")
     if token.startswith("KGAT_"):
         return f"Bearer {token}"
-    username = os.environ.get("KAGGLE_USERNAME", "trickermark").strip() or "trickermark"
+    username = os.environ.get("KAGGLE_USERNAME", "rezanory").strip() or "rezanory"
     encoded = base64.b64encode(f"{username}:{token}".encode("utf-8")).decode("ascii")
     return f"Basic {encoded}"
 
@@ -63,7 +64,7 @@ def assert_target_absent() -> None:
     """
 
     owner, slug = TARGET_HANDLE.split("/", 1)
-    if owner != "trickermark":
+    if owner != "rezanory":
         fail("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: target owner drift")
 
     auth = _kaggle_authorization_header()
@@ -145,7 +146,7 @@ def assert_target_absent() -> None:
 def main() -> int:
     if SOURCE_HANDLE != "rezanory/m07-gate-r320-state-v1-7/versions/4":
         fail("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: source handle drift")
-    if TARGET_HANDLE != "trickermark/m07-gate-r320-state-v1-7-immutable-v4":
+    if TARGET_HANDLE != "rezanory/m07-gate-r320-state-v1-7-immutable-v4":
         fail("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: target handle drift")
 
     ROOT.mkdir(parents=True, exist_ok=True)
@@ -192,6 +193,7 @@ def main() -> int:
     metadata = {
         "title": "M07 Gate R320 State V1.7 Immutable V4",
         "id": TARGET_HANDLE,
+        "isPrivate": True,
         "licenses": [{"name": "CC0-1.0"}],
         "description": (
             "Immutable fix-forward clone of "
@@ -235,12 +237,57 @@ def main() -> int:
         version_notes="d260914d immutable clone of rezanory/m07-gate-r320-state-v1-7 Version 4",
     )
     receipt["upload_status"] = "SUBMITTED_FIRST_VERSION"
+
+    # Apply sharing only after the immutable Version 1 upload succeeds.  The
+    # official Kaggle API validates collaborator roles and updates dataset
+    # settings without creating a new data version.
+    from kaggle.api.kaggle_api_extended import KaggleApi
+
+    metadata["collaborators"] = [{"username": "trickermark", "role": "reader"}]
+    (STAGED / "dataset-metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    api = KaggleApi()
+    api.authenticate()
+    api.dataset_metadata_update(TARGET_HANDLE, str(STAGED))
+    receipt["collaborator_status"] = "trickermark:reader"
+
+    deadline = time.time() + 300
+    status_payload: dict[str, Any] = {}
+    while time.time() < deadline:
+        status_payload = json.loads(
+            api.dataset_status(
+                TARGET_HANDLE,
+                format="json(status,current_version_number)",
+            )
+        )
+        status = str(status_payload.get("status", "")).lower()
+        version = int(status_payload.get("current_version_number") or 0)
+        if status == "ready" and version == 1:
+            break
+        if status in {"failed", "error"}:
+            fail(
+                "BLOCKED_VALIDATION_INFRASTRUCTURE: immutable target processing "
+                f"failed status={status} version={version}"
+            )
+        time.sleep(10)
+    else:
+        fail(
+            "BLOCKED_VALIDATION_INFRASTRUCTURE: immutable target did not become "
+            f"Ready Version 1: {status_payload}"
+        )
+
+    receipt["target_status"] = "READY"
+    receipt["target_version"] = 1
     RECEIPT_PATH.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
     print(
         json.dumps(
             {
                 "target_handle": TARGET_HANDLE,
                 "upload_status": receipt["upload_status"],
+                "collaborator_status": receipt["collaborator_status"],
+                "target_status": receipt["target_status"],
+                "target_version": receipt["target_version"],
                 "manifest_sha256": manifest_sha,
             },
             ensure_ascii=False,

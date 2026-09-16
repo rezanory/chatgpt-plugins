@@ -151,18 +151,18 @@ jobs:
           }
           # Kaggle kernel metadata accepts only an unversioned dataset source.  The
           # original reza dataset is mutable (its current version drifted to v6), so
-          # A07 resumes from the separately frozen kg-05 clone whose only version is
-          # the verified source Version 4.  Keep the original A04-A06 handles in the
+          # A07 resumes from the separately frozen owner clone whose only version is
+          # the verified source Version 4 and which grants trickermark read-only access.  Keep the original A04-A06 handles in the
           # contract for immutable historical evidence; they are never relaunched.
           RUNTIME_SOURCE_STATE_HANDLE = (
-              "trickermark/m07-gate-r320-state-v1-7-immutable-v4/versions/1"
+              "rezanory/m07-gate-r320-state-v1-7-immutable-v4/versions/1"
               if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A07"
               else "rezanory/m07-gate-r320-state-v1-7/versions/4"
               if RUNTIME_TOKEN in IMMUTABLE_R320_RECOVERY_TOKENS
               else None
           )
           RUNTIME_SOURCE_STATE_ATTACHMENT = (
-              "trickermark/m07-gate-r320-state-v1-7-immutable-v4"
+              "rezanory/m07-gate-r320-state-v1-7-immutable-v4"
               if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A07"
               else "rezanory/m07-gate-r320-state-v1-7/4"
               if RUNTIME_TOKEN in IMMUTABLE_R320_RECOVERY_TOKENS
@@ -1176,8 +1176,13 @@ jobs:
                       else owner
                   )
                   state_attachment=str(contract.get('source_phase2_state_attachment') or '').strip()
+                  expected_state_attachment=(
+                      'rezanory/m07-gate-r320-state-v1-7-immutable-v4'
+                      if runtime_stage == 'M07_RUNTIME_M07_R320_A07'
+                      else 'rezanory/m07-gate-r320-state-v1-7/4'
+                  )
                   if state_attachment:
-                      if state_attachment != 'rezanory/m07-gate-r320-state-v1-7/4':
+                      if state_attachment != expected_state_attachment:
                           raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: R320 attachment drift')
                       dataset_sources.append(state_attachment)
                   else:
@@ -1294,12 +1299,13 @@ jobs:
       ${{ github.event_name == 'workflow_dispatch' &&
           github.event.inputs.recovery == 'M07_FREEZE_R320_SOURCE_V4' }}
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 30
-    environment: kaggle-05
+    timeout-minutes: 45
+    environment: kaggle-03
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: rezanory
       SOURCE_HANDLE: rezanory/m07-gate-r320-state-v1-7/versions/4
-      TARGET_HANDLE: trickermark/m07-gate-r320-state-v1-7-immutable-v4
+      TARGET_HANDLE: rezanory/m07-gate-r320-state-v1-7-immutable-v4
     steps:
       - name: Checkout exact fix-forward source
         uses: actions/checkout@v4
@@ -1310,7 +1316,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          python -m pip install -q 'kagglehub>=1.0,<2'
+          python -m pip install -q 'kagglehub>=1.0,<2' 'kaggle>=1.7.4,<2'
 
       - name: Clone and upload immutable source Version 4
         shell: powershell
