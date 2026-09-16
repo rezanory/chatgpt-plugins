@@ -1290,7 +1290,6 @@ jobs:
 
   freeze-m07-r320-source-v4:
     name: Freeze exact M07 R320 source Version 4
-    needs: launch-m07-continuation
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
           github.event.inputs.recovery == 'M07_FREEZE_R320_SOURCE_V4' }}
