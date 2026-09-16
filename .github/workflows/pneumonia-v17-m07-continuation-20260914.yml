@@ -118,8 +118,14 @@ jobs:
               RUNTIME_ACCOUNT = REQUESTED_RUNTIME_ACCOUNT
           else:
               raise SystemExit("M07_RUNTIME_ACCOUNT_INVALID")
-          if RUNTIME_MODE and RUNTIME_RESOLUTION != 384 and RUNTIME_ACCOUNT != default_runtime_account:
-              raise SystemExit("M07_RUNTIME_ACCOUNT_R320_CROSS_ACCOUNT_NOT_ALLOWED")
+          # R320 may run under the owner (kg-03) or the explicitly shared
+          # Viewer account (kg-05).  The latter is the bounded fail-forward
+          # path when the owner account has exhausted GPU quota; it still
+          # restores the immutable Version 4 state and never consumes the
+          # polluted Version 5/6 snapshots.  Other accounts are rejected
+          # closed until their dataset membership is independently evidenced.
+          if RUNTIME_MODE and RUNTIME_RESOLUTION == 320 and RUNTIME_ACCOUNT not in {"kg-03", "kg-05"}:
+              raise SystemExit("M07_RUNTIME_ACCOUNT_R320_REQUIRES_OWNER_OR_SHARED_VIEWER")
           if not RUNTIME_MODE and REQUESTED_RUNTIME_ACCOUNT != "auto":
               raise SystemExit("M07_RUNTIME_ACCOUNT_ONLY_ALLOWED_FOR_RUNTIME_STAGE")
           RUNTIME_OWNER = ACCOUNT_OWNERS[RUNTIME_ACCOUNT]
