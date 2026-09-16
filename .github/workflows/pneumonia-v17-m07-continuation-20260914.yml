@@ -1136,8 +1136,11 @@ jobs:
               # misleading non-interactive "no versions attached" BackendError.
               dataset_sources=['paultimothymooney/chest-xray-pneumonia',
                                'rezanory/m07-final-5fold-fix2-d260914d']
-              if RUNTIME_MODE and RUNTIME_RESOLUTION == 320:
-                  dataset_sources.append(f'{RUNTIME_OWNER}/m07-gate-r320-state-v1-7')
+              # The artifact-launch job receives only the sealed contract;
+              # derive the resolution and owner from that contract rather
+              # than relying on builder-local variables.
+              if int(contract.get('resolution') or 0) == 320:
+                  dataset_sources.append(f'{owner}/m07-gate-r320-state-v1-7')
               body={
                   'slug':kernel_ref,
                   'newTitle':kernel_title,
