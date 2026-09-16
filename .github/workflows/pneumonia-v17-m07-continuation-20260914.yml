@@ -674,11 +674,21 @@ jobs:
               "    \"\",",
               ").strip() or None",
           ])
+          # A shared Viewer can download the immutable predecessor but cannot
+          # publish a new version to it.  Keep restore identity bound to reza's
+          # source while routing new persistence versions to an owner dataset
+          # created by the execution account.  The source fingerprint and
+          # manifest contract remain unchanged.
+          write_handle = PERSIST_HANDLE
+          if RUNTIME_MODE and RUNTIME_ACCOUNT == "kg-05":
+              write_handle = "trickermark/m07-r320-a04-persist-d260914d"
           source_handle_bound = "\n".join([
               "PERSIST_DATASET_HANDLE = os.environ.get(",
               "    \"M07_PERSIST_DATASET_HANDLE\",",
               "    \"\",",
               f").strip() or {PERSIST_HANDLE!r}",
+              "PERSIST_SOURCE_DATASET_HANDLE = PERSIST_DATASET_HANDLE",
+              f"PERSIST_WRITE_DATASET_HANDLE = {write_handle!r}",
           ])
           phase2_owner_default = "\n".join([
               "PHASE2_PERSIST_OWNER = os.environ.get(",
@@ -708,6 +718,29 @@ jobs:
               raise SystemExit(f"M07_SOURCE_HANDLE_BINDING_COUNT={source_handle_hits}")
           if phase2_owner_hits != 1:
               raise SystemExit(f"M07_PHASE2_OWNER_BINDING_COUNT={phase2_owner_hits}")
+          restore_handle_hits = 0
+          restore_invocation_hits = 0
+          for cell in notebook["cells"]:
+              source = "".join(cell.get("source", []))
+              old_restore = "PERSIST_DATASET_HANDLE, output_dir=str(restore_dir)"
+              if old_restore in source:
+                  source = source.replace(old_restore, "PERSIST_SOURCE_DATASET_HANDLE, output_dir=str(restore_dir)", 1)
+                  restore_handle_hits += 1
+              old_invocation = "RESTORE_SUMMARY = _try_restore_persisted_state()"
+              if old_invocation in source:
+                  new_invocation = "\n".join([
+                      old_invocation,
+                      "if PERSIST_WRITE_DATASET_HANDLE != PERSIST_SOURCE_DATASET_HANDLE:",
+                      "    PERSIST_DATASET_HANDLE = PERSIST_WRITE_DATASET_HANDLE",
+                      "    print(\"M07 persistence write handle:\", PERSIST_DATASET_HANDLE)",
+                  ])
+                  source = source.replace(old_invocation, new_invocation, 1)
+                  restore_invocation_hits += 1
+              cell["source"] = source.splitlines(keepends=True)
+          if restore_handle_hits != 1:
+              raise SystemExit(f"M07_SOURCE_RESTORE_HANDLE_COUNT={restore_handle_hits}")
+          if restore_invocation_hits != 1:
+              raise SystemExit(f"M07_RESTORE_INVOCATION_COUNT={restore_invocation_hits}")
           kernel_slug = (
               f"{RUNTIME_OWNER}/m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-{RUNTIME_DATE}"
               if RUNTIME_MODE else
