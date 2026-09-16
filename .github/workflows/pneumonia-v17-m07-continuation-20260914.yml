@@ -137,9 +137,24 @@ jobs:
           # one-fold snapshot as dataset Version 5.  A04 must restore the
           # immutable Version 4 snapshot (folds 1-4) and may then append only
           # the missing fold 5 as a new dataset version.
+          # A04 failed after submission because a non-interactive Kaggle
+          # session attached the dataset's latest Version 6 while the
+          # notebook requested immutable Version 4.  The superseding A05
+          # candidate must therefore carry the same exact source handle and
+          # an explicit versioned attachment; it must never fall back to the
+          # polluted owner dataset.
+          IMMUTABLE_R320_RECOVERY_TOKENS = {
+              "M07_RUNTIME_M07_R320_A04",
+              "M07_RUNTIME_M07_R320_A05",
+          }
           RUNTIME_SOURCE_STATE_HANDLE = (
               "rezanory/m07-gate-r320-state-v1-7/versions/4"
-              if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A04"
+              if RUNTIME_TOKEN in IMMUTABLE_R320_RECOVERY_TOKENS
+              else None
+          )
+          RUNTIME_SOURCE_STATE_ATTACHMENT = (
+              "rezanory/m07-gate-r320-state-v1-7/4"
+              if RUNTIME_TOKEN in IMMUTABLE_R320_RECOVERY_TOKENS
               else None
           )
           RUNTIME_DATE = (
@@ -555,7 +570,7 @@ jobs:
           _restored_folds = phase2_restore("M07", CGP_RUNTIME_RESOLUTION)
           if (
               CGP_RUNTIME_RESOLUTION == 320
-              and CGP_RUNTIME_ATTEMPT in {{1, 4}}
+              and CGP_RUNTIME_ATTEMPT >= 4
               and _restored_folds != 4
           ):
               raise RuntimeError(
@@ -788,6 +803,7 @@ jobs:
                   "owner": RUNTIME_OWNER,
                   "source_persistence_handle": PERSIST_HANDLE,
                   "source_phase2_state_handle": RUNTIME_SOURCE_STATE_HANDLE,
+                  "source_phase2_state_attachment": RUNTIME_SOURCE_STATE_ATTACHMENT,
                   "max_new_folds": 1 if RUNTIME_MODE else None,
               },
               "manual_approval": {
@@ -1147,7 +1163,13 @@ jobs:
                       if runtime_stage == 'M07_RUNTIME_M07_R320_A04'
                       else owner
                   )
-                  dataset_sources.append(f'{state_owner}/m07-gate-r320-state-v1-7')
+                  state_attachment=str(contract.get('source_phase2_state_attachment') or '').strip()
+                  if state_attachment:
+                      if state_attachment != 'rezanory/m07-gate-r320-state-v1-7/4':
+                          raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: R320 attachment drift')
+                      dataset_sources.append(state_attachment)
+                  else:
+                      dataset_sources.append(f'{state_owner}/m07-gate-r320-state-v1-7')
               body={
                   'slug':kernel_ref,
                   'newTitle':kernel_title,
