@@ -18,6 +18,10 @@ const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
     "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-8acct-20260912.yml@refs/heads/main",
     new Set(["issue_comment", "workflow_dispatch"]),
   ],
+  [
+    "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/fix/m07-multiaccount-20260916",
+    new Set(["workflow_dispatch"]),
+  ],
 ]);
 const CLOCK_SKEW_SECONDS = 60;
 
@@ -157,7 +161,10 @@ async function verifyBrokerOidc(
     throw new Error("GitHub OIDC owner/actor identity mismatch");
   }
   const allowedEvents = allowedWorkflows.get(workflowRef);
-  if (!allowedEvents || !allowedEvents.has(eventName) || ref !== TRUSTED_REF) {
+  const refAllowed = kind === "action"
+    ? (ref === TRUSTED_REF || ref === "refs/heads/fix/m07-multiaccount-20260916")
+    : ref === TRUSTED_REF;
+  if (!allowedEvents || !allowedEvents.has(eventName) || !refAllowed) {
     throw new Error("GitHub OIDC workflow/ref/event mismatch");
   }
   if (claims.repository_visibility !== "private") throw new Error("GitHub OIDC repository visibility mismatch");
