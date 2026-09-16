@@ -1123,13 +1123,15 @@ jobs:
           before={}
           action='SUBMITTED_NEW'
           if action == 'SUBMITTED_NEW':
-              # The phase-2 state dataset is intentionally not attached here:
-              # Kaggle rejects a private dataset with no published version in
-              # non-interactive sessions.  The notebook treats that exact
-              # first-run condition as an explicit empty-state admission and
-              # creates the state snapshot only after the stage completes.
+              # Attach the immutable R320 state dataset explicitly.  Kaggle's
+              # non-interactive resolver can only download a pinned version
+              # when the parent dataset is present in this source list; omitting
+              # it produces the misleading "no versions attached" BackendError.
+              # The notebook still requests Version 4 and validates its sealed
+              # four-fold manifest before any training or upload.
               dataset_sources=['paultimothymooney/chest-xray-pneumonia',
-                               'rezanory/m07-final-5fold-fix2-d260914d']
+                               'rezanory/m07-final-5fold-fix2-d260914d',
+                               'rezanory/m07-gate-r320-state-v1-7']
               body={
                   'slug':kernel_ref,
                   'newTitle':kernel_title,
