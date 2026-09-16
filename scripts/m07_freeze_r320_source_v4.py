@@ -55,9 +55,16 @@ def assert_target_absent() -> None:
     except Exception as exc:  # noqa: BLE001 - preserve provider diagnosis
         detail = str(exc)
         lowered = detail.lower()
-        if "404" in lowered or "not found" in lowered or "does not exist" in lowered:
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None:
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+        if status_code == 404 or "404" in lowered or "not found" in lowered or "does not exist" in lowered:
             return
-        fail(f"BLOCKED_VALIDATION_INFRASTRUCTURE: target preflight failed: {type(exc).__name__}")
+        fail(
+            "BLOCKED_VALIDATION_INFRASTRUCTURE: target preflight failed: "
+            f"{type(exc).__name__} status={status_code or 'UNKNOWN'}"
+        )
     fail("BLOCKED_IMMUTABLE_SOURCE_HYGIENE: target clone handle already exists")
 
 
