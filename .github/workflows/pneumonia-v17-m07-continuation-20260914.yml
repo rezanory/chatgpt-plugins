@@ -1293,6 +1293,76 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  probe-m07-r320-source-v4:
+    name: Probe exact M07 R320 source Version 4 mount
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_PROBE_R320_SOURCE_V4' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 15
+    steps:
+      - name: Request trusted action OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'OIDC context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'OIDC unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Submit isolated CPU exact-V4 mount probe
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, urllib.request, urllib.error
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+          run_id=os.environ['GITHUB_RUN_ID']
+          kernel_ref=f'trickermark/m07-r320-v4-mount-probe-{run_id}'
+          source='\n'.join([
+              'from pathlib import Path',
+              'import hashlib, json',
+              "root=Path('/kaggle/input/m07-gate-r320-state-v1-7')",
+              "assert root.is_dir(), 'M07_V4_MOUNT_ROOT_MISSING'",
+              "required=['CAMPAIGN_STATE.json','FOLD_4_RECOVERY/FOLDS/fold_4/COMPLETED.json']",
+              "files={p.relative_to(root).as_posix():p for p in root.rglob('*') if p.is_file()}",
+              "missing=[x for x in required if x not in files]",
+              "assert not missing, 'M07_V4_REQUIRED_FILES_MISSING:'+json.dumps(missing)",
+              "evidence={name:{'bytes':len(files[name].read_bytes()),'sha256':hashlib.sha256(files[name].read_bytes()).hexdigest()} for name in required}",
+              "campaign=json.loads(files['CAMPAIGN_STATE.json'].read_text(encoding='utf-8'))",
+              "fold4=json.loads(files['FOLD_4_RECOVERY/FOLDS/fold_4/COMPLETED.json'].read_text(encoding='utf-8'))",
+              "print('M07_V4_MOUNT_PROBE '+json.dumps({'status':'PASS','file_count':len(files),'evidence':evidence,'campaign_state':campaign,'fold4_receipt':fold4},sort_keys=True,separators=(',',':')))",
+          ])
+          payload={'request_id':f'm07-r320-v4-mount-probe-{run_id}','provider':'kaggle','operation_class':'compute','account_id':'kg-05','purpose':'CPU-only exact Version 4 mount and sealed-fold evidence probe; no training, no upload, Phase2 remains locked.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':kernel_ref,'newTitle':f'M07 R320 V4 Mount Probe {run_id}','text':source,'language':'PYTHON','kernelType':'SCRIPT','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':False,'enableInternet':False,'datasetDataSources':['rezanory/m07-gate-r320-state-v1-7/4']}}
+          req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['CGP_ACTION_OIDC_TOKEN'],'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-r320-v4-mount-probe/1.0'})
+          try:
+              with urllib.request.urlopen(req,timeout=240) as response:
+                  result=json.loads(response.read().decode('utf-8','replace') or '{}')
+          except urllib.error.HTTPError as error:
+              raise SystemExit(f'BROKER_HTTP_{error.code}: {error.read(3000).decode("utf-8","replace")[:1200]}')
+          if result.get('ok') is not True:
+              raise SystemExit('BROKER_REJECTED:'+json.dumps(result)[:1200])
+          receipt={'kernel_ref':kernel_ref,'account_id':'kg-05','source_attachment':'rezanory/m07-gate-r320-state-v1-7/4','gpu':False,'training':False,'provider_ref':result.get('provider_ref') or (result.get('result') or {}).get('ref')}
+          open('m07-r320-v4-mount-probe-receipt.json','w',encoding='utf-8').write(json.dumps(receipt,indent=2,sort_keys=True))
+          print(json.dumps(receipt,sort_keys=True))
+          '@
+          $script|&$python -
+          if($LASTEXITCODE-ne 0){throw 'M07 exact-V4 mount probe submission failed'}
+
+      - name: Preserve mount-probe submission receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-r320-v4-mount-probe-${{ github.run_id }}
+          path: m07-r320-v4-mount-probe-receipt.json
+          if-no-files-found: warn
+          retention-days: 30
+
   freeze-m07-r320-source-v4:
     name: Freeze exact M07 R320 source Version 4
     if: >-
