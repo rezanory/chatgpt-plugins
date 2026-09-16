@@ -757,7 +757,7 @@ jobs:
               "rezanory/m07-locked-test-diagnostics-fix1-20260914"
           )
           kernel_title = (
-              f"M07 Runtime R{RUNTIME_RESOLUTION} A{RUNTIME_ATTEMPT:02d} {RUNTIME_DATE}"
+              f"M07 Runtime R{RUNTIME_RESOLUTION} A{RUNTIME_ATTEMPT:02d} {RUNTIME_DATE} {RUNTIME_RUN_ID}"
               if RUNTIME_MODE else
               "M07 Phase2 Unlock 20260915"
               if UNLOCK_MODE else
