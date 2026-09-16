@@ -887,12 +887,37 @@ jobs:
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
       EXPECTED_MACHINE_SHAPE: NvidiaTeslaT4
+      CGP_USE_KAGGLE_BROKER: ${{ github.event.inputs.runtime_account == 'kg-05' && '1' || '0' }}
     steps:
       - name: Download the exact notebook built by this run
         uses: actions/download-artifact@v4
         with:
           name: m07-runtime-notebook-${{ github.run_id }}
           path: exact-runtime
+
+      - name: Request trusted action OIDC identity for Cloudflare-backed account
+        if: ${{ env.CGP_USE_KAGGLE_BROKER == '1' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" || -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]; then
+            echo 'BLOCKED_ADMISSION_AUTHORITY_MISSING: GitHub OIDC context unavailable' >&2
+            exit 1
+          fi
+          sep='?'
+          [[ "$ACTIONS_ID_TOKEN_REQUEST_URL" == *\?* ]] && sep='&'
+          raw="$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}${sep}audience=cgp-control-plane-v3-action")"
+          token="$(RAW_JSON="$raw" python - <<'PY'
+          import json, os
+          value=json.loads(os.environ['RAW_JSON']).get('value','')
+          if not isinstance(value,str) or len(value)<100:
+              raise SystemExit('OIDC token unavailable')
+          print(value)
+          PY
+          )"
+          echo "::add-mask::$token"
+          printf 'CGP_ACTION_OIDC_TOKEN=%s\n' "$token" >> "$GITHUB_ENV"
 
       - name: Install read-only Kaggle identity client
         shell: bash
@@ -906,8 +931,9 @@ jobs:
           import base64, hashlib, json, os, pathlib, urllib.request
           import kagglehub
 
+          use_broker=os.environ.get('CGP_USE_KAGGLE_BROKER') == '1'
           token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
-          if not token:
+          if not token and not use_broker:
               raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: selected Kaggle token absent')
           contract_paths=list(pathlib.Path('exact-runtime').rglob('m07_runtime_contract.json'))
           if len(contract_paths)!=1:
@@ -921,7 +947,7 @@ jobs:
           if not owner or not account_id or '/' not in kernel_ref:
               raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime contract identity incomplete')
           auth=('Bearer '+token if token.startswith('KGAT_') else
-                'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
+                'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode()) if token else None
 
           def post(service, method, body, timeout=60):
               req=urllib.request.Request(
@@ -935,8 +961,28 @@ jobs:
                   raw=response.read().decode('utf-8','replace')
                   return response.status,(json.loads(raw) if raw else {})
 
-          me=kagglehub.whoami()
-          detected=str((me or {}).get('username') or '').strip()
+          if use_broker:
+              broker_token=os.environ.get('CGP_ACTION_OIDC_TOKEN','').strip()
+              if not broker_token:
+                  raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: action broker token absent')
+              endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+              payload={
+                  'request_id':f"m07-runtime-identity-{os.environ['GITHUB_RUN_ID']}",
+                  'provider':'kaggle','operation_class':'compute','account_id':account_id,
+                  'purpose':'Read-only identity/quota preflight for exact M07 runtime; no kernel mutation.',
+                  'service':'kernels.KernelsApiService','method':'GetAcceleratorQuotaStatistics','body':{},
+              }
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={
+                  'Authorization':'Bearer '+broker_token,'Content-Type':'application/json','Accept':'application/json',
+                  'User-Agent':'m07-exact-runtime-identity-preflight/1.0'})
+              with urllib.request.urlopen(req,timeout=60) as response:
+                  envelope=json.loads(response.read().decode('utf-8','replace') or '{}')
+              if envelope.get('ok') is not True or envelope.get('account_id') != account_id:
+                  raise SystemExit(f'BLOCKED_ADMISSION_AUTHORITY_MISSING: broker identity response={envelope!r}')
+              detected=owner
+          else:
+              me=kagglehub.whoami()
+              detected=str((me or {}).get('username') or '').strip()
           if detected.lower()!=owner.lower():
               raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: expected={owner} detected={detected or "UNKNOWN"}')
 
@@ -985,6 +1031,7 @@ jobs:
           python - <<'PY'
           import base64, json, os, pathlib, time, urllib.error, urllib.request
 
+          use_broker=os.environ.get('CGP_USE_KAGGLE_BROKER') == '1'
           token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
           contract_paths=list(pathlib.Path('exact-runtime').rglob('m07_runtime_contract.json'))
           if len(contract_paths)!=1:
@@ -994,12 +1041,12 @@ jobs:
           account_id=str(contract.get('account_id') or '').strip()
           kernel_ref=str(contract.get('kernel_slug') or '').strip()
           kernel_title=str(contract.get('kernel_title') or '').strip()
-          if not token:
+          if not token and not use_broker:
               raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: selected Kaggle token absent')
           if not owner or not account_id or '/' not in kernel_ref or not kernel_title:
               raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime contract identity incomplete')
           auth=('Bearer '+token if token.startswith('KGAT_') else
-                'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
+                'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode()) if token else None
           notebook_path=pathlib.Path(pathlib.Path('verified-notebook-path.txt').read_text(encoding='utf-8'))
           kernel_owner,slug=kernel_ref.split('/',1)
           if kernel_owner!=owner:
@@ -1047,7 +1094,29 @@ jobs:
                   'machineShape':os.environ['EXPECTED_MACHINE_SHAPE'],
                   'datasetDataSources':dataset_sources,
               }
-              _,saved=post('kernels.KernelsApiService','SaveKernel',body)
+              if use_broker:
+                  broker_token=os.environ.get('CGP_ACTION_OIDC_TOKEN','').strip()
+                  if not broker_token:
+                      raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: action broker token absent')
+                  broker_payload={
+                      'request_id':f"m07-runtime-save-{os.environ['GITHUB_RUN_ID']}",
+                      'provider':'kaggle','operation_class':'compute','account_id':account_id,
+                      'purpose':'Execute exact M07 bounded runtime from d260914d immutable evidence.',
+                      'service':'kernels.KernelsApiService','method':'SaveKernel','body':body,
+                  }
+                  broker_req=urllib.request.Request(
+                      'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle',
+                      data=json.dumps(broker_payload,separators=(',',':')).encode(),method='POST',
+                      headers={'Authorization':'Bearer '+broker_token,'Content-Type':'application/json',
+                               'Accept':'application/json','User-Agent':'m07-exact-runtime-launch-broker/1.0'},
+                  )
+                  with urllib.request.urlopen(broker_req,timeout=240) as response:
+                      envelope=json.loads(response.read().decode('utf-8','replace') or '{}')
+                  if envelope.get('ok') is not True or envelope.get('account_id') != account_id:
+                      raise SystemExit(f'KAGGLE_BROKER_SAVE_REJECTED: {envelope!r}')
+                  saved=envelope.get('result') or {}
+              else:
+                  _,saved=post('kernels.KernelsApiService','SaveKernel',body)
               provider_code=saved.get('code') if isinstance(saved,dict) else None
               if isinstance(provider_code,(int,float)) and provider_code>=400:
                   raise SystemExit(f'KAGGLE_SAVE_REJECTED: {saved}')
@@ -1055,8 +1124,29 @@ jobs:
           try:
               for _ in range(4):
                   time.sleep(5)
-                  _,status_probe=post('kernels.KernelsApiService','GetKernelSessionStatus',
-                                      {'userName':owner,'kernelSlug':slug},timeout=60)
+                  if use_broker:
+                      broker_payload={
+                          'request_id':f"m07-runtime-status-{os.environ['GITHUB_RUN_ID']}-{_}",
+                          'provider':'kaggle','operation_class':'compute','account_id':account_id,
+                          'purpose':'Read-only status probe for exact M07 runtime.',
+                          'service':'kernels.KernelsApiService','method':'GetKernelSessionStatus',
+                          'body':{'userName':owner,'kernelSlug':slug},
+                      }
+                      broker_req=urllib.request.Request(
+                          'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle',
+                          data=json.dumps(broker_payload,separators=(',',':')).encode(),method='POST',
+                          headers={'Authorization':'Bearer '+os.environ['CGP_ACTION_OIDC_TOKEN'].strip(),
+                                   'Content-Type':'application/json','Accept':'application/json',
+                                   'User-Agent':'m07-exact-runtime-status-broker/1.0'},
+                      )
+                      with urllib.request.urlopen(broker_req,timeout=60) as response:
+                          envelope=json.loads(response.read().decode('utf-8','replace') or '{}')
+                      if envelope.get('ok') is not True or envelope.get('account_id') != account_id:
+                          raise RuntimeError(f'broker status rejected: {envelope!r}')
+                      status_probe=envelope.get('result') or {}
+                  else:
+                      _,status_probe=post('kernels.KernelsApiService','GetKernelSessionStatus',
+                                          {'userName':owner,'kernelSlug':slug},timeout=60)
                   observed['session_status']=status_probe
                   text=json.dumps(status_probe,sort_keys=True).upper()
                   if any(state in text for state in ('RUNNING','QUEUED','COMPLETE','ERROR','CANCEL')):
