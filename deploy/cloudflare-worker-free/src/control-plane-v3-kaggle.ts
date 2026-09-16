@@ -354,6 +354,64 @@ export async function kaggleOutputJsonFiles(
   };
 }
 
+export async function kaggleOutputManifest(
+  env: ControlPlaneV3Env,
+  accountId: AccountId,
+  kernelRef: string,
+): Promise<Record<string, unknown>> {
+  const slug = kernelSlug(accountId, kernelRef);
+  const files: Array<Record<string, unknown>> = [];
+  let pageToken = "";
+  for (let page = 0; page < 20; page += 1) {
+    const body: Record<string, unknown> = {
+      userName: ACCOUNTS[accountId].owner,
+      kernelSlug: slug,
+      pageSize: 100,
+    };
+    if (pageToken) body.pageToken = pageToken;
+    const listing = await kaggleReadCall(env, {
+      accountId,
+      service: "kernels.KernelsApiService",
+      method: "ListKernelSessionOutput",
+      body,
+    });
+    const rows = Array.isArray(listing.files) ? listing.files : [];
+    for (const item of rows) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const rec = item as Record<string, unknown>;
+      const name = String(rec.fileName ?? "").replaceAll("\\", "/").trim();
+      if (!name) continue;
+      if (name.startsWith("/") || name.includes("..") || name.length > 500) {
+        throw new Error("unsafe Kaggle output file name");
+      }
+      const rawBytes = rec.totalBytes ?? rec.bytes ?? rec.fileSize ?? rec.size ?? 0;
+      const numericBytes = Number(rawBytes);
+      files.push({
+        file_name: name,
+        bytes: Number.isFinite(numericBytes) && numericBytes >= 0 ? numericBytes : null,
+      });
+      if (files.length > 2000) throw new Error("Kaggle output manifest exceeds bounded file count");
+    }
+    const next = String(listing.nextPageToken ?? listing.next_page_token ?? "").trim();
+    if (!next || next === pageToken) {
+      pageToken = "";
+      break;
+    }
+    pageToken = next;
+    if (page === 19) throw new Error("Kaggle output manifest pagination exceeded");
+  }
+  files.sort((left, right) => String(left.file_name).localeCompare(String(right.file_name)));
+  return {
+    account_id: accountId,
+    kernel_ref: kernelRef,
+    file_count: files.length,
+    files,
+    log_omitted: true,
+    signed_urls_returned: false,
+    bounded: true,
+  };
+}
+
 export async function kagglePhaseProbe(
   env: ControlPlaneV3Env,
   accountId: AccountId,

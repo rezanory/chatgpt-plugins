@@ -3,6 +3,7 @@ import { executeKaggleOidcAction, kaggleActionAccountIds } from "./control-plane
 import {
   kaggleLiveLog,
   kaggleOutputJsonFiles,
+  kaggleOutputManifest,
   kagglePhaseProbe,
   kaggleReadCall,
   type ControlPlaneV3Env,
@@ -97,6 +98,10 @@ async function handleKaggleRead(request: Request, env: ControlPlaneV3Env): Promi
     const names = Array.isArray(body.file_names) ? body.file_names.map((value) => String(value)) : [];
     result = await kaggleOutputJsonFiles(
       env, account, String(body.kernel_ref ?? ""), names, Number(body.max_bytes_per_file ?? 65_536),
+    );
+  } else if (action === "output_manifest") {
+    result = await kaggleOutputManifest(
+      env, account, String(body.kernel_ref ?? ""),
     );
   } else if (action === "phase_probe") {
     result = await kagglePhaseProbe(env, account, String(body.kernel_ref ?? ""));
