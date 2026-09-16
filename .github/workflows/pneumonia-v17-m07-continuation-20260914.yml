@@ -887,7 +887,12 @@ jobs:
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
       EXPECTED_MACHINE_SHAPE: NvidiaTeslaT4
-      CGP_USE_KAGGLE_BROKER: ${{ github.event.inputs.runtime_account == 'kg-05' && '1' || '0' }}
+      # Use the Cloudflare-backed token path for both the dataset owner (kg-03)
+      # and the explicitly shared viewer (kg-05).  The direct GitHub environment
+      # token for kg-03 is stale (401), while the broker secret is current; kg-03
+      # is required here because only the dataset owner can publish persistence
+      # versions.
+      CGP_USE_KAGGLE_BROKER: ${{ (github.event.inputs.runtime_account == 'kg-03' || github.event.inputs.runtime_account == 'kg-05') && '1' || '0' }}
     steps:
       - name: Download the exact notebook built by this run
         uses: actions/download-artifact@v4
