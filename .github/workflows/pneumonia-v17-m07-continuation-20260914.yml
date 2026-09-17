@@ -726,13 +726,22 @@ jobs:
           "CGP_ACCOUNT_OWNER=$((Get-Content $env:RUNNER_TEMP\m07_owner.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_PHASE2_UNLOCK=$env:M07_PHASE2_UNLOCK" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_RUNTIME_STAGE=$env:M07_RUNTIME_STAGE" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          $notebookPath="$env:RUNNER_TEMP\PNEUMONIA_V17_D260914D_M07_$(if($env:M07_PHASE2_UNLOCK -eq 'true'){'PHASE2_UNLOCK'}else{'LOCKED_TEST_DIAGNOSTICS_FIX1'}).ipynb"
+          if(-not (Test-Path -LiteralPath $notebookPath)){throw 'M07 runtime notebook missing before artifact seal'}
+          $notebookSha=(Get-FileHash -Algorithm SHA256 -LiteralPath $notebookPath).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$env:RUNNER_TEMP\m07_runtime_notebook.sha256",$notebookSha+"`n",[Text.UTF8Encoding]::new($false))
+          "CGP_NOTEBOOK_SHA256=$notebookSha" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Preserve exact generated notebook
         if: ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
         uses: actions/upload-artifact@v4
         with:
           name: m07-runtime-notebook-${{ github.run_id }}
-          path: ${{ env.CGP_NOTEBOOK_PATH }}
+          path: |
+            ${{ env.CGP_NOTEBOOK_PATH }}
+            ${{ runner.temp }}/m07_runtime_notebook.sha256
+            ${{ runner.temp }}/m07_kernel_slug.txt
+            ${{ runner.temp }}/m07_kernel_title.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -811,19 +820,21 @@ jobs:
           github.ref != 'refs/heads/main' &&
           (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' ||
            github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' ||
+           github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07' ||
            github.event.inputs.recovery == 'M07_RUNTIME_M07_R384_A01') }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 15
     environment: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'kaggle-03' || 'kaggle-05' }}
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-      EXPECTED_SHA256: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '5f5d06cb073f4f96f4ae361a7c5d153ad94a254b0faa0ea38e1c0e985b5b75da' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && '2c538a32e13e4a7af8c454b87490b30eea8d996e64abab37e32b092b914aca73' || '5b33160907ce01624b00b4c3be89f3226fd4b6f61141cef7c149eb22c288a6c9' }}
+      EXPECTED_SHA256: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '5f5d06cb073f4f96f4ae361a7c5d153ad94a254b0faa0ea38e1c0e985b5b75da' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && '2c538a32e13e4a7af8c454b87490b30eea8d996e64abab37e32b092b914aca73' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07' && 'FROM_ARTIFACT' || '5b33160907ce01624b00b4c3be89f3226fd4b6f61141cef7c149eb22c288a6c9' }}
       EXPECTED_OWNER: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'rezanory' || 'trickermark' }}
       EXPECTED_ACCOUNT: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'kg-03' || 'kg-05' }}
-      EXPECTED_KERNEL_REF: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'rezanory/m07-runtime-r320-a02-20260915' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && 'rezanory/m07-runtime-r320-a03-20260915' || 'trickermark/m07-runtime-r384-a01-20260915' }}
-      EXPECTED_RESOLUTION: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && '320' || '384' }}
-      EXPECTED_ATTEMPT: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '2' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && '3' || '1' }}
-      EXPECTED_TITLE: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'M07 Runtime R320 A02 20260915' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && 'M07 Runtime R320 A03 20260915' || 'M07 Runtime R384 A01 20260915' }}
+      EXPECTED_KERNEL_REF: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'rezanory/m07-runtime-r320-a02-20260915' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && 'rezanory/m07-runtime-r320-a03-20260915' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07' && 'FROM_ARTIFACT' || 'trickermark/m07-runtime-r384-a01-20260915' }}
+      EXPECTED_RESOLUTION: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07') && '320' || '384' }}
+      EXPECTED_ATTEMPT: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '2' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && '3' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07' && '7' || '1' }}
+      EXPECTED_TITLE: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && 'M07 Runtime R320 A02 20260915' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && 'M07 Runtime R320 A03 20260915' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07' && 'FROM_ARTIFACT' || 'M07 Runtime R384 A01 20260915' }}
+      EXPECTED_SOURCE_STATE_HANDLE: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'rezanory/m07-gate-r320-state-v1-7/versions/4' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07' && 'trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1' || 'NONE' }}
       EXPECTED_MACHINE_SHAPE: NvidiaTeslaT4
     steps:
       - name: Download the exact notebook built by this run
@@ -833,11 +844,13 @@ jobs:
           path: exact-runtime
 
       - name: Verify identity, exact bytes and immutable runtime contract
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
-          python - <<'PY'
-          import base64, hashlib, json, os, pathlib, urllib.request
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import base64, hashlib, json, os, pathlib, re, urllib.request
 
           token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
           if not token:
@@ -875,8 +888,28 @@ jobs:
           path=paths[0]
           raw=path.read_bytes()
           sha=hashlib.sha256(raw).hexdigest()
-          if sha!=os.environ['EXPECTED_SHA256']:
+          manifest_path=pathlib.Path('exact-runtime')/'m07_runtime_notebook.sha256'
+          slug_path=pathlib.Path('exact-runtime')/'m07_kernel_slug.txt'
+          title_path=pathlib.Path('exact-runtime')/'m07_kernel_title.txt'
+          if not manifest_path.is_file() or not slug_path.is_file() or not title_path.is_file():
+              raise SystemExit('BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: runtime identity sidecars missing')
+          manifest_sha=manifest_path.read_text(encoding='utf-8-sig').strip().lower()
+          if not re.fullmatch(r'[0-9a-f]{64}',manifest_sha) or manifest_sha!=sha:
+              raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: artifact_sha={sha} manifest_sha={manifest_sha}')
+          hard_expected=os.environ['EXPECTED_SHA256'].strip()
+          if hard_expected!='FROM_ARTIFACT' and sha!=hard_expected:
               raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: sha={sha}')
+          artifact_kernel_ref=slug_path.read_text(encoding='utf-8-sig').strip()
+          artifact_title=title_path.read_text(encoding='utf-8-sig').strip()
+          if os.environ['EXPECTED_KERNEL_REF']=='FROM_ARTIFACT':
+              run_id=re.escape(os.environ['GITHUB_RUN_ID'])
+              if not re.fullmatch(r'trickermark/m07-runtime-r320-a07-\d{8}-'+run_id,artifact_kernel_ref):
+                  raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: A07 kernel_ref={artifact_kernel_ref}')
+              if not re.fullmatch(r'M07 Runtime R320 A07 \d{8} '+run_id,artifact_title):
+                  raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: A07 title={artifact_title}')
+          else:
+              if artifact_kernel_ref!=os.environ['EXPECTED_KERNEL_REF'] or artifact_title!=os.environ['EXPECTED_TITLE']:
+                  raise SystemExit('BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: historical slug/title drift')
           notebook=json.loads(raw.decode('utf-8'))
           meta=notebook.get('metadata',{}).get('cgp_continuation',{})
           runtime=meta.get('runtime_partition') or {}
@@ -897,8 +930,8 @@ jobs:
               'owner':os.environ['EXPECTED_OWNER'],
               'source_persistence_handle':'rezanory/m07-final-5fold-fix2-d260914d',
               'source_phase2_state_handle': (
-                  'rezanory/m07-gate-r320-state-v1-7/versions/4'
-                  if int(os.environ['EXPECTED_RESOLUTION']) == 320 else None
+                  None if os.environ['EXPECTED_SOURCE_STATE_HANDLE']=='NONE'
+                  else os.environ['EXPECTED_SOURCE_STATE_HANDLE']
               ),
               'max_new_folds':1,
           }
@@ -906,16 +939,23 @@ jobs:
               if runtime.get(key)!=value:
                   raise SystemExit(f'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime.{key}={runtime.get(key)!r}')
           pathlib.Path('verified-notebook-path.txt').write_text(str(path),encoding='utf-8')
+          pathlib.Path('verified-notebook-sha256.txt').write_text(sha,encoding='utf-8')
+          pathlib.Path('verified-kernel-ref.txt').write_text(artifact_kernel_ref,encoding='utf-8')
+          pathlib.Path('verified-kernel-title.txt').write_text(artifact_title,encoding='utf-8')
           print(json.dumps({'identity':'PASS','owner':detected,'sha256':sha,
-                            'kernel_ref':os.environ['EXPECTED_KERNEL_REF'],
+                            'kernel_ref':artifact_kernel_ref,
                             'runtime_partition':runtime},sort_keys=True))
-          PY
+          '@
+          $script | & $python -
+          if($LASTEXITCODE-ne 0){throw 'M07 exact runtime identity validation failed'}
 
       - name: Submit once and prove the Kaggle session is admitted
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
-          python - <<'PY'
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
           import base64, json, os, pathlib, time, urllib.error, urllib.request
 
           token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
@@ -923,7 +963,9 @@ jobs:
           auth=('Bearer '+token if token.startswith('KGAT_') else
                 'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
           notebook_path=pathlib.Path(pathlib.Path('verified-notebook-path.txt').read_text(encoding='utf-8'))
-          kernel_ref=os.environ['EXPECTED_KERNEL_REF']
+          notebook_sha=pathlib.Path('verified-notebook-sha256.txt').read_text(encoding='utf-8').strip()
+          kernel_ref=pathlib.Path('verified-kernel-ref.txt').read_text(encoding='utf-8').strip()
+          kernel_title=pathlib.Path('verified-kernel-title.txt').read_text(encoding='utf-8').strip()
           kernel_owner,slug=kernel_ref.split('/',1)
           if kernel_owner!=owner:
               raise SystemExit('BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: kernel owner drift')
@@ -970,9 +1012,11 @@ jobs:
               # creates the state snapshot only after the stage completes.
               dataset_sources=['paultimothymooney/chest-xray-pneumonia',
                                'rezanory/m07-final-5fold-fix2-d260914d']
+              if int(os.environ['EXPECTED_RESOLUTION'])==320 and int(os.environ['EXPECTED_ATTEMPT'])==7:
+                  dataset_sources.append('trickermark/m07-r320-producer-v4-bridge-e3884dd1')
               body={
                   'slug':kernel_ref,
-                  'newTitle':os.environ['EXPECTED_TITLE'],
+                  'newTitle':kernel_title,
                   'text':notebook_path.read_text(encoding='utf-8'),
                   'language':'PYTHON','kernelType':'NOTEBOOK',
                   'kernelExecutionType':'SAVE_AND_RUN_ALL',
@@ -1000,7 +1044,7 @@ jobs:
                     'resolution':int(os.environ['EXPECTED_RESOLUTION']),
                     'attempt':int(os.environ['EXPECTED_ATTEMPT']),
                     'machine_shape':os.environ['EXPECTED_MACHINE_SHAPE'],
-                    'notebook_sha256':os.environ['EXPECTED_SHA256'],'save_result':saved,
+                    'notebook_sha256':notebook_sha,'save_result':saved,
                     'session_status':observed,'github_run_id':os.environ['GITHUB_RUN_ID'],
                     'source_sha':os.environ['GITHUB_SHA']}
           pathlib.Path('runtime-launch-receipt.json').write_text(
@@ -1009,9 +1053,11 @@ jobs:
           if not any(state in status_text for state in ('RUNNING','QUEUED','COMPLETE')):
               raise SystemExit(f'BLOCKED_VALIDATION_INFRASTRUCTURE: session not admitted: {status_text[:1200]}')
           print(json.dumps({'launch':'PASS','action':action,'kernel_ref':kernel_ref,
-                            'notebook_sha256':os.environ['EXPECTED_SHA256'],
+                            'notebook_sha256':notebook_sha,
                             'session_status':observed},ensure_ascii=False,sort_keys=True))
-          PY
+          '@
+          $script | & $python -
+          if($LASTEXITCODE-ne 0){throw 'M07 exact runtime admission failed'}
 
       - name: Preserve exact runtime launch receipt
         if: always()
