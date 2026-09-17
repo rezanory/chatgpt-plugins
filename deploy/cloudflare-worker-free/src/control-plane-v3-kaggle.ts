@@ -237,6 +237,31 @@ export async function kaggleReadCall(
   return execute(env, { ...spec, operationClass: "read" });
 }
 
+async function kaggleDatasetDownloadRedirect(
+  env: ControlPlaneV3Env,
+  accountId: AccountId,
+  body: Record<string, unknown>,
+): Promise<string> {
+  const token = tokenFor(env, accountId);
+  const response = await fetch(`${API_ROOT}/datasets.DatasetApiService/DownloadDataset`, {
+    method: "POST",
+    headers: {
+      Authorization: authHeader(accountId, token),
+      "Content-Type": "application/json",
+      "User-Agent": "chatgpt-control-plane-v3/dataset-download/1.0",
+    },
+    body: JSON.stringify(body),
+    redirect: "manual",
+  });
+  if (![301, 302, 303, 307, 308].includes(response.status)) {
+    const text = await response.text();
+    throw new Error(`DownloadDataset expected redirect, received HTTP ${response.status}: ${sanitizeLog(text, 1200)}`);
+  }
+  const location = response.headers.get("location")?.trim() ?? "";
+  if (!location) throw new Error("DownloadDataset redirect missing Location header");
+  return allowedDatasetDownloadUrl(location).toString();
+}
+
 export async function kaggleScopedCall(
   request: Request,
   env: ControlPlaneV3Env,
@@ -429,14 +454,13 @@ export async function kaggleDatasetJsonFiles(
   }
   const outputs: Array<Record<string, unknown>> = [];
   for (const name of exactNames) {
-    const redirect = await kaggleReadCall(env, {
-      accountId,
-      service: "datasets.DatasetApiService",
-      method: "DownloadDataset",
-      body: { ownerSlug, datasetSlug, fileName: name, datasetVersionNumber: versionNumber, raw: true },
+    const rawUrl = await kaggleDatasetDownloadRedirect(env, accountId, {
+      ownerSlug,
+      datasetSlug,
+      fileName: name,
+      datasetVersionNumber: versionNumber,
+      raw: true,
     });
-    const rawUrl = String(redirect.url ?? "");
-    if (!rawUrl) throw new Error(`dataset download redirect missing for: ${name}`);
     const url = allowedDatasetDownloadUrl(rawUrl);
     const response = await fetch(url.toString(), {
       headers: { "User-Agent": "chatgpt-control-plane-v3/dataset-json/1.0" },
