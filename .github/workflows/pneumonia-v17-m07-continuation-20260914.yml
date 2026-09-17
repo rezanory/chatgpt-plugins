@@ -328,6 +328,11 @@ jobs:
               "        return False",
           ])
           retry_new = "\n".join([
+              "    # M07 runtime never mutates the immutable R224 predecessor persistence.",
+              "    # Per-resolution writes remain gated by phase2_upload() after exact restore.",
+              "    if globals().get(\"CGP_RUNTIME_READONLY_PREDECESSOR\", False):",
+              "        print(f\"Runtime predecessor persistence is read-only; generic upload skipped: {note}\")",
+              "        return True",
               "    # M07_PERSIST_UPLOAD_RETRY_FIX1: bounded retry for Kaggle HTTP 503 only.",
               "    attempts = 3",
               "    for attempt in range(1, attempts + 1):",
@@ -397,7 +402,10 @@ jobs:
               # Every completed fold is sealed and uploaded before this controlled
               # success return, so a later immutable candidate resumes exact state.
               config_source = "".join(notebook["cells"][1].get("source", []))
-              config_source += "\nCGP_MAX_NEW_FOLDS_PER_RUN = 1\n"
+              config_source += (
+                  "\nCGP_MAX_NEW_FOLDS_PER_RUN = 1\n"
+                  "CGP_RUNTIME_READONLY_PREDECESSOR = True\n"
+              )
               notebook["cells"][1]["source"] = config_source.splitlines(keepends=True)
 
               run_cell_hits = []
@@ -875,6 +883,7 @@ jobs:
 
       - name: Publish continuation launch receipt
         if: ${{ always() && github.ref == 'refs/heads/main' }}
+        continue-on-error: true
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
