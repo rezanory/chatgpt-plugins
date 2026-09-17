@@ -12,6 +12,10 @@ const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
     "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main",
     new Set(["issue_comment", "workflow_dispatch"]),
   ],
+  [
+    "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/main",
+    new Set(["workflow_dispatch"]),
+  ],
 ]);
 const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   [
