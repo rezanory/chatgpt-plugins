@@ -354,6 +354,121 @@ export async function kaggleOutputJsonFiles(
   };
 }
 
+function allowedDatasetDownloadUrl(raw: string): URL {
+  const url = new URL(raw);
+  const host = url.hostname.toLowerCase();
+  const allowed =
+    host === "api.kaggle.com" ||
+    host === "www.kaggle.com" ||
+    host === "storage.googleapis.com" ||
+    host.endsWith(".kaggleusercontent.com") ||
+    host.endsWith(".googleusercontent.com");
+  if (url.protocol !== "https:" || !allowed) {
+    throw new Error("dataset download URL host is not allowlisted");
+  }
+  return url;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+export async function kaggleDatasetJsonFiles(
+  env: ControlPlaneV3Env,
+  accountId: AccountId,
+  datasetRef: string,
+  versionNumber: number,
+  fileNames: string[],
+  maxBytesPerFile = 65_536,
+): Promise<Record<string, unknown>> {
+  const parts = datasetRef.split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1] ||
+      !/^[A-Za-z0-9._-]{1,100}$/.test(parts[0]) ||
+      !/^[A-Za-z0-9._-]{1,200}$/.test(parts[1])) {
+    throw new Error("dataset_ref must use safe owner/slug form");
+  }
+  if (!Number.isInteger(versionNumber) || versionNumber < 1 || versionNumber > 1_000_000) {
+    throw new Error("dataset_version_number must be a positive integer");
+  }
+  if (!Array.isArray(fileNames) || fileNames.length < 1 || fileNames.length > 10) {
+    throw new Error("file_names must contain between 1 and 10 paths");
+  }
+  if (!Number.isInteger(maxBytesPerFile) || maxBytesPerFile < 1024 || maxBytesPerFile > 262_144) {
+    throw new Error("max_bytes_per_file must be between 1024 and 262144");
+  }
+  const exactNames = new Set<string>();
+  for (const rawName of fileNames) {
+    const name = String(rawName ?? "").trim();
+    if (!/^[A-Za-z0-9._/-]{1,500}$/.test(name) || !name.endsWith(".json") ||
+        name.startsWith("/") || name.includes("..") || name.includes("\\")) {
+      throw new Error("file_names contains an unsafe or non-JSON path");
+    }
+    if (exactNames.has(name)) throw new Error("file_names must be unique");
+    exactNames.add(name);
+  }
+  const [ownerSlug, datasetSlug] = parts;
+  const listing = await kaggleReadCall(env, {
+    accountId,
+    service: "datasets.DatasetApiService",
+    method: "ListDatasetFiles",
+    body: { ownerSlug, datasetSlug, datasetVersionNumber: versionNumber, pageSize: 100 },
+  });
+  const listed = Array.isArray(listing.datasetFiles) ? listing.datasetFiles
+    : Array.isArray(listing.files) ? listing.files : [];
+  const listedNames = new Set<string>();
+  for (const item of listed) {
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      const rec = item as Record<string, unknown>;
+      const name = String(rec.ref ?? rec.name ?? rec.fileName ?? "");
+      if (name) listedNames.add(name);
+    }
+  }
+  for (const name of exactNames) {
+    if (!listedNames.has(name)) throw new Error(`requested dataset JSON not found in exact version: ${name}`);
+  }
+  const outputs: Array<Record<string, unknown>> = [];
+  for (const name of exactNames) {
+    const redirect = await kaggleReadCall(env, {
+      accountId,
+      service: "datasets.DatasetApiService",
+      method: "DownloadDataset",
+      body: { ownerSlug, datasetSlug, fileName: name, datasetVersionNumber: versionNumber, raw: true },
+    });
+    const rawUrl = String(redirect.url ?? "");
+    if (!rawUrl) throw new Error(`dataset download redirect missing for: ${name}`);
+    const url = allowedDatasetDownloadUrl(rawUrl);
+    const response = await fetch(url.toString(), {
+      headers: { "User-Agent": "chatgpt-control-plane-v3/dataset-json/1.0" },
+    });
+    if (!response.ok) throw new Error(`dataset JSON HTTP ${response.status}: ${name}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytesPerFile) {
+      throw new Error(`dataset JSON exceeds bounded size: ${name}`);
+    }
+    let value: unknown;
+    try { value = JSON.parse(new TextDecoder().decode(bytes)); }
+    catch { throw new Error(`dataset file is not valid JSON: ${name}`); }
+    if (!value || typeof value !== "object") {
+      throw new Error(`dataset JSON must be object/array: ${name}`);
+    }
+    outputs.push({
+      file_name: name,
+      bytes: bytes.byteLength,
+      sha256: await sha256Hex(bytes),
+      json: value,
+    });
+  }
+  return {
+    account_id: accountId,
+    dataset_ref: datasetRef,
+    dataset_version_number: versionNumber,
+    file_count: outputs.length,
+    files: outputs,
+    signed_urls_returned: false,
+  };
+}
+
 export async function kagglePhaseProbe(
   env: ControlPlaneV3Env,
   accountId: AccountId,

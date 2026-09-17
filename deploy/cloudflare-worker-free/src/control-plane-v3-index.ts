@@ -1,6 +1,7 @@
 import canonicalWorker from "./index";
 import { executeKaggleOidcAction, kaggleActionAccountIds } from "./control-plane-v3-action";
 import {
+  kaggleDatasetJsonFiles,
   kaggleLiveLog,
   kaggleOutputJsonFiles,
   kagglePhaseProbe,
@@ -97,6 +98,16 @@ async function handleKaggleRead(request: Request, env: ControlPlaneV3Env): Promi
     const names = Array.isArray(body.file_names) ? body.file_names.map((value) => String(value)) : [];
     result = await kaggleOutputJsonFiles(
       env, account, String(body.kernel_ref ?? ""), names, Number(body.max_bytes_per_file ?? 65_536),
+    );
+  } else if (action === "dataset_json_files") {
+    const names = Array.isArray(body.file_names) ? body.file_names.map((value) => String(value)) : [];
+    result = await kaggleDatasetJsonFiles(
+      env,
+      account,
+      String(body.dataset_ref ?? ""),
+      Number(body.dataset_version_number ?? 0),
+      names,
+      Number(body.max_bytes_per_file ?? 65_536),
     );
   } else if (action === "phase_probe") {
     result = await kagglePhaseProbe(env, account, String(body.kernel_ref ?? ""));
