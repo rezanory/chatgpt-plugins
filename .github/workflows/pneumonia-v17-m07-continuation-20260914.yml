@@ -436,21 +436,23 @@ jobs:
                   raise SystemExit("M07_RUNTIME_PERSIST_ANCHOR_DRIFT")
               bounded_return = persist_anchor + "\n".join([
                   "            new_folds_completed += 1",
-                  "            if (",
-                  "                new_folds_completed >= CGP_MAX_NEW_FOLDS_PER_RUN",
-                  "                and fold < 5",
-                  "                and not all(",
+                  "            if new_folds_completed >= CGP_MAX_NEW_FOLDS_PER_RUN:",
+                  "                five_fold_ready = all(",
                   "                    (folds_root / f'fold_{candidate_fold}' / 'COMPLETED.json').is_file()",
                   "                    for candidate_fold in range(1, 6)",
                   "                )",
-                  "            ):",
                   "                partial = {",
                   "                    'status': 'PARTIAL_FOLD_UNIT_COMPLETE',",
                   "                    'model_id': model_id,",
                   "                    'resolution': int(resolution),",
                   "                    'completed_fold': int(fold),",
                   "                    'new_folds_completed': int(new_folds_completed),",
-                  "                    'next_action': 'LAUNCH_NEW_IMMUTABLE_CANDIDATE',",
+                  "                    'five_fold_ready': bool(five_fold_ready),",
+                  "                    'next_action': (",
+                  "                        'VALIDATE_FIVE_FOLD_STATE_BEFORE_LOCKED_TEST'",
+                  "                        if five_fold_ready",
+                  "                        else 'LAUNCH_NEW_IMMUTABLE_CANDIDATE'",
+                  "                    ),",
                   "                }",
                   "                atomic_write_json(",
                   "                    out / 'PARTIAL_RUN_RECEIPT.json',",
@@ -497,6 +499,19 @@ jobs:
               # fail-closed compatibility reader only into the generated runtime
               # notebook; the frozen canonical notebook remains byte-unchanged.
               bridge_helper = pathlib.Path("scripts/m07_r320_bridge_extracted_compat.pyfrag").read_text(encoding="utf-8")
+              bridge_marker_old = "\n".join([
+                  '    marker = temp / "CAMPAIGN_STATE.json"',
+                  '    if not marker.is_file():',
+                  '        raise ValueError("Phase-2 remote state lacks its sealed campaign manifest.")',
+                  '    payload = json.loads(marker.read_text(encoding="utf-8"))',
+              ])
+              bridge_marker_new = "\n".join([
+                  '    restore_root = _m07_resolve_exact_bridge_root(model_id, resolution, temp)',
+                  '    marker = restore_root / "CAMPAIGN_STATE.json"',
+                  '    if not marker.is_file():',
+                  '        raise ValueError("Phase-2 remote state lacks its sealed campaign manifest.")',
+                  '    payload = json.loads(marker.read_text(encoding="utf-8"))',
+              ])
               bridge_restore_old = "\n".join([
                   '    archives = {p.name: p for p in temp.glob("*.zip")}',
                   '    if set(archives) != set(payload.get("artifact_sha256", {})) or not archives:',
@@ -511,10 +526,10 @@ jobs:
                   '        safe_extract_zip(archive, staged)',
               ])
               bridge_restore_new = "\n".join([
-                  '    bridge_restore_result = _m07_restore_exact_bridge_extracted(model_id, resolution, temp, payload)',
+                  '    bridge_restore_result = _m07_restore_exact_bridge_extracted(model_id, resolution, restore_root, payload)',
                   '    bridge_receipt_path = None',
                   '    if bridge_restore_result is None:',
-                  '        archives = {p.name: p for p in temp.glob("*.zip")}',
+                  '        archives = {p.name: p for p in restore_root.glob("*.zip")}',
                   '        if set(archives) != set(payload.get("artifact_sha256", {})) or not archives:',
                   '            raise ValueError("Phase-2 archive inventory mismatch.")',
                   '        if any(not re.fullmatch(r"(?:FOLD_[1-5]_RECOVERY|FINAL_EVIDENCE)\\.zip", name) for name in archives):',
@@ -550,6 +565,7 @@ jobs:
                   source = "".join(cell.get("source", []))
                   if (
                       'def phase2_restore(model_id, resolution):' in source
+                      and bridge_marker_old in source
                       and bridge_restore_old in source
                       and bridge_tail_old in source
                   ):
@@ -558,6 +574,7 @@ jobs:
                           bridge_helper.rstrip() + "\n\ndef phase2_restore(model_id, resolution):",
                           1,
                       )
+                      source = source.replace(bridge_marker_old, bridge_marker_new, 1)
                       source = source.replace(bridge_restore_old, bridge_restore_new, 1)
                       source = source.replace(bridge_tail_old, bridge_tail_new, 1)
                       cell["source"] = source.splitlines(keepends=True)
@@ -597,8 +614,24 @@ jobs:
           _stage_artifacts = {{
               "campaign_state": phase2_state_root("M07", CGP_RUNTIME_RESOLUTION) / "CAMPAIGN_STATE.json",
           }}
-          _final_report_path = phase2_output_root("M07", CGP_RUNTIME_RESOLUTION) / "FINAL_REPORT.json"
-          if _final_report_path.is_file():
+          _runtime_out = phase2_output_root("M07", CGP_RUNTIME_RESOLUTION)
+          _final_report_path = _runtime_out / "FINAL_REPORT.json"
+          _locked_test_marker = _runtime_out / "LOCKED_TEST" / "INFERENCE_RECEIPT.json"
+          _locked_test_cache = _runtime_out / "LOCKED_TEST" / "INFERENCE_CACHE.npz"
+          _five_fold_boundary = (
+              CGP_RUNTIME_RESOLUTION == 320
+              and int(_restored_folds) == 4
+              and _stage_status == "PARTIAL_FOLD_UNIT_COMPLETE"
+              and bool(_stage_report.get("five_fold_ready"))
+          )
+          if _five_fold_boundary:
+              if _stage_report.get("completed_fold") != 5 or _stage_report.get("new_folds_completed") != 1:
+                  raise RuntimeError("M07 R320 Fold5 boundary receipt is inconsistent")
+              if _stage_report.get("next_action") != "VALIDATE_FIVE_FOLD_STATE_BEFORE_LOCKED_TEST":
+                  raise RuntimeError("M07 R320 Fold5 boundary next-action drift")
+              if _final_report_path.exists() or _locked_test_marker.exists() or _locked_test_cache.exists():
+                  raise RuntimeError("M07 R320 Fold5 recovery crossed the Locked-Test boundary")
+          elif _final_report_path.is_file():
               phase2_validate_report("M07", CGP_RUNTIME_RESOLUTION)
               _stage_artifacts["final_report"] = _final_report_path
           _stage_receipt_path = OUTPUT_ROOT / (
@@ -614,6 +647,11 @@ jobs:
                       "attempt": int(CGP_RUNTIME_ATTEMPT),
                       "restored_folds": int(_restored_folds),
                       "max_new_folds": int(CGP_MAX_NEW_FOLDS_PER_RUN),
+                      "completed_fold": _stage_report.get("completed_fold"),
+                      "new_folds_completed": _stage_report.get("new_folds_completed"),
+                      "five_fold_ready": bool(_stage_report.get("five_fold_ready", False)),
+                      "next_action": _stage_report.get("next_action"),
+                      "locked_test_started": bool(_locked_test_marker.exists() or _locked_test_cache.exists()),
                       "persistence_handle": phase2_handle("M07", CGP_RUNTIME_RESOLUTION),
                       "source_incident": "rezanory/m07-phase2-unlock-20260915:CANCEL_ACKNOWLEDGED",
                   }},
@@ -633,7 +671,57 @@ jobs:
           )
           '''
               notebook["cells"][gate_index]["source"] = (definitions + stage_runner).splitlines(keepends=True)
-              notebook["cells"] = notebook["cells"][:gate_index + 1]
+
+              # Runtime recovery must not execute the predecessor's R224 final-fold,
+              # locked-test, diagnostics, XAI, casebook, external-validation or
+              # final-report cells before the missing high-resolution fold is sealed.
+              # Retain only setup/precheck cells plus the Phase-2 definitions needed
+              # to restore, validate, train and persist exactly one fold.
+              registry_marker = "# 17) PHASE-2 CANONICAL MODEL REGISTRY + GENERIC ENGINE"
+              reporting_marker = "# 18) PHASE-2 REPORTING / PERSISTENCE / EVIDENCE HELPERS"
+              registry_hits = []
+              reporting_hits = []
+              for index, cell in enumerate(notebook["cells"]):
+                  source = "".join(cell.get("source", []))
+                  if registry_marker in source:
+                      registry_hits.append(index)
+                  if reporting_marker in source:
+                      reporting_hits.append(index)
+              if len(registry_hits) != 1 or len(reporting_hits) != 1:
+                  raise SystemExit(
+                      f"M07_RUNTIME_DEFINITION_CELL_DRIFT registry={registry_hits} reporting={reporting_hits}"
+                  )
+              registry_index = registry_hits[0]
+              reporting_index = reporting_hits[0]
+              if not (12 < registry_index < reporting_index < run_index < gate_index):
+                  raise SystemExit(
+                      "M07_RUNTIME_DEFINITION_ORDER_DRIFT "
+                      f"registry={registry_index} reporting={reporting_index} "
+                      f"run={run_index} gate={gate_index}"
+                  )
+              removed_indices = list(range(13, registry_index))
+              notebook["cells"] = (
+                  notebook["cells"][:13]
+                  + [
+                      notebook["cells"][registry_index],
+                      notebook["cells"][reporting_index],
+                      notebook["cells"][run_index],
+                      notebook["cells"][gate_index],
+                  ]
+              )
+              print(
+                  "M07_RUNTIME_EXECUTION_SCOPE_PRUNED",
+                  json.dumps(
+                      {
+                          "removed_original_indices": removed_indices,
+                          "retained_definition_indices": [
+                              registry_index, reporting_index, run_index, gate_index
+                          ],
+                          "execution_scope": "SETUP_DEFINITIONS_EXACT_RUNTIME_STAGE_ONLY",
+                      },
+                      sort_keys=True,
+                  ),
+              )
               # A runtime stage may legitimately be the first publisher of its
               # per-resolution Phase-2 state dataset.  Kaggle exposes an exact
               # non-interactive error for that empty dataset, which is a
@@ -777,6 +865,10 @@ jobs:
                   "source_persistence_handle": PERSIST_HANDLE,
                   "source_phase2_state_handle": RUNTIME_SOURCE_STATE_HANDLE,
                   "max_new_folds": 1 if RUNTIME_MODE else None,
+                  "execution_scope": (
+                      "SETUP_DEFINITIONS_EXACT_RUNTIME_STAGE_ONLY" if RUNTIME_MODE else None
+                  ),
+                  "pre_runtime_analysis_cells_removed": bool(RUNTIME_MODE),
               },
               "manual_approval": {
                   "token": RUNTIME_TOKEN if RUNTIME_MODE else "M07_PHASE2_UNLOCK_APPROVED_BY_USER" if UNLOCK_MODE else None,
@@ -827,6 +919,24 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Validate dynamic M07 runtime artifact contract
+        if: ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        shell: powershell
+        env:
+          M07_RUNTIME_STAGE: ${{ github.event.inputs.recovery }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python scripts/m07_runtime_contract.py validate-artifact `
+            --token $env:M07_RUNTIME_STAGE `
+            --run-id $env:GITHUB_RUN_ID `
+            --notebook $env:CGP_NOTEBOOK_PATH `
+            --sha-file "$env:RUNNER_TEMP\m07_runtime_notebook.sha256" `
+            --slug-file "$env:RUNNER_TEMP\m07_kernel_slug.txt" `
+            --title-file "$env:RUNNER_TEMP\m07_kernel_title.txt"
+          if($LASTEXITCODE -ne 0){throw 'M07 dynamic runtime artifact contract validation failed'}
+
       - name: Request trusted action OIDC identity
         if: ${{ github.ref == 'refs/heads/main' }}
         shell: powershell
@@ -839,6 +949,94 @@ jobs:
           if($token.Length-lt100){throw 'GitHub OIDC token unavailable'}
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Request trusted read OIDC identity for runtime admission
+        if: ${{ github.ref == 'refs/heads/main' && startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$oidc.value
+          if($token.Length-lt100){throw 'GitHub read OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Enforce immutable runtime attempt and duplicate-GPU preflight
+        if: ${{ github.ref == 'refs/heads/main' && startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, pathlib, sys, urllib.error, urllib.request
+          sys.path.insert(0, str(pathlib.Path('scripts').resolve()))
+          from m07_runtime_contract import (
+              assess_runtime_inventory, expected_runtime_contract,
+              parse_runtime_kernel_ref,
+          )
+
+          runtime_token=os.environ['CGP_RUNTIME_STAGE'].strip()
+          expected=expected_runtime_contract(runtime_token)
+          owner=expected['owner']
+          resolution=int(expected['resolution'])
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
+          oidc=os.environ.get('CGP_READ_OIDC_TOKEN','').strip()
+          if len(oidc)<100:
+              raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: read OIDC unavailable')
+
+          def read(payload):
+              req=urllib.request.Request(
+                  endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
+                  headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json',
+                           'Accept':'application/json','User-Agent':'m07-runtime-admission/1.0'},
+              )
+              try:
+                  with urllib.request.urlopen(req,timeout=90) as response:
+                      value=json.loads(response.read().decode('utf-8','replace') or '{}')
+              except urllib.error.HTTPError as exc:
+                  detail=exc.read(4000).decode('utf-8','replace')
+                  raise RuntimeError(f'Runtime admission read HTTP {exc.code}: {detail[:1600]}') from exc
+              if value.get('ok') is not True or value.get('read_only') is not True:
+                  raise RuntimeError('Runtime admission read broker did not return ok/read_only')
+              result=value.get('result')
+              if not isinstance(result,dict):
+                  raise RuntimeError('Runtime admission read result missing')
+              return result
+
+          listed=read({
+              'action':'raw_read','account_id':expected['account_id'],
+              'service':'kernels.KernelsApiService','method':'ListKernels',
+              'body':{'group':'PROFILE','user':owner,'sortBy':'DATE_RUN','page':1,'pageSize':100},
+          })
+          kernels=[item for item in (listed.get('kernels') or []) if isinstance(item,dict)]
+          statuses={}
+          for item in kernels:
+              ref=str(item.get('ref') or '').strip()
+              parsed=parse_runtime_kernel_ref(ref)
+              if parsed is None or parsed['owner'].lower()!=owner.lower() or parsed['resolution']!=resolution:
+                  continue
+              slug=ref.split('/',1)[1]
+              statuses[ref]=read({
+                  'action':'raw_read','account_id':expected['account_id'],
+                  'service':'kernels.KernelsApiService','method':'GetKernelSessionStatus',
+                  'body':{'userName':owner,'kernelSlug':slug},
+              })
+          report=assess_runtime_inventory(token=runtime_token,kernels=kernels,statuses=statuses)
+          report.update({
+              'schema':'m07.d260914d.runtime.admission.v1',
+              'account_id':expected['account_id'],'owner':owner,
+              'source_sha':os.environ.get('GITHUB_SHA',''),
+              'github_run_id':os.environ.get('GITHUB_RUN_ID',''),
+          })
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'m07-runtime-admission-preflight.json'
+          out.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('M07_RUNTIME_ADMISSION_PASS',json.dumps(report,sort_keys=True))
+          '@
+          $script | & $python -
+          if($LASTEXITCODE-ne 0){throw 'M07 immutable runtime admission preflight failed'}
 
       - name: Submit M07 continuation or approved Phase-2 kernel
         if: ${{ github.ref == 'refs/heads/main' }}
@@ -876,10 +1074,45 @@ jobs:
               raise SystemExit(f"Continuation SaveKernel HTTP {error.code}: {error.read(4000).decode('utf-8', 'replace')[:1800]}")
           if not result.get("ok"):
               raise SystemExit("Continuation action broker returned ok=false")
-          print(json.dumps({"accepted": True, "account_id": os.environ["CGP_ACCOUNT_ID"], "owner": os.environ["CGP_ACCOUNT_OWNER"], "provider_ref": result.get("provider_ref") or (result.get("result") or {}).get("ref"), "broker_run_id": result.get("broker_run_id"), "broker_sha": result.get("broker_sha"), "phase2_unlocked": "PHASE2_UNLOCK" in os.environ["CGP_NOTEBOOK_PATH"]}, ensure_ascii=False))
+          provider_ref = result.get("provider_ref") or (result.get("result") or {}).get("ref")
+          launch = {
+              "schema": "m07.d260914d.runtime.orchestration.v2",
+              "status": "ORCHESTRATION_ACCEPTED_PENDING_SCIENTIFIC_TERMINAL",
+              "accepted": True,
+              "runtime_stage": runtime_stage,
+              "account_id": os.environ["CGP_ACCOUNT_ID"].strip(),
+              "owner": os.environ["CGP_ACCOUNT_OWNER"].strip(),
+              "kernel_ref": os.environ["CGP_KERNEL_SLUG"].strip(),
+              "kernel_title": os.environ["CGP_KERNEL_TITLE"].strip(),
+              "notebook_sha256": os.environ.get("CGP_NOTEBOOK_SHA256", "").strip(),
+              "provider_ref": provider_ref,
+              "broker_run_id": result.get("broker_run_id"),
+              "broker_sha": result.get("broker_sha"),
+              "github_run_id": os.environ.get("GITHUB_RUN_ID", ""),
+              "source_sha": os.environ.get("GITHUB_SHA", ""),
+              "dataset_sources": dataset_sources,
+              "machine_shape": body.get("machineShape"),
+              "scientific_pass": False,
+          }
+          if runtime_stage.startswith("M07_RUNTIME_M07_R"):
+              pathlib.Path(os.environ["RUNNER_TEMP"], "m07-runtime-launch-receipt.json").write_text(
+                  json.dumps(launch, ensure_ascii=False, indent=2), encoding="utf-8"
+              )
+          print(json.dumps(launch, ensure_ascii=False))
           '@
           $script | & $python -
           if($LASTEXITCODE -ne 0){throw 'M07 continuation SaveKernel submission failed'}
+
+      - name: Preserve runtime orchestration receipt
+        if: ${{ always() && startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-runtime-orchestration-receipt-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/m07-runtime-launch-receipt.json
+            ${{ runner.temp }}/m07-runtime-admission-preflight.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Publish continuation launch receipt
         if: ${{ always() && github.ref == 'refs/heads/main' }}
@@ -894,6 +1127,208 @@ jobs:
           $approval=if($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'M07_PHASE2_UNLOCK_APPROVED_BY_USER'}else{'none'}
           $body="## PNEUMONIA V1.7 d260914d M07 $mode ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Account: ``$env:CGP_ACCOUNT_ID`` / ``$env:CGP_ACCOUNT_OWNER```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted five-fold evidence reused; bounded runtime mode completes at most one missing fold`n- Approval token: ``$approval```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
+
+  verify-m07-runtime-terminal:
+    name: Verify M07 runtime scientific terminal
+    needs: launch-m07-continuation
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main' &&
+          startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 240
+    env:
+      M07_RUNTIME_STAGE: ${{ github.event.inputs.recovery }}
+    steps:
+      - name: Checkout exact workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download exact generated runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: m07-runtime-notebook-${{ github.run_id }}
+          path: exact-runtime
+
+      - name: Request trusted read OIDC identity for runtime terminal verification
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$oidc.value
+          if($token.Length-lt100){throw 'GitHub read OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Wait for exact Kaggle terminal state and validate scientific receipt
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, pathlib, sys, time, urllib.error, urllib.parse, urllib.request
+          sys.path.insert(0, str(pathlib.Path('scripts').resolve()))
+          from m07_runtime_contract import (
+              extract_session_state, expected_runtime_contract,
+              parse_runtime_token, validate_runtime_receipt,
+          )
+
+          runtime_token=os.environ['M07_RUNTIME_STAGE'].strip()
+          resolution,attempt=parse_runtime_token(runtime_token)
+          expected=expected_runtime_contract(runtime_token)
+          owner=expected['owner']
+          account_id=expected['account_id']
+          slug_files=list(pathlib.Path('exact-runtime').rglob('m07_kernel_slug.txt'))
+          if len(slug_files)!=1:
+              raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: slug_sidecars={len(slug_files)}')
+          kernel_ref=slug_files[0].read_text(encoding='utf-8-sig').strip()
+          kernel_owner,kernel_slug=kernel_ref.split('/',1)
+          if kernel_owner.lower()!=owner.lower():
+              raise SystemExit('BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: runtime owner drift')
+
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
+          oidc=os.environ.get('CGP_READ_OIDC_TOKEN','').strip()
+          if len(oidc)<100:
+              raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: read OIDC unavailable')
+
+          def read(payload,timeout=90):
+              req=urllib.request.Request(
+                  endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
+                  headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json',
+                           'Accept':'application/json','User-Agent':'m07-runtime-terminal/2.0'},
+              )
+              try:
+                  with urllib.request.urlopen(req,timeout=timeout) as response:
+                      value=json.loads(response.read().decode('utf-8','replace') or '{}')
+              except urllib.error.HTTPError as exc:
+                  detail=exc.read(4000).decode('utf-8','replace')
+                  raise RuntimeError(f'Runtime terminal read HTTP {exc.code}: {detail[:1600]}') from exc
+              if value.get('ok') is not True or value.get('read_only') is not True:
+                  raise RuntimeError('Runtime terminal read broker did not return ok/read_only')
+              result=value.get('result')
+              if not isinstance(result,dict):
+                  raise RuntimeError('Runtime terminal read result missing')
+              return result
+
+          evidence_dir=pathlib.Path('runtime-terminal-evidence')
+          evidence_dir.mkdir(parents=True,exist_ok=True)
+          started=time.time()
+          history=[]
+          terminal_payload=None
+          terminal_state=None
+          for poll in range(631):
+              payload=read({
+                  'action':'raw_read','account_id':account_id,
+                  'service':'kernels.KernelsApiService','method':'GetKernelSessionStatus',
+                  'body':{'userName':owner,'kernelSlug':kernel_slug},
+              },timeout=60)
+              state=extract_session_state(payload)
+              history.append({'poll':poll,'elapsed_seconds':round(time.time()-started,1),'state':state})
+              print('M07_RUNTIME_STATUS',json.dumps(history[-1],sort_keys=True))
+              if state in {'COMPLETE','ERROR','CANCEL'}:
+                  terminal_payload=payload
+                  terminal_state=state
+                  break
+              if poll==630:
+                  break
+              time.sleep(20)
+
+          terminal_receipt={
+              'schema':'m07.d260914d.runtime.terminal.v1','runtime_stage':runtime_token,
+              'kernel_ref':kernel_ref,'resolution':resolution,'attempt':attempt,
+              'account_id':account_id,'terminal_state':terminal_state,
+              'session_status':terminal_payload,
+              'poll_count':len(history),'elapsed_seconds':round(time.time()-started,1),
+              'scientific_receipt_validated':False,
+              'read_transport':'control-plane-v3-oidc',
+              'github_run_id':os.environ.get('GITHUB_RUN_ID',''),
+              'source_sha':os.environ.get('GITHUB_SHA',''),
+          }
+          terminal_path=evidence_dir/'runtime-terminal-receipt.json'
+          terminal_path.write_text(json.dumps(terminal_receipt,ensure_ascii=False,indent=2),encoding='utf-8')
+          if terminal_state is None:
+              raise SystemExit('BLOCKED_VALIDATION_INFRASTRUCTURE: runtime did not reach terminal state inside 210 minutes')
+          if terminal_state!='COMPLETE':
+              log_tail = ''
+              log_error = None
+              try:
+                  live=read({
+                      'action':'live_log','account_id':account_id,
+                      'kernel_ref':kernel_ref,'max_chars':40000,
+                  },timeout=120)
+                  log_tail=str(live.get('log_tail') or '')[-40000:]
+              except Exception as exc:
+                  log_error=f'{type(exc).__name__}: {exc}'
+              if log_tail:
+                  (evidence_dir/'runtime-error-log-tail.txt').write_text(log_tail,encoding='utf-8')
+              terminal_receipt['runtime_error_log_tail_present']=bool(log_tail)
+              terminal_receipt['runtime_error_log_capture_error']=log_error
+              terminal_receipt['status']=f'SCIENTIFIC_TERMINAL_{terminal_state}'
+              terminal_path.write_text(
+                  json.dumps(terminal_receipt,ensure_ascii=False,indent=2),encoding='utf-8'
+              )
+              raise SystemExit(
+                  f'M07_RUNTIME_SCIENTIFIC_TERMINAL_{terminal_state}; '
+                  'see runtime-terminal-evidence/runtime-error-log-tail.txt'
+              )
+
+          expected_name=f'M07_RUNTIME_R{resolution}_A{attempt:02d}_RECEIPT.json'
+          matches=[]
+          previous=None
+          for page in range(1,21):
+              listing=read({
+                  'action':'raw_read','account_id':account_id,
+                  'service':'kernels.KernelsApiService','method':'ListKernelSessionOutput',
+                  'body':{'userName':owner,'kernelSlug':kernel_slug,'page':page,'pageSize':10},
+              },timeout=60)
+              files=listing.get('files') or []
+              signature=tuple(str(item.get('fileName','')) for item in files if isinstance(item,dict))
+              if page>1 and signature and signature==previous:
+                  raise SystemExit('BLOCKED_VALIDATION_INFRASTRUCTURE: output pagination did not advance')
+              previous=signature
+              for item in files:
+                  if isinstance(item,dict) and pathlib.PurePosixPath(str(item.get('fileName',''))).name==expected_name:
+                      matches.append(item)
+              if len(files)<10:
+                  break
+          if len(matches)!=1:
+              raise SystemExit(f'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime_receipt_matches={len(matches)} expected={expected_name}')
+          url=str(matches[0].get('url') or '')
+          parsed=urllib.parse.urlparse(url)
+          if parsed.scheme!='https' or parsed.hostname!='www.kaggleusercontent.com':
+              raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: unsafe runtime receipt URL')
+          req=urllib.request.Request(url,headers={'User-Agent':'m07-runtime-terminal/2.0'})
+          with urllib.request.urlopen(req,timeout=90) as response:
+              raw=response.read(262145)
+          if len(raw)>262144:
+              raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime receipt exceeds bounded size')
+          scientific=json.loads(raw.decode('utf-8-sig'))
+          report=validate_runtime_receipt(scientific,token=runtime_token)
+          scientific_path=evidence_dir/expected_name
+          scientific_path.write_text(json.dumps(scientific,ensure_ascii=False,indent=2),encoding='utf-8')
+          terminal_receipt['scientific_receipt_validated']=True
+          terminal_receipt['scientific_report']=report
+          terminal_receipt['status']='SCIENTIFIC_RECEIPT_PASS'
+          terminal_path.write_text(json.dumps(terminal_receipt,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('M07_RUNTIME_TERMINAL_SCIENTIFIC_PASS',json.dumps({
+              'kernel_ref':kernel_ref,'terminal_state':terminal_state,**report
+          },sort_keys=True))
+          '@
+          $script | & $python -
+          if($LASTEXITCODE-ne 0){throw 'M07 runtime terminal/scientific validation failed'}
+
+      - name: Preserve runtime terminal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-runtime-terminal-evidence-${{ github.run_id }}
+          path: runtime-terminal-evidence
+          if-no-files-found: warn
+          retention-days: 30
 
   launch-exact-runtime-from-artifact:
     name: Launch exact M07 runtime candidate
