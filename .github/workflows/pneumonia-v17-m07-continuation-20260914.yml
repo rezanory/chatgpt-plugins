@@ -90,6 +90,13 @@ jobs:
               raise SystemExit("M07_RUNTIME_ATTEMPT_OUT_OF_RANGE")
           RUNTIME_ACCOUNT = "kg-05" if RUNTIME_RESOLUTION == 384 else "kg-03"
           RUNTIME_OWNER = "trickermark" if RUNTIME_RESOLUTION == 384 else "rezanory"
+          # R320 recovery reads only the last independently validated sealed state.
+          # Versions 5/6 regressed to fold 1; restore and upload identities stay separate.
+          RUNTIME_SOURCE_STATE_HANDLE = (
+              "rezanory/m07-gate-r320-state-v1-7/versions/4"
+              if RUNTIME_MODE and RUNTIME_RESOLUTION == 320
+              else None
+          )
           headers = {
               "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
               "Accept": "application/vnd.github+json",
@@ -445,6 +452,31 @@ jobs:
               run_source = run_source.replace(persist_anchor, bounded_return, 1)
               notebook["cells"][run_index]["source"] = run_source.splitlines(keepends=True)
 
+              # Pin only the R320 read side to immutable Version 4. The write side
+              # remains phase2_handle() and is still blocked until restore validates.
+              restore_download_old = (
+                  "        kagglehub.dataset_download(phase2_handle(model_id, resolution), "
+                  "output_dir=str(temp), force_download=True)"
+              )
+              restore_download_new = "\n".join([
+                  "        restore_handle = (",
+                  "            globals().get('CGP_RUNTIME_SOURCE_STATE_HANDLE')",
+                  "            or phase2_handle(model_id, resolution)",
+                  "        )",
+                  "        kagglehub.dataset_download(",
+                  "            restore_handle, output_dir=str(temp), force_download=True",
+                  "        )",
+              ])
+              restore_download_hits = 0
+              for cell in notebook["cells"]:
+                  source = "".join(cell.get("source", []))
+                  if restore_download_old in source:
+                      source = source.replace(restore_download_old, restore_download_new, 1)
+                      cell["source"] = source.splitlines(keepends=True)
+                      restore_download_hits += 1
+              if restore_download_hits != 1:
+                  raise SystemExit(f"M07_RUNTIME_RESTORE_DOWNLOAD_ANCHOR_COUNT={restore_download_hits}")
+
               gate_cell_hits = []
               gate_marker = "# 1) Complete M07 at R320/R384 using the exact frozen R224 recipe."
               for index, cell in enumerate(notebook["cells"]):
@@ -458,9 +490,12 @@ jobs:
               stage_runner = f'''# M07 bounded runtime recovery stage.
           CGP_RUNTIME_RESOLUTION = {RUNTIME_RESOLUTION!r}
           CGP_RUNTIME_ATTEMPT = {RUNTIME_ATTEMPT!r}
-          CGP_RUNTIME_PHASE2_STATE_ATTACH_OPTIONAL = True
+          CGP_RUNTIME_SOURCE_STATE_HANDLE = {RUNTIME_SOURCE_STATE_HANDLE!r}
+          CGP_RUNTIME_PHASE2_STATE_ATTACH_OPTIONAL = (
+              CGP_RUNTIME_RESOLUTION == 384 and CGP_RUNTIME_ATTEMPT == 1
+          )
           _restored_folds = phase2_restore("M07", CGP_RUNTIME_RESOLUTION)
-          if CGP_RUNTIME_RESOLUTION == 320 and CGP_RUNTIME_ATTEMPT == 1 and _restored_folds != 4:
+          if CGP_RUNTIME_RESOLUTION == 320 and _restored_folds != 4:
               raise RuntimeError(
                   f"M07 R320 exact recovery expected 4 sealed folds, observed {{_restored_folds}}"
               )
@@ -652,6 +687,7 @@ jobs:
                   "account_id": RUNTIME_ACCOUNT,
                   "owner": RUNTIME_OWNER,
                   "source_persistence_handle": PERSIST_HANDLE,
+                  "source_phase2_state_handle": RUNTIME_SOURCE_STATE_HANDLE,
                   "max_new_folds": 1 if RUNTIME_MODE else None,
               },
               "manual_approval": {
@@ -848,6 +884,10 @@ jobs:
               'account_id':os.environ['EXPECTED_ACCOUNT'],
               'owner':os.environ['EXPECTED_OWNER'],
               'source_persistence_handle':'rezanory/m07-final-5fold-fix2-d260914d',
+              'source_phase2_state_handle': (
+                  'rezanory/m07-gate-r320-state-v1-7/versions/4'
+                  if int(os.environ['EXPECTED_RESOLUTION']) == 320 else None
+              ),
               'max_new_folds':1,
           }
           for key,value in runtime_required.items():
