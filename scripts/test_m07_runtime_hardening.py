@@ -112,6 +112,8 @@ def _runtime_notebook(attempt: int) -> dict:
         "max_new_folds": 1,
         "execution_scope": "SETUP_DEFINITIONS_EXACT_RUNTIME_STAGE_ONLY",
         "pre_runtime_analysis_cells_removed": True,
+        "legacy_r224_preflight_removed": True,
+        "bridge_restore_mode": "PREATTACHED_READONLY_MOUNT",
     }
     source = "\n".join(
         [
@@ -119,9 +121,10 @@ def _runtime_notebook(attempt: int) -> dict:
             "CGP_RUNTIME_READONLY_PREDECESSOR = True",
             "Runtime predecessor persistence is read-only",
             f"CGP_RUNTIME_SOURCE_STATE_HANDLE = {contract.R320_BRIDGE_HANDLE!r}",
-            "def _m07_resolve_exact_bridge_root(model_id, resolution, temp): pass",
-            "restore_root = _m07_resolve_exact_bridge_root(model_id, resolution, temp)",
-            "M07_R320_BRIDGE_LAYOUT_RESOLVED",
+            "def _m07_resolve_exact_bridge_mount(model_id, resolution, input_root=None): pass",
+            "restore_root = _m07_resolve_exact_bridge_mount(model_id, resolution)",
+            "M07_R320_BRIDGE_MOUNT_VERIFIED",
+            "_m07_restore_exact_bridge_extracted(model_id, resolution, restore_root, payload, work_root=temp)",
             "M07_R320_BRIDGE_EXTRACTED_RESTORE_VERIFIED",
             "def _resolve_runtime_predecessor_mount(input_root=None): pass",
             "downloaded_root = _resolve_runtime_predecessor_mount()",

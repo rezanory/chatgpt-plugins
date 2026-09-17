@@ -479,9 +479,17 @@ jobs:
                   "            globals().get('CGP_RUNTIME_SOURCE_STATE_HANDLE')",
                   "            or phase2_handle(model_id, resolution)",
                   "        )",
-                  "        kagglehub.dataset_download(",
-                  "            restore_handle, output_dir=str(temp), force_download=True",
-                  "        )",
+                  "        if (",
+                  "            str(model_id) == 'M07'",
+                  "            and int(resolution) == 320",
+                  "            and restore_handle == 'trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1'",
+                  "        ):",
+                  "            restore_root = _m07_resolve_exact_bridge_mount(model_id, resolution)",
+                  "        else:",
+                  "            kagglehub.dataset_download(",
+                  "                restore_handle, output_dir=str(temp), force_download=True",
+                  "            )",
+                  "            restore_root = _m07_resolve_exact_bridge_root(model_id, resolution, temp)",
               ])
               restore_download_hits = 0
               for cell in notebook["cells"]:
@@ -506,7 +514,6 @@ jobs:
                   '    payload = json.loads(marker.read_text(encoding="utf-8"))',
               ])
               bridge_marker_new = "\n".join([
-                  '    restore_root = _m07_resolve_exact_bridge_root(model_id, resolution, temp)',
                   '    marker = restore_root / "CAMPAIGN_STATE.json"',
                   '    if not marker.is_file():',
                   '        raise ValueError("Phase-2 remote state lacks its sealed campaign manifest.")',
@@ -526,7 +533,7 @@ jobs:
                   '        safe_extract_zip(archive, staged)',
               ])
               bridge_restore_new = "\n".join([
-                  '    bridge_restore_result = _m07_restore_exact_bridge_extracted(model_id, resolution, restore_root, payload)',
+                  '    bridge_restore_result = _m07_restore_exact_bridge_extracted(model_id, resolution, restore_root, payload, work_root=temp)',
                   '    bridge_receipt_path = None',
                   '    if bridge_restore_result is None:',
                   '        archives = {p.name: p for p in restore_root.glob("*.zip")}',
@@ -679,29 +686,37 @@ jobs:
               # to restore, validate, train and persist exactly one fold.
               registry_marker = "# 17) PHASE-2 CANONICAL MODEL REGISTRY + GENERIC ENGINE"
               reporting_marker = "# 18) PHASE-2 REPORTING / PERSISTENCE / EVIDENCE HELPERS"
+              legacy_preflight_marker = "# 8B) M07 RUNTIME PRE-FLIGHT"
               registry_hits = []
               reporting_hits = []
+              legacy_preflight_hits = []
               for index, cell in enumerate(notebook["cells"]):
                   source = "".join(cell.get("source", []))
                   if registry_marker in source:
                       registry_hits.append(index)
                   if reporting_marker in source:
                       reporting_hits.append(index)
-              if len(registry_hits) != 1 or len(reporting_hits) != 1:
+                  if legacy_preflight_marker in source:
+                      legacy_preflight_hits.append(index)
+              if len(registry_hits) != 1 or len(reporting_hits) != 1 or len(legacy_preflight_hits) != 1:
                   raise SystemExit(
-                      f"M07_RUNTIME_DEFINITION_CELL_DRIFT registry={registry_hits} reporting={reporting_hits}"
+                      "M07_RUNTIME_DEFINITION_CELL_DRIFT "
+                      f"registry={registry_hits} reporting={reporting_hits} "
+                      f"legacy_preflight={legacy_preflight_hits}"
                   )
               registry_index = registry_hits[0]
               reporting_index = reporting_hits[0]
-              if not (12 < registry_index < reporting_index < run_index < gate_index):
+              legacy_preflight_index = legacy_preflight_hits[0]
+              if not (0 < legacy_preflight_index < 13 < registry_index < reporting_index < run_index < gate_index):
                   raise SystemExit(
                       "M07_RUNTIME_DEFINITION_ORDER_DRIFT "
-                      f"registry={registry_index} reporting={reporting_index} "
-                      f"run={run_index} gate={gate_index}"
+                      f"legacy_preflight={legacy_preflight_index} registry={registry_index} "
+                      f"reporting={reporting_index} run={run_index} gate={gate_index}"
                   )
-              removed_indices = list(range(13, registry_index))
+              setup_indices = [index for index in range(13) if index != legacy_preflight_index]
+              removed_indices = [legacy_preflight_index, *range(13, registry_index)]
               notebook["cells"] = (
-                  notebook["cells"][:13]
+                  [notebook["cells"][index] for index in setup_indices]
                   + [
                       notebook["cells"][registry_index],
                       notebook["cells"][reporting_index],
@@ -869,6 +884,12 @@ jobs:
                       "SETUP_DEFINITIONS_EXACT_RUNTIME_STAGE_ONLY" if RUNTIME_MODE else None
                   ),
                   "pre_runtime_analysis_cells_removed": bool(RUNTIME_MODE),
+                  "legacy_r224_preflight_removed": bool(RUNTIME_MODE),
+                  "bridge_restore_mode": (
+                      "PREATTACHED_READONLY_MOUNT"
+                      if RUNTIME_MODE and RUNTIME_RESOLUTION == 320
+                      else None
+                  ),
               },
               "manual_approval": {
                   "token": RUNTIME_TOKEN if RUNTIME_MODE else "M07_PHASE2_UNLOCK_APPROVED_BY_USER" if UNLOCK_MODE else None,
