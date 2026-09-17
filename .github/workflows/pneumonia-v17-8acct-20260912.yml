@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   m07-r320-source-reader-repair-20260917:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'M07_R320_SOURCE_READER_REPAIR_20260917' }}
+    if: ${{ github.event.issue.number == 60 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'M07_R320_SOURCE_READER_REPAIR_20260917' }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 15
     steps:
