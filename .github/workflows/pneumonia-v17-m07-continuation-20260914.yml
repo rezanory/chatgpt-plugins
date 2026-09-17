@@ -1402,14 +1402,24 @@ jobs:
           github.event.inputs.recovery == 'M07_GRANT_R320_SOURCE_READER' }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 15
-    environment: kaggle-03
-    env:
-      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
     steps:
       - name: Checkout exact fix-forward source
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
+      - name: Request trusted action OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $base=$env:ACTIONS_ID_TOKEN_REQUEST_URL
+          $sep=if($base.Contains('?')){'&'}else{'?'}
+          $headers=@{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
+          $resp=Invoke-RestMethod -Uri ($base+$sep+'audience=cgp-control-plane-v3-action') -Headers $headers -Method Get -TimeoutSec 30
+          $token=[string]$resp.value
+          if($token.Length -lt 100){throw 'OIDC unavailable'}
+          Write-Host ('::add-mask::'+$token)
+          Add-Content -Path $env:GITHUB_ENV -Value ('CGP_ACTION_OIDC_TOKEN='+$token)
 
       - name: Grant and verify reader without creating a data version
         shell: powershell

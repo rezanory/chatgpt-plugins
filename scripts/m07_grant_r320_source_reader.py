@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import os
 import urllib.error
@@ -9,46 +8,52 @@ import urllib.request
 OWNER = "rezanory"
 DATASET_SLUG = "m07-gate-r320-state-v1-7"
 READER = "trickermark"
-API_ROOT = "https://api.kaggle.com/v1/datasets.DatasetApiService"
+ACTION_ENDPOINT = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
 
 
 def fail(message: str) -> None:
     raise SystemExit(message)
 
 
-def auth_header() -> str:
-    token = os.environ.get("KAGGLE_API_TOKEN", "").strip()
-    if not token:
-        fail("BLOCKED_VALIDATION_INFRASTRUCTURE: KAGGLE_API_TOKEN missing")
-    if token.startswith("KGAT_"):
-        return f"Bearer {token}"
-    encoded = base64.b64encode(f"{OWNER}:{token}".encode("utf-8")).decode("ascii")
-    return f"Basic {encoded}"
-
-
 def call(method: str, body: dict) -> dict:
+    oidc = os.environ.get("CGP_ACTION_OIDC_TOKEN", "").strip()
+    if len(oidc) < 100:
+        fail("BLOCKED_VALIDATION_INFRASTRUCTURE: trusted action OIDC token missing")
+    payload = {
+        "request_id": f"m07-r320-share-{method.lower()}-{os.environ.get('GITHUB_RUN_ID','local')}",
+        "provider": "kaggle",
+        "operation_class": "write",
+        "account_id": "kg-03",
+        "purpose": "Permission-only repair: grant trickermark READER access to exact M07 R320 V1.7 source; no data upload, no training, no Locked Test.",
+        "service": "datasets.DatasetApiService",
+        "method": method,
+        "body": body,
+    }
     req = urllib.request.Request(
-        f"{API_ROOT}/{method}",
-        data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
+        ACTION_ENDPOINT,
+        data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
         method="POST",
         headers={
-            "Authorization": auth_header(),
+            "Authorization": f"Bearer {oidc}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "radlina-m07-r320-share/1.0",
+            "User-Agent": "radlina-m07-r320-share/2.0",
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as response:
-            payload = json.loads(response.read().decode("utf-8", "replace") or "{}")
+        with urllib.request.urlopen(req, timeout=90) as response:
+            envelope = json.loads(response.read().decode("utf-8", "replace") or "{}")
     except urllib.error.HTTPError as exc:
-        detail = exc.read(1200).decode("utf-8", "replace")
-        fail(f"BLOCKED_VALIDATION_INFRASTRUCTURE: {method} HTTP {exc.code}: {detail[:600]}")
+        detail = exc.read(1400).decode("utf-8", "replace")
+        fail(f"BLOCKED_VALIDATION_INFRASTRUCTURE: broker {method} HTTP {exc.code}: {detail[:900]}")
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        fail(f"BLOCKED_VALIDATION_INFRASTRUCTURE: {method} failed: {type(exc).__name__}")
-    if not isinstance(payload, dict):
-        fail(f"BLOCKED_VALIDATION_INFRASTRUCTURE: {method} response is not an object")
-    return payload
+        fail(f"BLOCKED_VALIDATION_INFRASTRUCTURE: broker {method} failed: {type(exc).__name__}")
+    if not isinstance(envelope, dict) or not envelope.get("ok"):
+        fail(f"BLOCKED_VALIDATION_INFRASTRUCTURE: broker {method} rejected: {json.dumps(envelope)[:900]}")
+    result = envelope.get("result")
+    if not isinstance(result, dict):
+        fail(f"BLOCKED_VALIDATION_INFRASTRUCTURE: broker {method} result missing")
+    return result
 
 
 def normalize_collaborators(value: object) -> list[dict]:
@@ -64,14 +69,7 @@ def normalize_collaborators(value: object) -> list[dict]:
 def main() -> int:
     dataset = call("GetDataset", {"ownerSlug": OWNER, "datasetSlug": DATASET_SLUG})
     versions = dataset.get("versions") or []
-    v4 = next(
-        (
-            row
-            for row in versions
-            if isinstance(row, dict) and int(row.get("versionNumber") or 0) == 4
-        ),
-        None,
-    )
+    v4 = next((row for row in versions if isinstance(row, dict) and int(row.get("versionNumber") or 0) == 4), None)
     if not v4 or str(v4.get("status", "")).upper() != "READY":
         fail("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: source Version 4 is not READY")
     if "completed fold 4" not in str(v4.get("versionNotes", "")).lower():
@@ -99,10 +97,7 @@ def main() -> int:
     if isinstance(info.get("keywords"), list):
         settings["keywords"] = info["keywords"]
 
-    update = call(
-        "UpdateDatasetMetadata",
-        {"ownerSlug": OWNER, "datasetSlug": DATASET_SLUG, "settings": settings},
-    )
+    update = call("UpdateDatasetMetadata", {"ownerSlug": OWNER, "datasetSlug": DATASET_SLUG, "settings": settings})
     errors = update.get("errors") or []
     if isinstance(errors, list) and any(str(item).strip() for item in errors):
         fail("BLOCKED_VALIDATION_INFRASTRUCTURE: collaborator update validation errors")
@@ -118,23 +113,18 @@ def main() -> int:
     if not verified:
         fail("BLOCKED_VALIDATION_INFRASTRUCTURE: trickermark READER verification failed")
 
-    print(
-        json.dumps(
-            {
-                "status": "PASS",
-                "dataset_ref": f"{OWNER}/{DATASET_SLUG}",
-                "source_version": 4,
-                "source_v4_status": "READY",
-                "reader": READER,
-                "role": "READER",
-                "permission_only": True,
-                "data_version_created": False,
-                "training": False,
-                "locked_test": False,
-            },
-            sort_keys=True,
-        )
-    )
+    print(json.dumps({
+        "status": "PASS",
+        "dataset_ref": f"{OWNER}/{DATASET_SLUG}",
+        "source_version": 4,
+        "source_v4_status": "READY",
+        "reader": READER,
+        "role": "READER",
+        "permission_only": True,
+        "data_version_created": False,
+        "training": False,
+        "locked_test": False,
+    }, sort_keys=True))
     return 0
 
 
