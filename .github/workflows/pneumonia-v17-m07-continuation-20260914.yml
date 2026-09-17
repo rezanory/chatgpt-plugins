@@ -1018,11 +1018,33 @@ jobs:
                   raise RuntimeError('Runtime admission OIDC refresh context unavailable')
               sep='&' if '?' in request_url else '?'
               target=request_url+sep+'audience='+urllib.parse.quote('cgp-control-plane-v3',safe='')
-              req=urllib.request.Request(
-                  target,headers={'Authorization':'Bearer '+request_token,'Accept':'application/json'},
-              )
-              with urllib.request.urlopen(req,timeout=30) as response:
-                  payload=json.loads(response.read().decode('utf-8','replace') or '{}')
+              payload=None
+              last_error=None
+              for attempt in range(1,5):
+                  req=urllib.request.Request(
+                      target,headers={'Authorization':'Bearer '+request_token,'Accept':'application/json'},
+                  )
+                  try:
+                      with urllib.request.urlopen(req,timeout=30) as response:
+                          payload=json.loads(response.read().decode('utf-8','replace') or '{}')
+                      break
+                  except urllib.error.HTTPError as exc:
+                      if not (exc.code in {408,429} or 500 <= exc.code <= 599) or attempt >= 4:
+                          raise
+                      last_error=exc
+                  except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                      if attempt >= 4:
+                          raise
+                      last_error=exc
+                  wait_seconds=5*attempt
+                  print(
+                      'M07_RUNTIME_OIDC_REFRESH_RETRY',
+                      json.dumps({'context':'admission','attempt':attempt,'wait_seconds':wait_seconds,'error':type(last_error).__name__},sort_keys=True),
+                      flush=True,
+                  )
+                  time.sleep(wait_seconds)
+              if payload is None:
+                  raise RuntimeError('Runtime admission OIDC refresh exhausted transient retries') from last_error
               token=str(payload.get('value') or '').strip()
               if len(token)<100:
                   raise RuntimeError('Runtime admission OIDC refresh returned no token')
@@ -1270,11 +1292,33 @@ jobs:
                   raise RuntimeError('Runtime terminal OIDC refresh context unavailable')
               sep='&' if '?' in request_url else '?'
               target=request_url+sep+'audience='+urllib.parse.quote('cgp-control-plane-v3',safe='')
-              req=urllib.request.Request(
-                  target,headers={'Authorization':'Bearer '+request_token,'Accept':'application/json'},
-              )
-              with urllib.request.urlopen(req,timeout=30) as response:
-                  payload=json.loads(response.read().decode('utf-8','replace') or '{}')
+              payload=None
+              last_error=None
+              for attempt in range(1,5):
+                  req=urllib.request.Request(
+                      target,headers={'Authorization':'Bearer '+request_token,'Accept':'application/json'},
+                  )
+                  try:
+                      with urllib.request.urlopen(req,timeout=30) as response:
+                          payload=json.loads(response.read().decode('utf-8','replace') or '{}')
+                      break
+                  except urllib.error.HTTPError as exc:
+                      if not (exc.code in {408,429} or 500 <= exc.code <= 599) or attempt >= 4:
+                          raise
+                      last_error=exc
+                  except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                      if attempt >= 4:
+                          raise
+                      last_error=exc
+                  wait_seconds=5*attempt
+                  print(
+                      'M07_RUNTIME_OIDC_REFRESH_RETRY',
+                      json.dumps({'context':'terminal','attempt':attempt,'wait_seconds':wait_seconds,'error':type(last_error).__name__},sort_keys=True),
+                      flush=True,
+                  )
+                  time.sleep(wait_seconds)
+              if payload is None:
+                  raise RuntimeError('Runtime terminal OIDC refresh exhausted transient retries') from last_error
               token=str(payload.get('value') or '').strip()
               if len(token)<100:
                   raise RuntimeError('Runtime terminal OIDC refresh returned no token')
