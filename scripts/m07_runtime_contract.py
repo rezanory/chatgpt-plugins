@@ -60,6 +60,10 @@ def expected_runtime_contract(token: str) -> dict[str, Any]:
         "machine_shape": "NvidiaTeslaT4",
         "execution_scope": "SETUP_DEFINITIONS_EXACT_RUNTIME_STAGE_ONLY",
         "pre_runtime_analysis_cells_removed": True,
+        "legacy_r224_preflight_removed": True,
+        "bridge_restore_mode": (
+            "PREATTACHED_READONLY_MOUNT" if resolution == 320 else None
+        ),
     }
 
 
@@ -216,6 +220,14 @@ def validate_runtime_artifact(
         runtime.get("pre_runtime_analysis_cells_removed") is True,
         "pre-runtime analysis cells were not removed",
     )
+    _require(
+        runtime.get("legacy_r224_preflight_removed") is True,
+        "legacy R224 runtime preflight was not removed",
+    )
+    _require(
+        runtime.get("bridge_restore_mode") == expected["bridge_restore_mode"],
+        f"runtime bridge restore mode drift: {runtime.get('bridge_restore_mode')!r}",
+    )
 
     for key in (
         "resolution",
@@ -233,6 +245,7 @@ def validate_runtime_artifact(
     _require("CGP_RUNTIME_READONLY_PREDECESSOR = True" in source, "predecessor read-only guard missing")
     _require("Runtime predecessor persistence is read-only" in source, "generic predecessor upload guard missing")
     forbidden_pre_fold5_markers = (
+        "# 8B) M07 RUNTIME PRE-FLIGHT",
         "# 10) FINAL M07",
         "# 11) M07 OOF",
         "# 12) ONE-TIME LOCKED TEST",
@@ -248,12 +261,19 @@ def validate_runtime_artifact(
         _require(marker not in source, f"forbidden pre-Fold5 execution cell retained: {marker}")
     if resolution == 320:
         _require(R320_BRIDGE_HANDLE in source, "exact R320 bridge handle missing")
-        _require("def _m07_resolve_exact_bridge_root" in source, "bridge layout resolver missing")
+        _require("def _m07_resolve_exact_bridge_mount" in source, "bridge mount resolver missing")
         _require(
-            "restore_root = _m07_resolve_exact_bridge_root(model_id, resolution, temp)" in source,
-            "phase2 restore is not routed through the bridge layout resolver",
+            "restore_root = _m07_resolve_exact_bridge_mount(model_id, resolution)" in source,
+            "exact R320 restore is not routed through the pre-attached bridge mount",
         )
-        _require("M07_R320_BRIDGE_LAYOUT_RESOLVED" in source, "bridge layout evidence marker missing")
+        _require(
+            "M07_R320_BRIDGE_MOUNT_VERIFIED" in source,
+            "bridge mount evidence marker missing",
+        )
+        _require(
+            "work_root=temp" in source,
+            "bridge restore does not isolate runtime writes from the read-only mount",
+        )
         _require("M07_R320_BRIDGE_EXTRACTED_RESTORE_VERIFIED" in source, "bridge restore evidence marker missing")
         _require(
             "def _resolve_runtime_predecessor_mount" in source,

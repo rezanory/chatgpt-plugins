@@ -38,6 +38,96 @@ def _m07_bridge_receipt_matches_locator(payload):
     )
 
 
+def _m07_resolve_exact_bridge_mount(model_id, resolution, input_root=None):
+    """Resolve the unique pre-attached exact R320 bridge without dynamic attach."""
+    if not _m07_exact_bridge_mode(model_id, resolution):
+        raise ValueError("M07 exact bridge mount resolver invoked outside exact R320 mode.")
+
+    root = Path("/kaggle/input") if input_root is None else Path(input_root)
+    if not root.is_dir():
+        raise RuntimeError("M07_R320_BRIDGE_INPUT_ROOT_MISSING")
+    root = root.resolve()
+
+    candidates = []
+    diagnostics = []
+    for bridge_path in sorted(root.rglob("BRIDGE_RECEIPT.json")):
+        candidate = bridge_path.parent.resolve()
+        try:
+            relative = candidate.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        marker = candidate / "CAMPAIGN_STATE.json"
+        if not marker.is_file():
+            continue
+        try:
+            bridge = json.loads(bridge_path.read_text(encoding="utf-8"))
+            campaign = json.loads(marker.read_text(encoding="utf-8"))
+            contract = campaign.get("run_contract") or {}
+            campaign_ok = (
+                campaign.get("schema") == "phase2.state.v2"
+                and campaign.get("status") == "COMPLETE"
+                and campaign.get("model_id") == "M07"
+                and int(campaign.get("resolution", -1)) == 320
+                and campaign.get("receipt_sha256") == _M07_R320_CAMPAIGN_RECEIPT
+                and contract.get("split_fingerprint") == _M07_R320_SPLIT_FINGERPRINT
+                and ((contract.get("extra") or {}).get("recipe_fingerprint"))
+                == _M07_R320_RECIPE_FINGERPRINT
+                and campaign.get("artifact_sha256") == _M07_R320_ARCHIVE_SHA256
+            )
+            bridge_ok = (
+                _m07_bridge_receipt_matches_locator(bridge)
+                and bridge.get("archive_sha256") == _M07_R320_ARCHIVE_SHA256
+            )
+        except Exception as exc:
+            diagnostics.append({"relative_root": relative, "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        diagnostics.append({
+            "relative_root": relative,
+            "bridge_identity": bool(bridge_ok),
+            "campaign_identity": bool(campaign_ok),
+        })
+        if bridge_ok and campaign_ok:
+            candidates.append(candidate)
+
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        key = candidate.as_posix()
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+
+    if len(unique) != 1:
+        raise ValueError(
+            "M07_R320_BRIDGE_MOUNT_RESOLUTION_FAILED: "
+            + json.dumps(
+                {
+                    "expected_handle": _M07_R320_BRIDGE_HANDLE,
+                    "valid_candidate_count": len(unique),
+                    "valid_candidates": [path.relative_to(root).as_posix() for path in unique],
+                    "diagnostics": diagnostics[:20],
+                },
+                sort_keys=True,
+            )
+        )
+
+    resolved = unique[0]
+    print(
+        "M07_R320_BRIDGE_MOUNT_VERIFIED",
+        json.dumps(
+            {
+                "source_handle": _M07_R320_BRIDGE_HANDLE,
+                "relative_root": resolved.relative_to(root).as_posix(),
+                "dynamic_attach_used": False,
+                "read_only": True,
+                "candidate_count": 1,
+            },
+            sort_keys=True,
+        ),
+    )
+    return resolved
+
+
 def _m07_resolve_exact_bridge_root(model_id, resolution, temp):
     """Resolve Kaggle's variable extracted-dataset layout without weakening lineage.
 
@@ -104,9 +194,13 @@ def _m07_resolve_exact_bridge_root(model_id, resolution, temp):
     return resolved_root
 
 
-def _m07_restore_exact_bridge_extracted(model_id, resolution, temp, payload):
+def _m07_restore_exact_bridge_extracted(
+    model_id, resolution, source_root, payload, work_root=None
+):
     source_handle = str(globals().get("CGP_RUNTIME_SOURCE_STATE_HANDLE") or "")
-    bridge_path = Path(temp) / "BRIDGE_RECEIPT.json"
+    source_root = Path(source_root)
+    work_root = source_root if work_root is None else Path(work_root)
+    bridge_path = source_root / "BRIDGE_RECEIPT.json"
     if not (
         _m07_exact_bridge_mode(model_id, resolution)
         and bridge_path.is_file()
@@ -142,15 +236,15 @@ def _m07_restore_exact_bridge_extracted(model_id, resolution, temp, payload):
     if sorted(fold_receipts) != ["1", "2", "3", "4"]:
         raise ValueError("M07 bridge fold receipt inventory mismatch.")
 
-    staged = Path(temp) / "_validated_output"
+    staged = work_root / "_validated_output"
     staged.mkdir()
-    repacked = Path(temp) / "_bridge_repacked_state"
+    repacked = work_root / "_bridge_repacked_state"
     repacked.mkdir()
     archives = {}
     verified_artifact_count = 0
 
     for fold in range(1, 5):
-        source_fold = Path(temp) / f"FOLD_{fold}_RECOVERY" / "FOLDS" / f"fold_{fold}"
+        source_fold = source_root / f"FOLD_{fold}_RECOVERY" / "FOLDS" / f"fold_{fold}"
         completed_path = source_fold / "COMPLETED.json"
         if not source_fold.is_dir() or not completed_path.is_file():
             raise ValueError(f"M07 bridge extracted fold {fold} is missing.")
