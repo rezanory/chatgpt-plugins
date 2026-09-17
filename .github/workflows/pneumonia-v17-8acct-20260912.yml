@@ -22,6 +22,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  m07-r320-v4-receipt-probe-main-20260917:
+    if: ${{ github.event.issue.number == 60 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'M07_R320_V4_RECEIPT_PROBE_MAIN_20260917' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout canonical main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Request allowlisted GitHub OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $base=$env:ACTIONS_ID_TOKEN_REQUEST_URL
+          $sep=if($base.Contains('?')){'&'}else{'?'}
+          $headers=@{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
+          $resp=Invoke-RestMethod -Uri ($base+$sep+'audience=cgp-control-plane-v3-action') -Headers $headers -Method Get -TimeoutSec 30
+          $token=[string]$resp.value
+          if($token.Length -lt 100){throw 'OIDC unavailable'}
+          Write-Host ('::add-mask::'+$token)
+          Add-Content -Path $env:GITHUB_ENV -Value ('CGP_ACTION_OIDC_TOKEN='+$token)
+
+      - name: Download and validate exact R320 v4 receipt JSONs only
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python scripts/m07_probe_r320_v4_receipts.py
+          if($LASTEXITCODE-ne 0){throw 'exact v4 receipt probe failed'}
+
   launch-m07-stage1-fix1:
     if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914D_M07_STAGE1_ALLOWLISTED_FIX1' }}
     runs-on: [self-hosted, windows, x64, v622]
