@@ -22,6 +22,77 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  m07-r320-source-reader-repair-20260917:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'M07_R320_SOURCE_READER_REPAIR_20260917' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 15
+    steps:
+      - name: Request allowlisted GitHub OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $uri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action"
+          $resp=Invoke-RestMethod -Uri $uri -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$resp.value
+          if($token.Length-lt100){throw 'GitHub OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Grant trickermark READER on exact R320 source without data mutation
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          @'
+          import json, os, urllib.request, urllib.error
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+          oidc=os.environ['CGP_ACTION_OIDC_TOKEN'].strip()
+          owner='rezanory'; slug='m07-gate-r320-state-v1-7'; reader='trickermark'
+          def call(method, body):
+              payload={'request_id':f'm07-r320-reader-repair-{method.lower()}-{os.environ.get("GITHUB_RUN_ID","local")}',
+                       'provider':'kaggle','operation_class':'write','account_id':'kg-03',
+                       'purpose':'Permission-only repair for M07 V1.7 R320 exact source; no data upload, no training, no Locked Test.',
+                       'service':'datasets.DatasetApiService','method':method,'body':body}
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-r320-reader-repair/1.0'})
+              try:
+                  with urllib.request.urlopen(req,timeout=90) as r: env=json.loads(r.read().decode('utf-8','replace') or '{}')
+              except urllib.error.HTTPError as e:
+                  raise RuntimeError(f'{method} HTTP {e.code}: '+e.read(1600).decode('utf-8','replace'))
+              if not isinstance(env,dict) or not env.get('ok'): raise RuntimeError(f'{method} rejected: {json.dumps(env)[:1000]}')
+              result=env.get('result')
+              if not isinstance(result,dict): raise RuntimeError(f'{method} result missing')
+              return result
+          ds=call('GetDataset',{'ownerSlug':owner,'datasetSlug':slug})
+          versions=ds.get('versions') or []
+          v4=next((x for x in versions if isinstance(x,dict) and int(x.get('versionNumber') or 0)==4),None)
+          if not v4 or str(v4.get('status','')).upper()!='READY': raise SystemExit('SOURCE_V4_NOT_READY')
+          if 'completed fold 4' not in str(v4.get('versionNotes','')).lower(): raise SystemExit('SOURCE_V4_NOTE_DRIFT')
+          meta=call('GetDatasetMetadata',{'ownerSlug':owner,'datasetSlug':slug})
+          info=meta.get('info') if isinstance(meta.get('info'),dict) else {}
+          coll=[dict(x) for x in (info.get('collaborators') or []) if isinstance(x,dict) and str(x.get('username','')).strip()]
+          found=False
+          for row in coll:
+              if str(row.get('username','')).strip().lower()==reader:
+                  row['role']=1; found=True
+          if not found: coll.append({'username':reader,'role':1})
+          settings={'title':str(info.get('title') or slug),'description':str(info.get('description') or 'M07 V1.7 R320 sealed state'),'isPrivate':True,'collaborators':coll}
+          if isinstance(info.get('licenses'),list): settings['licenses']=info['licenses']
+          if isinstance(info.get('keywords'),list): settings['keywords']=info['keywords']
+          upd=call('UpdateDatasetMetadata',{'ownerSlug':owner,'datasetSlug':slug,'settings':settings})
+          errs=upd.get('errors') or []
+          if isinstance(errs,list) and any(str(x).strip() for x in errs): raise SystemExit('COLLABORATOR_UPDATE_VALIDATION_ERROR')
+          after=call('GetDatasetMetadata',{'ownerSlug':owner,'datasetSlug':slug})
+          ai=after.get('info') if isinstance(after.get('info'),dict) else {}
+          ac=[x for x in (ai.get('collaborators') or []) if isinstance(x,dict)]
+          ok=any(str(x.get('username','')).strip().lower()==reader and (x.get('role')==1 or str(x.get('role','')).upper()=='READER') for x in ac)
+          if not ok: raise SystemExit('TRICKERMARK_READER_VERIFY_FAILED')
+          print(json.dumps({'status':'PASS','dataset_ref':owner+'/'+slug,'source_version':4,'source_v4_status':'READY','reader':reader,'role':'READER','permission_only':True,'data_version_created':False,'training':False,'locked_test':False},sort_keys=True))
+          '@ | & $python -
+          if($LASTEXITCODE-ne 0){throw 'M07 R320 source reader repair failed'}
+
   launch-m07-stage1-fix1:
     if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914D_M07_STAGE1_ALLOWLISTED_FIX1' }}
     runs-on: [self-hosted, windows, x64, v622]
