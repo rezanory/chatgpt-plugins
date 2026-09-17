@@ -27,7 +27,7 @@ SOURCE_HANDLE = os.environ.get(
     "SOURCE_HANDLE", "rezanory/m07-gate-r320-state-v1-7/versions/4"
 ).strip()
 TARGET_HANDLE = os.environ.get(
-    "TARGET_HANDLE", "rezanory/m07-gate-r320-state-v1-7-immutable-v4"
+    "TARGET_HANDLE", "trickermark/m07-gate-r320-state-v1-7-immutable-v4"
 ).strip()
 RUN_ID = os.environ.get("GITHUB_RUN_ID", "local").strip()
 RUNNER_TEMP = pathlib.Path(os.environ.get("RUNNER_TEMP", pathlib.Path.cwd()))
@@ -64,7 +64,7 @@ def assert_target_absent() -> None:
     """
 
     owner, slug = TARGET_HANDLE.split("/", 1)
-    if owner != "rezanory":
+    if owner != "trickermark":
         fail("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: target owner drift")
 
     auth = _kaggle_authorization_header()
@@ -146,13 +146,13 @@ def assert_target_absent() -> None:
 def main() -> int:
     if SOURCE_HANDLE != "rezanory/m07-gate-r320-state-v1-7/versions/4":
         fail("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: source handle drift")
-    if TARGET_HANDLE != "rezanory/m07-gate-r320-state-v1-7-immutable-v4":
+    if TARGET_HANDLE != "trickermark/m07-gate-r320-state-v1-7-immutable-v4":
         fail("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: target handle drift")
 
     ROOT.mkdir(parents=True, exist_ok=True)
     DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     STAGED.mkdir(parents=True, exist_ok=True)
-    assert_target_absent()
+    probe_only = os.environ.get("PROBE_ONLY", "").strip() == "1"
 
     downloaded = pathlib.Path(
         kagglehub.dataset_download(
@@ -231,26 +231,25 @@ def main() -> int:
         )
     )
 
+    if probe_only:
+        receipt["upload_status"] = "PROBE_SOURCE_VERIFIED_NO_MUTATION"
+        RECEIPT_PATH.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps({"probe_only": True, "source_handle": SOURCE_HANDLE, "target_handle": TARGET_HANDLE, "file_count": len(manifest), "manifest_sha256": manifest_sha}, sort_keys=True))
+        return 0
+
+    assert_target_absent()
     kagglehub.dataset_upload(
         TARGET_HANDLE,
         str(STAGED),
-        version_notes="d260914d immutable clone of rezanory/m07-gate-r320-state-v1-7 Version 4",
+        version_notes="d260914d immutable same-owner clone of rezanory/m07-gate-r320-state-v1-7 Version 4",
     )
     receipt["upload_status"] = "SUBMITTED_FIRST_VERSION"
 
-    # Apply sharing only after the immutable Version 1 upload succeeds.  The
-    # official Kaggle API validates collaborator roles and updates dataset
-    # settings without creating a new data version.
     from kaggle.api.kaggle_api_extended import KaggleApi
 
-    metadata["collaborators"] = [{"username": "trickermark", "role": "reader"}]
-    (STAGED / "dataset-metadata.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
     api = KaggleApi()
     api.authenticate()
-    api.dataset_metadata_update(TARGET_HANDLE, str(STAGED))
-    receipt["collaborator_status"] = "trickermark:reader"
+    receipt["owner_status"] = "trickermark"
 
     deadline = time.time() + 300
     status_payload: dict[str, Any] = {}
@@ -285,7 +284,7 @@ def main() -> int:
             {
                 "target_handle": TARGET_HANDLE,
                 "upload_status": receipt["upload_status"],
-                "collaborator_status": receipt["collaborator_status"],
+                "owner_status": receipt["owner_status"],
                 "target_status": receipt["target_status"],
                 "target_version": receipt["target_version"],
                 "manifest_sha256": manifest_sha,

@@ -155,14 +155,14 @@ jobs:
           # the verified source Version 4 and which grants trickermark read-only access.  Keep the original A04-A06 handles in the
           # contract for immutable historical evidence; they are never relaunched.
           RUNTIME_SOURCE_STATE_HANDLE = (
-              "rezanory/m07-gate-r320-state-v1-7-immutable-v4/versions/1"
+              "trickermark/m07-gate-r320-state-v1-7-immutable-v4/versions/1"
               if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A07"
               else "rezanory/m07-gate-r320-state-v1-7/versions/4"
               if RUNTIME_TOKEN in IMMUTABLE_R320_RECOVERY_TOKENS
               else None
           )
           RUNTIME_SOURCE_STATE_ATTACHMENT = (
-              "rezanory/m07-gate-r320-state-v1-7-immutable-v4"
+              "trickermark/m07-gate-r320-state-v1-7-immutable-v4"
               if RUNTIME_TOKEN == "M07_RUNTIME_M07_R320_A07"
               else "rezanory/m07-gate-r320-state-v1-7/4"
               if RUNTIME_TOKEN in IMMUTABLE_R320_RECOVERY_TOKENS
@@ -1395,19 +1395,43 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  grant-m07-r320-source-reader:
+    name: Grant trickermark read-only access to exact M07 R320 source
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_GRANT_R320_SOURCE_READER' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 15
+    environment: kaggle-03
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - name: Checkout exact fix-forward source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Grant and verify reader without creating a data version
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python scripts/m07_grant_r320_source_reader.py
+
   freeze-m07-r320-source-v4:
     name: Freeze exact M07 R320 source Version 4
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
-          github.event.inputs.recovery == 'M07_FREEZE_R320_SOURCE_V4' }}
+          (github.event.inputs.recovery == 'M07_FREEZE_R320_SOURCE_V4' ||
+           github.event.inputs.recovery == 'M07_PROBE_R320_SOURCE_V4_DOWNLOAD') }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 45
-    environment: kaggle-03
+    environment: kaggle-05
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-      KAGGLE_USERNAME: rezanory
+      KAGGLE_USERNAME: trickermark
       SOURCE_HANDLE: rezanory/m07-gate-r320-state-v1-7/versions/4
-      TARGET_HANDLE: rezanory/m07-gate-r320-state-v1-7-immutable-v4
+      TARGET_HANDLE: trickermark/m07-gate-r320-state-v1-7-immutable-v4
+      PROBE_ONLY: ${{ github.event.inputs.recovery == 'M07_PROBE_R320_SOURCE_V4_DOWNLOAD' && '1' || '0' }}
     steps:
       - name: Checkout exact fix-forward source
         uses: actions/checkout@v4
