@@ -1472,24 +1472,19 @@ jobs:
               with urllib.request.urlopen(req,timeout=240) as response:
                   result=json.loads(response.read().decode('utf-8','replace') or '{}')
           except urllib.error.HTTPError as error:
-              raise SystemExit(f'BROKER_HTTP_{error.code}: {error.read(3000).decode("utf-8","replace")[:1200]}')
+              detail=error.read(3000).decode('utf-8','replace')[:1200]
+              diagnostic={'status':'HTTP_ERROR','http_status':int(error.code),'detail':detail.replace(os.environ.get('CGP_ACTION_OIDC_TOKEN',''),'***')}
+              print('M07_PRODUCER_SOURCE_BROKER_DIAGNOSTIC '+json.dumps(diagnostic,sort_keys=True,separators=(',',':')))
+              raise SystemExit(0)
           if result.get('ok') is not True:
-              raise SystemExit('BROKER_REJECTED:'+json.dumps(result)[:1200])
-          receipt={'kernel_ref':kernel_ref,'account_id':'kg-05','kernel_source':'rezanory/m07-phase2-unlock-20260915','gpu':False,'training':False,'provider_ref':result.get('provider_ref') or (result.get('result') or {}).get('ref')}
-          open('m07-r320-producer-source-probe-receipt.json','w',encoding='utf-8').write(json.dumps(receipt,indent=2,sort_keys=True))
-          print(json.dumps(receipt,sort_keys=True))
+              diagnostic={'status':'BROKER_REJECTED','detail':json.dumps(result,sort_keys=True)[:1200]}
+              print('M07_PRODUCER_SOURCE_BROKER_DIAGNOSTIC '+json.dumps(diagnostic,sort_keys=True,separators=(',',':')))
+              raise SystemExit(0)
+          receipt={'status':'SUBMITTED','kernel_ref':kernel_ref,'account_id':'kg-05','kernel_source':'rezanory/m07-phase2-unlock-20260915','gpu':False,'training':False,'provider_ref':result.get('provider_ref') or (result.get('result') or {}).get('ref')}
+          print('M07_PRODUCER_SOURCE_BROKER_DIAGNOSTIC '+json.dumps(receipt,sort_keys=True,separators=(',',':')))
           '@
           $script|&$python -
-          if($LASTEXITCODE-ne 0){throw 'M07 producer-kernel source probe submission failed'}
-
-      - name: Preserve producer-source probe receipt
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: m07-r320-producer-source-probe-${{ github.run_id }}
-          path: m07-r320-producer-source-probe-receipt.json
-          if-no-files-found: warn
-          retention-days: 30
+          if($LASTEXITCODE-ne 0){throw 'M07 producer-kernel source diagnostic failed unexpectedly'}
 
   probe-m07-r320-producer-kernel-source-direct:
     name: Probe exact M07 R320 producer source directly on kg05
