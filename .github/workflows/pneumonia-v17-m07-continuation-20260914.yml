@@ -1197,8 +1197,38 @@ jobs:
           $script=@'
           import hashlib, json
           from pathlib import Path
-          root=Path('/kaggle/input/m07-r320-producer-v4-bridge-e3884dd1')
-          assert root.is_dir(), 'M07_BRIDGE_MOUNT_ROOT_MISSING'
+          base=Path('/kaggle/input')
+          candidates=[
+              base/'m07-r320-producer-v4-bridge-e3884dd1',
+              base/'datasets'/'trickermark'/'m07-r320-producer-v4-bridge-e3884dd1',
+          ]
+          root=next((p for p in candidates if (p/'BRIDGE_RECEIPT.json').is_file() and (p/'CAMPAIGN_STATE.json').is_file()),None)
+          if root is None:
+              matches=[]
+              for receipt_path in base.rglob('BRIDGE_RECEIPT.json'):
+                  candidate=receipt_path.parent
+                  marker_path=candidate/'CAMPAIGN_STATE.json'
+                  if not marker_path.is_file():
+                      continue
+                  try:
+                      receipt_probe=json.loads(receipt_path.read_text(encoding='utf-8'))
+                      campaign_probe=json.loads(marker_path.read_text(encoding='utf-8'))
+                  except Exception:
+                      continue
+                  if (receipt_probe.get('schema')=='m07.r320.producer.bridge.v2'
+                          and receipt_probe.get('status')=='COMPLETE'
+                          and receipt_probe.get('target_dataset')=='trickermark/m07-r320-producer-v4-bridge-e3884dd1'
+                          and campaign_probe.get('receipt_sha256')=='e3884dd10e323d2f0925660599a420964781111d850664e8c88a830324460c77'):
+                      matches.append(candidate)
+              unique=[]
+              seen=set()
+              for candidate in matches:
+                  key=candidate.resolve().as_posix()
+                  if key not in seen:
+                      seen.add(key); unique.append(candidate)
+              assert len(unique)==1, 'M07_BRIDGE_MOUNT_ROOT_DISCOVERY_MISMATCH:'+str([p.as_posix() for p in unique])
+              root=unique[0]
+          print('M07_BRIDGE_MOUNT_ROOT '+root.as_posix())
           marker=root/'CAMPAIGN_STATE.json'
           bridge=root/'BRIDGE_RECEIPT.json'
           assert marker.is_file(), 'M07_BRIDGE_CAMPAIGN_STATE_MISSING'
