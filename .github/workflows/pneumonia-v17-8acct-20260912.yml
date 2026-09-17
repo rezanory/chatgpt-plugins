@@ -22,49 +22,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  m07-control-plane-dataset-redirect-deploy-20260917:
-    if: ${{ github.event.issue.number == 60 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'M07_CONTROL_PLANE_DATASET_REDIRECT_DEPLOY_20260917' }}
-    runs-on: [self-hosted, windows, x64, v622]
-    environment: cloudflare-production
-    timeout-minutes: 30
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-    steps:
-      - name: Checkout canonical main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Validate and deploy dataset redirect bridge
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $env:CLOUDFLARE_ACCOUNT_ID=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
-          if(-not $env:CLOUDFLARE_ACCOUNT_ID -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials unavailable'}
-          Push-Location deploy/cloudflare-worker-free
-          try {
-            npm install --no-audit --no-fund
-            if($LASTEXITCODE-ne 0){throw 'npm install failed'}
-            npm run check
-            if($LASTEXITCODE-ne 0){throw 'typecheck failed'}
-            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway --dry-run
-            if($LASTEXITCODE-ne 0){throw 'dry-run failed'}
-            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway
-            if($LASTEXITCODE-ne 0){throw 'deploy failed'}
-          } finally { Pop-Location }
-
-      - name: Verify canonical control plane health
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
-          $h=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
-          $v=Invoke-RestMethod -Uri "$base/control-plane/v3/healthz" -Method Get -TimeoutSec 30
-          if($h.service-ne 'chatgpt-kaggle-gateway' -or $h.status-ne 'ready'){throw 'canonical health failed'}
-          if($v.status-ne 'ready' -or $v.github_oidc_action_broker-ne $true){throw 'v3 action broker health failed'}
-          Write-Host 'M07_DATASET_REDIRECT_BRIDGE_DEPLOYED'
-
   launch-m07-stage1-fix1:
     if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'PNEUMONIA_V17_D260914D_M07_STAGE1_ALLOWLISTED_FIX1' }}
     runs-on: [self-hosted, windows, x64, v622]
