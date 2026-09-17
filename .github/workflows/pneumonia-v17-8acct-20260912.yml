@@ -22,6 +22,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  m07-dataset-json-read-deploy-20260917:
+    if: ${{ github.event.issue.number == 60 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'M07_DATASET_JSON_READ_DEPLOY_20260917' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    environment: cloudflare-production
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout canonical main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Deploy bounded dataset JSON read bridge
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CLOUDFLARE_ACCOUNT_ID=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if(-not $env:CLOUDFLARE_ACCOUNT_ID -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials unavailable'}
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            if(-not (Test-Path 'node_modules/.bin/wrangler.cmd')) {
+              npm install --no-audit --no-fund
+              if($LASTEXITCODE-ne 0){throw 'npm install failed'}
+            }
+            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway --dry-run
+            if($LASTEXITCODE-ne 0){throw 'target bundle dry-run failed'}
+            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway
+            if($LASTEXITCODE-ne 0){throw 'target deploy failed'}
+          } finally { Pop-Location }
+          Write-Host 'M07_DATASET_JSON_READ_DEPLOYED'
+
   m07-r320-v4-receipt-probe-main-20260917:
     if: ${{ github.event.issue.number == 60 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'M07_R320_V4_RECEIPT_PROBE_MAIN_20260917' }}
     runs-on: [self-hosted, windows, x64, v622]
