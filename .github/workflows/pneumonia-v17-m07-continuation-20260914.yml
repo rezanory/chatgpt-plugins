@@ -971,7 +971,7 @@ jobs:
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           $script=@'
-          import json, os, pathlib, sys, urllib.error, urllib.request
+          import json, os, pathlib, sys, time, urllib.error, urllib.parse, urllib.request
           sys.path.insert(0, str(pathlib.Path('scripts').resolve()))
           from m07_runtime_contract import (
               assess_runtime_inventory, expected_runtime_contract,
@@ -983,22 +983,53 @@ jobs:
           owner=expected['owner']
           resolution=int(expected['resolution'])
           endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
-          oidc=os.environ.get('CGP_READ_OIDC_TOKEN','').strip()
-          if len(oidc)<100:
+          oidc_state={
+              'token': os.environ.get('CGP_READ_OIDC_TOKEN','').strip(),
+              'issued_monotonic': time.monotonic(),
+          }
+          if len(oidc_state['token'])<100:
               raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: read OIDC unavailable')
 
-          def read(payload):
+          def refresh_oidc():
+              request_url=os.environ.get('ACTIONS_ID_TOKEN_REQUEST_URL','').strip()
+              request_token=os.environ.get('ACTIONS_ID_TOKEN_REQUEST_TOKEN','').strip()
+              if not request_url or len(request_token)<20:
+                  raise RuntimeError('Runtime admission OIDC refresh context unavailable')
+              sep='&' if '?' in request_url else '?'
+              target=request_url+sep+'audience='+urllib.parse.quote('cgp-control-plane-v3',safe='')
               req=urllib.request.Request(
-                  endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
-                  headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json',
-                           'Accept':'application/json','User-Agent':'m07-runtime-admission/1.0'},
+                  target,headers={'Authorization':'Bearer '+request_token,'Accept':'application/json'},
               )
-              try:
+              with urllib.request.urlopen(req,timeout=30) as response:
+                  payload=json.loads(response.read().decode('utf-8','replace') or '{}')
+              token=str(payload.get('value') or '').strip()
+              if len(token)<100:
+                  raise RuntimeError('Runtime admission OIDC refresh returned no token')
+              oidc_state['token']=token
+              oidc_state['issued_monotonic']=time.monotonic()
+              return token
+
+          def read(payload):
+              if time.monotonic()-float(oidc_state['issued_monotonic'])>=120:
+                  refresh_oidc()
+
+              def broker_request(token):
+                  req=urllib.request.Request(
+                      endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
+                      headers={'Authorization':'Bearer '+token,'Content-Type':'application/json',
+                               'Accept':'application/json','User-Agent':'m07-runtime-admission/1.1'},
+                  )
                   with urllib.request.urlopen(req,timeout=90) as response:
-                      value=json.loads(response.read().decode('utf-8','replace') or '{}')
+                      return json.loads(response.read().decode('utf-8','replace') or '{}')
+
+              try:
+                  value=broker_request(oidc_state['token'])
               except urllib.error.HTTPError as exc:
                   detail=exc.read(4000).decode('utf-8','replace')
-                  raise RuntimeError(f'Runtime admission read HTTP {exc.code}: {detail[:1600]}') from exc
+                  if exc.code==403 and 'GitHub OIDC JWT expired' in detail:
+                      value=broker_request(refresh_oidc())
+                  else:
+                      raise RuntimeError(f'Runtime admission read HTTP {exc.code}: {detail[:1600]}') from exc
               if value.get('ok') is not True or value.get('read_only') is not True:
                   raise RuntimeError('Runtime admission read broker did not return ok/read_only')
               result=value.get('result')
@@ -1037,6 +1068,19 @@ jobs:
           '@
           $script | & $python -
           if($LASTEXITCODE-ne 0){throw 'M07 immutable runtime admission preflight failed'}
+
+      - name: Refresh trusted action OIDC identity after runtime admission
+        if: ${{ github.ref == 'refs/heads/main' && startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$oidc.value
+          if($token.Length-lt100){throw 'GitHub action OIDC refresh unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
       - name: Submit M07 continuation or approved Phase-2 kernel
         if: ${{ github.ref == 'refs/heads/main' }}
@@ -1191,22 +1235,53 @@ jobs:
               raise SystemExit('BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: runtime owner drift')
 
           endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
-          oidc=os.environ.get('CGP_READ_OIDC_TOKEN','').strip()
-          if len(oidc)<100:
+          oidc_state={
+              'token': os.environ.get('CGP_READ_OIDC_TOKEN','').strip(),
+              'issued_monotonic': time.monotonic(),
+          }
+          if len(oidc_state['token'])<100:
               raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: read OIDC unavailable')
 
-          def read(payload,timeout=90):
+          def refresh_oidc():
+              request_url=os.environ.get('ACTIONS_ID_TOKEN_REQUEST_URL','').strip()
+              request_token=os.environ.get('ACTIONS_ID_TOKEN_REQUEST_TOKEN','').strip()
+              if not request_url or len(request_token)<20:
+                  raise RuntimeError('Runtime terminal OIDC refresh context unavailable')
+              sep='&' if '?' in request_url else '?'
+              target=request_url+sep+'audience='+urllib.parse.quote('cgp-control-plane-v3',safe='')
               req=urllib.request.Request(
-                  endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
-                  headers={'Authorization':'Bearer '+oidc,'Content-Type':'application/json',
-                           'Accept':'application/json','User-Agent':'m07-runtime-terminal/2.0'},
+                  target,headers={'Authorization':'Bearer '+request_token,'Accept':'application/json'},
               )
-              try:
+              with urllib.request.urlopen(req,timeout=30) as response:
+                  payload=json.loads(response.read().decode('utf-8','replace') or '{}')
+              token=str(payload.get('value') or '').strip()
+              if len(token)<100:
+                  raise RuntimeError('Runtime terminal OIDC refresh returned no token')
+              oidc_state['token']=token
+              oidc_state['issued_monotonic']=time.monotonic()
+              return token
+
+          def read(payload,timeout=90):
+              if time.monotonic()-float(oidc_state['issued_monotonic'])>=120:
+                  refresh_oidc()
+
+              def broker_request(token):
+                  req=urllib.request.Request(
+                      endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
+                      headers={'Authorization':'Bearer '+token,'Content-Type':'application/json',
+                               'Accept':'application/json','User-Agent':'m07-runtime-terminal/2.1'},
+                  )
                   with urllib.request.urlopen(req,timeout=timeout) as response:
-                      value=json.loads(response.read().decode('utf-8','replace') or '{}')
+                      return json.loads(response.read().decode('utf-8','replace') or '{}')
+
+              try:
+                  value=broker_request(oidc_state['token'])
               except urllib.error.HTTPError as exc:
                   detail=exc.read(4000).decode('utf-8','replace')
-                  raise RuntimeError(f'Runtime terminal read HTTP {exc.code}: {detail[:1600]}') from exc
+                  if exc.code==403 and 'GitHub OIDC JWT expired' in detail:
+                      value=broker_request(refresh_oidc())
+                  else:
+                      raise RuntimeError(f'Runtime terminal read HTTP {exc.code}: {detail[:1600]}') from exc
               if value.get('ok') is not True or value.get('read_only') is not True:
                   raise RuntimeError('Runtime terminal read broker did not return ok/read_only')
               result=value.get('result')
