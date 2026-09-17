@@ -1395,6 +1395,39 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  probe-m07-r320-source-v4-broker-download:
+    name: Probe exact M07 R320 v4 through trusted kg05 broker
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_PROBE_R320_SOURCE_V4_BROKER_DOWNLOAD' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact fix-forward source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Request trusted action OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $base=$env:ACTIONS_ID_TOKEN_REQUEST_URL
+          $sep=if($base.Contains('?')){'&'}else{'?'}
+          $headers=@{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
+          $resp=Invoke-RestMethod -Uri ($base+$sep+'audience=cgp-control-plane-v3-action') -Headers $headers -Method Get -TimeoutSec 30
+          $token=[string]$resp.value
+          if($token.Length -lt 100){throw 'OIDC unavailable'}
+          Write-Host ('::add-mask::'+$token)
+          Add-Content -Path $env:GITHUB_ENV -Value ('CGP_ACTION_OIDC_TOKEN='+$token)
+
+      - name: Download and validate sealed R320 receipt JSONs only
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python scripts/m07_probe_r320_v4_receipts.py
+          if($LASTEXITCODE-ne 0){throw 'exact v4 receipt probe failed'}
+
   grant-m07-r320-source-reader:
     name: Grant trickermark read-only access to exact M07 R320 source
     if: >-
