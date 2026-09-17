@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 
 ENDPOINT = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
+ACCOUNT_ID = "kg-03"
 OWNER = "rezanory"
 DATASET_SLUG = "m07-gate-r320-state-v1-7"
 VERSION = 4
@@ -37,10 +38,10 @@ def _broker_url(file_name: str) -> str:
         "request_id": request_id,
         "provider": "kaggle",
         "operation_class": "privileged",
-        "account_id": "kg-05",
+        "account_id": ACCOUNT_ID,
         "purpose": (
-            "Read-only exact V1.7 R320 Version 4 receipt/hash reconciliation; "
-            "no upload, no training, no Locked Test."
+            "Read-only exact V1.7 R320 Version 4 receipt/hash reconciliation from the "
+            "canonical kg-03/rezanory persistence owner; no upload, no training, no Locked Test."
         ),
         "service": "datasets.DatasetApiService",
         "method": "DownloadDataset",
@@ -60,7 +61,7 @@ def _broker_url(file_name: str) -> str:
             "Authorization": f"Bearer {oidc}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "m07-r320-v4-receipt-probe/1.0",
+            "User-Agent": "m07-r320-v4-receipt-probe/1.1",
         },
     )
     try:
@@ -102,7 +103,7 @@ def main() -> int:
     for file_name in FILES:
         url = _broker_url(file_name)
         print(f"::add-mask::{url}")
-        req = urllib.request.Request(url, headers={"User-Agent": "m07-r320-v4-receipt-probe/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "m07-r320-v4-receipt-probe/1.1"})
         with urllib.request.urlopen(req, timeout=120) as response:
             data = response.read(2_000_000)
         if len(data) >= 2_000_000:
@@ -128,6 +129,7 @@ def main() -> int:
         "M07_R320_V4_RECEIPT_PROBE="
         + json.dumps(
             {
+                "account_id": ACCOUNT_ID,
                 "source": f"{OWNER}/{DATASET_SLUG}/versions/{VERSION}",
                 "files": summary,
                 "upload": False,
