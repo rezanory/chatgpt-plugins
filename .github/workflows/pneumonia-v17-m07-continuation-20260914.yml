@@ -1491,6 +1491,91 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  probe-m07-r320-producer-kernel-source-direct:
+    name: Probe exact M07 R320 producer source directly on kg05
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_PROBE_R320_PRODUCER_KERNEL_SOURCE_DIRECT' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 20
+    environment: kaggle-05
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: trickermark
+    steps:
+      - name: Submit isolated CPU producer-source probe directly
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import base64, json, os, urllib.request, urllib.error
+          token=os.environ.get('KAGGLE_API_TOKEN','').strip()
+          owner=os.environ.get('KAGGLE_USERNAME','trickermark').strip() or 'trickermark'
+          if not token: raise SystemExit('KAGGLE_API_TOKEN_MISSING')
+          auth=('Bearer '+token) if token.startswith('KGAT_') else ('Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
+          run_id=os.environ['GITHUB_RUN_ID']
+          slug=f'm07-r320-producer-source-direct-probe-{run_id}'
+          kernel_ref=f'{owner}/{slug}'
+          source='\n'.join([
+              'from pathlib import Path',
+              'import hashlib, json',
+              "root=Path('/kaggle/input/notebooks/rezanory/m07-phase2-unlock-20260915')",
+              "assert root.is_dir(), 'M07_PRODUCER_KERNEL_ROOT_MISSING'",
+              "state=root/'M07_GATE_MULTIRES_V17/STATE/R320'",
+              "runs=root/'M07_GATE_MULTIRES_V17/RUNS/R320/FOLDS'",
+              "marker=state/'CAMPAIGN_STATE.json'",
+              "fold4=runs/'fold_4/COMPLETED.json'",
+              "fold5=runs/'fold_5/COMPLETED.json'",
+              "assert marker.is_file(), 'M07_PRODUCER_CAMPAIGN_STATE_MISSING'",
+              "assert fold4.is_file(), 'M07_PRODUCER_FOLD4_RECEIPT_MISSING'",
+              "assert not fold5.is_file(), 'M07_PRODUCER_FOLD5_MUST_NOT_BE_SEALED'",
+              "campaign=json.loads(marker.read_text(encoding='utf-8'))",
+              "receipt=json.loads(fold4.read_text(encoding='utf-8'))",
+              "assert campaign.get('schema')=='phase2.state.v2' and campaign.get('status')=='COMPLETE'",
+              "assert campaign.get('model_id')=='M07' and int(campaign.get('resolution'))==320",
+              "assert campaign.get('receipt_sha256')=='e3884dd10e323d2f0925660599a420964781111d850664e8c88a830324460c77'",
+              "assert receipt.get('schema')=='pneumonia.phase2.fold.v1.7' and receipt.get('status')=='COMPLETED'",
+              "assert int(receipt.get('fold_id'))==4 and int(receipt.get('resolution'))==320",
+              "assert receipt.get('confirmed_m07_recipe_fingerprint')=='02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b'",
+              "assert receipt.get('split_fingerprint')=='896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9'",
+              "assert receipt.get('locked_test_used_for_training') is False",
+              "assert receipt.get('external_used_for_training') is False",
+              "expected=campaign.get('artifact_sha256') or {}",
+              "required=[f'FOLD_{i}_RECOVERY.zip' for i in range(1,5)]",
+              "assert set(expected)==set(required), 'M07_PRODUCER_ARCHIVE_INVENTORY_MISMATCH'",
+              "observed={}",
+              "for name in required:",
+              "    p=state/name",
+              "    assert p.is_file(), 'M07_PRODUCER_ARCHIVE_MISSING:'+name",
+              "    h=hashlib.sha256()",
+              "    with p.open('rb') as fh:",
+              "        for chunk in iter(lambda: fh.read(8*1024*1024), b''): h.update(chunk)",
+              "    observed[name]=h.hexdigest()",
+              "    assert observed[name]==expected[name], 'M07_PRODUCER_ARCHIVE_SHA_MISMATCH:'+name",
+              "print('M07_PRODUCER_SOURCE_PROBE '+json.dumps({'status':'PASS','campaign_receipt_sha256':campaign['receipt_sha256'],'fold4_receipt_sha256':receipt.get('receipt_sha256'),'archives':observed,'fold5_sealed':False},sort_keys=True,separators=(',',':')))",
+          ])
+          payload={'slug':kernel_ref,'newTitle':f'M07 R320 Producer Direct Probe {run_id}','text':source,'language':'python','kernelType':'script','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':False,'enableTpu':False,'enableInternet':False,'kernelDataSources':['rezanory/m07-phase2-unlock-20260915'],'datasetDataSources':[],'competitionDataSources':[],'modelDataSources':[]}
+          req=urllib.request.Request('https://api.kaggle.com/v1/kernels.KernelsApiService/SaveKernel',data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':auth,'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-r320-producer-source-direct-probe/1.0'})
+          try:
+              with urllib.request.urlopen(req,timeout=180) as response:
+                  result=json.loads(response.read().decode('utf-8','replace') or '{}')
+          except urllib.error.HTTPError as error:
+              detail=error.read(3000).decode('utf-8','replace')[:1200]
+              raise SystemExit(f'KAGGLE_SAVE_HTTP_{error.code}: {detail}')
+          code=result.get('code') if isinstance(result,dict) else None
+          if isinstance(code,(int,float)) and code>=400: raise SystemExit('KAGGLE_SAVE_REJECTED:'+str(result.get('message',result))[:1200])
+          bad_d=result.get('invalidDatasetSources') if isinstance(result.get('invalidDatasetSources'),list) else []
+          bad_k=result.get('invalidKernelSources') if isinstance(result.get('invalidKernelSources'),list) else []
+          if bad_d or bad_k: raise SystemExit('KAGGLE_SAVE_REJECTED_SOURCES:'+json.dumps({'datasets':bad_d,'kernels':bad_k},sort_keys=True))
+          receipt={'kernel_ref':kernel_ref,'account_id':'kg-05','kernel_source':'rezanory/m07-phase2-unlock-20260915','gpu':False,'training':False,'save_result':{k:result.get(k) for k in ('ref','url','versionNumber') if k in result}}
+          open('m07-r320-producer-source-direct-probe-receipt.json','w',encoding='utf-8').write(json.dumps(receipt,indent=2,sort_keys=True))
+          print(json.dumps(receipt,sort_keys=True))
+          '@
+          $script|&$python -
+          if($LASTEXITCODE-ne 0){throw 'M07 producer direct source probe submission failed'}
+
   probe-m07-r320-source-v4-broker-download:
     name: Probe exact M07 R320 v4 through trusted kg05 broker
     if: >-
