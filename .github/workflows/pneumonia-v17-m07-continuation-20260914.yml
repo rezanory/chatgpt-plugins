@@ -480,6 +480,9 @@ jobs:
                   "        kagglehub.dataset_download(",
                   "            restore_handle, output_dir=str(temp), force_download=True",
                   "        )",
+                  "        temp = _m07_resolve_exact_bridge_download_root(",
+                  "            model_id, resolution, temp, restore_handle",
+                  "        )",
               ])
               restore_download_hits = 0
               for cell in notebook["cells"]:
