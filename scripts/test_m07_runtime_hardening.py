@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,7 @@ import m07_runtime_contract as contract
 
 
 FRAGMENT = Path(__file__).with_name("m07_r320_bridge_extracted_compat.pyfrag")
+PERSIST_FRAGMENT = Path(__file__).with_name("m07_persistence_expanded_compat.pyfrag")
 
 
 def _load_fragment_namespace() -> dict:
@@ -18,6 +21,21 @@ def _load_fragment_namespace() -> dict:
         "CGP_RUNTIME_SOURCE_STATE_HANDLE": contract.R320_BRIDGE_HANDLE,
     }
     exec(compile(FRAGMENT.read_text(encoding="utf-8"), str(FRAGMENT), "exec"), namespace)
+    return namespace
+
+
+def _load_persistence_fragment_namespace() -> dict:
+    namespace = {
+        "Path": Path,
+        "json": json,
+        "PERSIST_DATASET_HANDLE": contract.PERSISTENCE_HANDLE,
+        "PERSIST_MANIFEST_NAME": "PERSISTENCE_MANIFEST_V1_4.json",
+        "CGP_RUNTIME_READONLY_PREDECESSOR": True,
+    }
+    exec(
+        compile(PERSIST_FRAGMENT.read_text(encoding="utf-8"), str(PERSIST_FRAGMENT), "exec"),
+        namespace,
+    )
     return namespace
 
 
@@ -105,6 +123,9 @@ def _runtime_notebook(attempt: int) -> dict:
             "restore_root = _m07_resolve_exact_bridge_root(model_id, resolution, temp)",
             "M07_R320_BRIDGE_LAYOUT_RESOLVED",
             "M07_R320_BRIDGE_EXTRACTED_RESTORE_VERIFIED",
+            "def _resolve_runtime_predecessor_mount(input_root=None): pass",
+            "downloaded_root = _resolve_runtime_predecessor_mount()",
+            "M07_RUNTIME_PREDECESSOR_MOUNT_VERIFIED",
         ]
     )
     return {
@@ -296,3 +317,136 @@ def test_runtime_inventory_blocks_stale_attempt_when_newer_exists() -> None:
             kernels=[_kernel(a10)],
             statuses={a10: {"status": "ERROR"}},
         )
+
+
+def _write_predecessor_mount(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "PERSISTENCE_MANIFEST_V1_4.json").write_text("{}", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        Path("m07-final-5fold-fix2-d260914d"),
+        Path("datasets") / "rezanory" / "m07-final-5fold-fix2-d260914d" / "expanded",
+    ],
+)
+def test_runtime_predecessor_mount_resolver_accepts_direct_and_nested_layout(
+    tmp_path: Path, relative: Path
+) -> None:
+    namespace = _load_persistence_fragment_namespace()
+    candidate = tmp_path / relative
+    _write_predecessor_mount(candidate)
+    validated = []
+    namespace["_verify_persistence_snapshot_compat"] = lambda root: validated.append(Path(root))
+    resolved = namespace["_resolve_runtime_predecessor_mount"](tmp_path)
+    assert resolved == candidate.resolve()
+    assert validated == [candidate.resolve()]
+
+
+def test_runtime_predecessor_mount_resolver_rejects_ambiguous_valid_roots(tmp_path: Path) -> None:
+    namespace = _load_persistence_fragment_namespace()
+    a = tmp_path / "a" / "m07-final-5fold-fix2-d260914d"
+    b = tmp_path / "b" / "m07-final-5fold-fix2-d260914d"
+    _write_predecessor_mount(a)
+    _write_predecessor_mount(b)
+    namespace["_verify_persistence_snapshot_compat"] = lambda root: None
+    with pytest.raises(RuntimeError, match="valid_candidate_count.*2"):
+        namespace["_resolve_runtime_predecessor_mount"](tmp_path)
+
+
+def test_runtime_predecessor_mount_resolver_rejects_missing_or_corrupt_root(tmp_path: Path) -> None:
+    namespace = _load_persistence_fragment_namespace()
+    candidate = tmp_path / "m07-final-5fold-fix2-d260914d"
+    _write_predecessor_mount(candidate)
+
+    def reject(_root):
+        raise ValueError("sealed manifest mismatch")
+
+    namespace["_verify_persistence_snapshot_compat"] = reject
+    with pytest.raises(RuntimeError, match="valid_candidate_count.*0"):
+        namespace["_resolve_runtime_predecessor_mount"](tmp_path)
+
+
+def test_runtime_predecessor_mount_resolver_rejects_handle_drift(tmp_path: Path) -> None:
+    namespace = _load_persistence_fragment_namespace()
+    namespace["PERSIST_DATASET_HANDLE"] = "trickermark/m07-final-5fold-fix2-d260914d"
+    with pytest.raises(ValueError, match="RUNTIME_PREDECESSOR_HANDLE_DRIFT"):
+        namespace["_resolve_runtime_predecessor_mount"](tmp_path)
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_runtime_predecessor_restore_never_calls_dynamic_dataset_download(tmp_path: Path) -> None:
+    namespace = _load_persistence_fragment_namespace()
+    snapshot = tmp_path / "input" / "m07-final-5fold-fix2-d260914d"
+    _write_predecessor_mount(snapshot)
+    work = tmp_path / "work"
+    persist = tmp_path / "persist"
+    light = persist / "LIGHT_STATE"
+    work.mkdir()
+    persist.mkdir()
+
+    class NeverDownload:
+        @staticmethod
+        def dataset_download(*_args, **_kwargs):
+            raise AssertionError("runtime predecessor must not dynamically attach/download")
+
+    namespace.update(
+        {
+            "WORK": work,
+            "PERSIST_ROOT": persist,
+            "LIGHT_ROOT": light,
+            "PERSIST_RESTORE_VERIFIED": False,
+            "kagglehub": NeverDownload(),
+            "shutil": shutil,
+            "run_file_sha256": _sha256,
+            "_resolve_runtime_predecessor_mount": lambda: snapshot.resolve(),
+        }
+    )
+    summary = namespace["_try_restore_persisted_state_compat"]()
+    assert summary == {
+        "folds": 0,
+        "light_state": 0,
+        "restore_status": "VERIFIED_PREATTACHED_READONLY_MOUNT",
+    }
+    assert namespace["PERSIST_RESTORE_VERIFIED"] is True
+    assert (persist / "PERSISTENCE_MANIFEST_V1_4.json").is_file()
+
+
+def test_nonruntime_predecessor_restore_retains_dataset_download_path(tmp_path: Path) -> None:
+    namespace = _load_persistence_fragment_namespace()
+    snapshot = tmp_path / "downloaded"
+    _write_predecessor_mount(snapshot)
+    work = tmp_path / "work"
+    persist = tmp_path / "persist"
+    light = persist / "LIGHT_STATE"
+    work.mkdir()
+    persist.mkdir()
+    calls = []
+
+    class FakeKagglehub:
+        @staticmethod
+        def dataset_download(*args, **kwargs):
+            calls.append((args, kwargs))
+            return str(snapshot)
+
+    namespace.update(
+        {
+            "CGP_RUNTIME_READONLY_PREDECESSOR": False,
+            "WORK": work,
+            "PERSIST_ROOT": persist,
+            "LIGHT_ROOT": light,
+            "PERSIST_RESTORE_VERIFIED": False,
+            "kagglehub": FakeKagglehub(),
+            "shutil": shutil,
+            "run_file_sha256": _sha256,
+            "_verify_persistence_snapshot_compat": lambda root: None,
+        }
+    )
+    summary = namespace["_try_restore_persisted_state_compat"]()
+    assert len(calls) == 1
+    assert calls[0][0][0] == contract.PERSISTENCE_HANDLE
+    assert summary["restore_status"] == "VERIFIED_EXPANDED_LAYOUT"

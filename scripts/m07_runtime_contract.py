@@ -255,6 +255,18 @@ def validate_runtime_artifact(
         )
         _require("M07_R320_BRIDGE_LAYOUT_RESOLVED" in source, "bridge layout evidence marker missing")
         _require("M07_R320_BRIDGE_EXTRACTED_RESTORE_VERIFIED" in source, "bridge restore evidence marker missing")
+        _require(
+            "def _resolve_runtime_predecessor_mount" in source,
+            "runtime predecessor mount resolver missing",
+        )
+        _require(
+            "downloaded_root = _resolve_runtime_predecessor_mount()" in source,
+            "runtime predecessor restore is not routed through the pre-attached mount",
+        )
+        _require(
+            "M07_RUNTIME_PREDECESSOR_MOUNT_VERIFIED" in source,
+            "runtime predecessor mount evidence marker missing",
+        )
 
     return {
         "status": "PASS",
