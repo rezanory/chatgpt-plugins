@@ -47,7 +47,7 @@ jobs:
           github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER') ||
           (github.event_name == 'workflow_dispatch' &&
           startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R')) }}
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 30
     steps:
       - name: Checkout exact workflow revision
@@ -66,7 +66,7 @@ jobs:
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           $script=@'
-          import json, os, pathlib, re, urllib.request
+          import datetime, json, os, pathlib, re, urllib.request
 
           REPO = "rezanory/chatgpt-plugins"
           COMMENTS = f"https://api.github.com/repos/{REPO}/issues/33/comments"
@@ -88,15 +88,21 @@ jobs:
           RUNTIME_ATTEMPT = int(runtime_match.group(2)) if runtime_match else None
           if RUNTIME_MODE and not 1 <= RUNTIME_ATTEMPT <= 99:
               raise SystemExit("M07_RUNTIME_ATTEMPT_OUT_OF_RANGE")
-          RUNTIME_ACCOUNT = "kg-05" if RUNTIME_RESOLUTION == 384 else "kg-03"
-          RUNTIME_OWNER = "trickermark" if RUNTIME_RESOLUTION == 384 else "rezanory"
-          # R320 recovery reads only the last independently validated sealed state.
-          # Versions 5/6 regressed to fold 1; restore and upload identities stay separate.
+          if RUNTIME_MODE and RUNTIME_RESOLUTION == 320 and RUNTIME_ATTEMPT < 7:
+              raise SystemExit("M07_R320_HISTORICAL_ATTEMPT_RELAUNCH_BLOCKED")
+          RUNTIME_ACCOUNT = "kg-05" if RUNTIME_MODE else "kg-03"
+          RUNTIME_OWNER = "trickermark" if RUNTIME_MODE else "rezanory"
+          # R320 recovery reads only the immutable one-version kg-05 bridge copied
+          # from the independently verified cancelled producer. Versions 5/6 are excluded.
           RUNTIME_SOURCE_STATE_HANDLE = (
-              "rezanory/m07-gate-r320-state-v1-7/versions/4"
+              "trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1"
               if RUNTIME_MODE and RUNTIME_RESOLUTION == 320
               else None
           )
+          RUNTIME_RUN_ID = os.environ.get("GITHUB_RUN_ID", "").strip()
+          if RUNTIME_MODE and not RUNTIME_RUN_ID.isdigit():
+              raise SystemExit("M07_RUNTIME_RUN_ID_INVALID")
+          RUNTIME_DATE = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
           headers = {
               "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
               "Accept": "application/vnd.github+json",
@@ -653,21 +659,21 @@ jobs:
           if phase2_owner_hits != 1:
               raise SystemExit(f"M07_PHASE2_OWNER_BINDING_COUNT={phase2_owner_hits}")
           kernel_slug = (
-              f"{RUNTIME_OWNER}/m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-20260915"
+              f"{RUNTIME_OWNER}/m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-{RUNTIME_DATE}-{RUNTIME_RUN_ID}"
               if RUNTIME_MODE else
               "rezanory/m07-phase2-unlock-20260915"
               if UNLOCK_MODE else
               "rezanory/m07-locked-test-diagnostics-fix1-20260914"
           )
           kernel_title = (
-              f"M07 Runtime R{RUNTIME_RESOLUTION} A{RUNTIME_ATTEMPT:02d} 20260915"
+              f"M07 Runtime R{RUNTIME_RESOLUTION} A{RUNTIME_ATTEMPT:02d} {RUNTIME_DATE} {RUNTIME_RUN_ID}"
               if RUNTIME_MODE else
               "M07 Phase2 Unlock 20260915"
               if UNLOCK_MODE else
               "M07 Locked Test Diagnostics Fix1 20260914"
           )
           request_id = (
-              f"pneumonia-v17-d260914d-m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-v1"
+              f"pneumonia-v17-d260914d-m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-{RUNTIME_RUN_ID}-v1"
               if RUNTIME_MODE else
               "pneumonia-v17-d260914d-m07-phase2-unlock-v1"
               if UNLOCK_MODE else
@@ -754,16 +760,22 @@ jobs:
           import json, os, pathlib, urllib.request, urllib.error
           endpoint = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
           notebook = pathlib.Path(os.environ["CGP_NOTEBOOK_PATH"]).read_text(encoding="utf-8")
+          runtime_stage = os.environ.get("CGP_RUNTIME_STAGE", "")
+          dataset_sources = ["paultimothymooney/chest-xray-pneumonia", "rezanory/m07-final-5fold-fix2-d260914d"]
+          if runtime_stage.startswith("M07_RUNTIME_M07_R320_"):
+              dataset_sources.append("trickermark/m07-r320-producer-v4-bridge-e3884dd1")
+          body = {"slug": os.environ["CGP_KERNEL_SLUG"].strip(), "newTitle": os.environ["CGP_KERNEL_TITLE"].strip(), "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": dataset_sources}
+          if runtime_stage.startswith("M07_RUNTIME_M07_R"):
+              body["machineShape"] = "NvidiaTeslaT4"
           payload = {
               "request_id": os.environ["CGP_REQUEST_ID"].strip(),
               "provider": "kaggle", "operation_class": "compute", "account_id": os.environ["CGP_ACCOUNT_ID"].strip(),
-              "purpose": (f"d260914d bounded M07 runtime recovery {os.environ.get('CGP_RUNTIME_STAGE')}: restore only sealed folds, complete at most one missing fold, persist it, and exit successfully."
-                          if os.environ.get("CGP_RUNTIME_STAGE", "").startswith("M07_RUNTIME_M07_R")
+              "purpose": (f"d260914d bounded M07 runtime recovery {runtime_stage}: restore only sealed folds, complete at most one missing fold, persist it, and exit successfully."
+                          if runtime_stage.startswith("M07_RUNTIME_M07_R")
                           else "d260914d M07 explicit manual unlock: complete R320/R384 M07 Gate, then run the remaining M01-M06/M08-M12 Phase-2 matrix; reuse exact persisted R224 five folds, never retrain M07 in Phase-2."
                           if "PHASE2_UNLOCK" in os.environ["CGP_NOTEBOOK_PATH"]
                           else "d260914d M07 continuation after exact final-five-fold PASS; reuse persisted folds, run OOF/one-time Locked Test/diagnostics/figures/XAI/casebook/external/final gate; Phase2 remains locked."),
-              "service": "kernels.KernelsApiService", "method": "SaveKernel",
-              "body": {"slug": os.environ["CGP_KERNEL_SLUG"].strip(), "newTitle": os.environ["CGP_KERNEL_TITLE"].strip(), "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": ["paultimothymooney/chest-xray-pneumonia", "rezanory/m07-final-5fold-fix2-d260914d"]},
+              "service": "kernels.KernelsApiService", "method": "SaveKernel", "body": body,
           }
           req = urllib.request.Request(endpoint, data=json.dumps(payload, separators=(",", ":")).encode(), method="POST", headers={"Authorization": "Bearer " + os.environ["CGP_ACTION_OIDC_TOKEN"], "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "pneumonia-v17-continuation/1.0"})
           try:
@@ -1077,17 +1089,8 @@ jobs:
       ${{ github.event_name == 'workflow_dispatch' &&
           github.event.inputs.recovery == 'M07_BUILD_R320_PRODUCER_BRIDGE' }}
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 45
-    environment: kaggle-05
-    env:
-      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-      KAGGLE_USERNAME: trickermark
+    timeout-minutes: 15
     steps:
-      - name: Checkout exact bridge implementation
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-
       - name: Request trusted action OIDC identity
         shell: powershell
         run: |
@@ -1100,62 +1103,26 @@ jobs:
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
-      - name: Reconcile producer bytes and build bridge payload before upload
+      - name: Submit exact CPU producer bridge through trusted broker
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          python scripts/m07_build_r320_producer_bridge.py
-          if($LASTEXITCODE-ne 0){throw 'exact producer bridge reconciliation failed'}
-
-      - name: Install official Kaggle CLI
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          python -m pip install --disable-pip-version-check --quiet --upgrade kaggle
-          if($LASTEXITCODE-ne 0){throw 'Kaggle CLI install failed'}
-
-      - name: Create one immutable private bridge dataset only after reconciliation
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
-          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
-          $kaggle=Join-Path (Split-Path $python -Parent) 'Scripts\kaggle.exe'
-          if(-not (Test-Path $kaggle)){$kaggle=(Get-Command kaggle.exe -ErrorAction Stop).Source}
-          $probe=& $kaggle datasets files -d $env:M07_BRIDGE_DATASET --page-size 100 2>&1 | Out-String
-          $probeExit=$LASTEXITCODE
-          if($probeExit-eq 0){
-            throw "BRIDGE_DATASET_ALREADY_EXISTS; refusing to create a second version: $env:M07_BRIDGE_DATASET"
-          }
-          if($probe -match '(?i)(401|403|unauthenticated|unauthorized|forbidden)'){
-            throw 'Kaggle kg-05 authentication/authorization failed before bridge creation'
-          }
-          if($probe -notmatch '(?i)(404|not found|does not exist|could not find)'){
-            throw ('Bridge existence preflight failed ambiguously: '+$probe.Substring(0,[Math]::Min(800,$probe.Length)))
-          }
-          & $kaggle datasets create -p $env:M07_BRIDGE_DIR -q -r skip
-          if($LASTEXITCODE-ne 0){throw 'private bridge dataset creation failed'}
-          $required=@('CAMPAIGN_STATE.json','FOLD_1_RECOVERY.zip','FOLD_2_RECOVERY.zip','FOLD_3_RECOVERY.zip','FOLD_4_RECOVERY.zip','BRIDGE_RECEIPT.json')
-          $listed=''
-          for($attempt=1;$attempt-le 12;$attempt++){
-            Start-Sleep -Seconds 5
-            $listed=& $kaggle datasets files -d $env:M07_BRIDGE_DATASET --page-size 100 2>&1 | Out-String
-            if($LASTEXITCODE-eq 0){
-              $missing=@($required|Where-Object{$listed -notmatch [regex]::Escape($_)})
-              if($missing.Count-eq 0){break}
-            }
-            if($attempt-eq 12){throw ('Bridge dataset post-create verification failed. Output: '+$listed.Substring(0,[Math]::Min(1200,$listed.Length)))}
-          }
-          Write-Host "M07_R320_PRODUCER_BRIDGE_CREATED dataset=$env:M07_BRIDGE_DATASET receipt_sha256=$env:M07_BRIDGE_RECEIPT_SHA256 private=true"
-
-      - name: Preserve exact bridge verification receipt
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: m07-r320-producer-bridge-${{ github.run_id }}
-          path: ${{ env.M07_BRIDGE_DIR }}\BRIDGE_RECEIPT.json
-          if-no-files-found: error
-          retention-days: 30
+          $payload=@{
+            request_id="m07-r320-producer-bridge-$env:GITHUB_RUN_ID"
+            provider='kaggle'
+            operation_class='compute'
+            account_id='kg-05'
+            purpose='Create exactly one private kg-05 bridge from verified R320 producer folds 1-4; CPU only, no training, no Locked Test.'
+            service='m07.RecoveryBridge'
+            method='CreateProducerMirror'
+            body=@{slug="trickermark/m07-r320-producer-bridge-$env:GITHUB_RUN_ID"}
+          } | ConvertTo-Json -Compress -Depth 10
+          $headers=@{Authorization="Bearer $env:CGP_ACTION_OIDC_TOKEN";'Content-Type'='application/json';Accept='application/json';'User-Agent'='m07-r320-producer-bridge/2.0'}
+          $result=Invoke-RestMethod -Uri 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle' -Method Post -Headers $headers -Body $payload -TimeoutSec 240
+          if(-not $result.ok){throw 'producer bridge broker submission rejected'}
+          $ref=if($result.provider_ref){[string]$result.provider_ref}elseif($result.result.ref){[string]$result.result.ref}else{''}
+          if(-not $ref){throw 'producer bridge provider ref missing'}
+          Write-Host "M07_R320_PRODUCER_BRIDGE_SUBMITTED kernel=$ref target=trickermark/m07-r320-producer-v4-bridge-e3884dd1 gpu=false training=false"
 
   probe-m07-r320-producer-bridge:
     name: Probe exact M07 R320 producer bridge mount on kg05
@@ -1198,9 +1165,13 @@ jobs:
           assert (campaign.get('run_contract') or {}).get('split_fingerprint')=='896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9'
           assert ((campaign.get('run_contract') or {}).get('extra') or {}).get('recipe_fingerprint')=='02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b'
           expected={'FOLD_1_RECOVERY.zip':'cd18468bf9305bb801f809098f8917462b16fb69fe9313b8bd17f2a95a7d1531','FOLD_2_RECOVERY.zip':'a75967888cec5cea6133a2ed457bb998edb9ada01442be88b2cc35e970e6f72d','FOLD_3_RECOVERY.zip':'4b04f657ddfcab61dc720f17ba4a8a5a8f234cd2bb7ed10b64e7357e049a9ad6','FOLD_4_RECOVERY.zip':'74a7c69c572a66a139beb99dfa375185ce2f25e96689642eac2a1e56928deb93'}
-          assert receipt.get('schema')=='m07.r320.producer.bridge.v1'
+          assert receipt.get('schema')=='m07.r320.producer.bridge.v2'
+          assert receipt.get('target_dataset')=='trickermark/m07-r320-producer-v4-bridge-e3884dd1'
+          assert receipt.get('campaign_receipt_sha256')=='e3884dd10e323d2f0925660599a420964781111d850664e8c88a830324460c77'
+          assert receipt.get('fold4_receipt_sha256')=='93e6a75a26b9e9c2d911d0703d9e4683c218b0e51e85ada0d3146cb4255abb38'
           assert receipt.get('sealed_fold_ids')==[1,2,3,4] and receipt.get('missing_fold_ids')==[5]
           assert receipt.get('locked_test_used_for_training') is False and receipt.get('training_performed') is False
+          assert receipt.get('mutable_dataset_versions_5_6_used') is False
           observed={}
           for name,expected_sha in expected.items():
               p=root/name

@@ -21,13 +21,13 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows, x64, v622]
     environment: cloudflare-production
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -61,9 +61,21 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
-          $h=Invoke-RestMethod -Uri "$base/healthz" -Method Get -TimeoutSec 30
+          function Get-JsonWithRetry([string]$Url){
+            $last=''
+            for($attempt=1;$attempt-le 6;$attempt++){
+              try {
+                $raw=& curl.exe --fail --silent --show-error --connect-timeout 5 --max-time 20 $Url 2>&1 | Out-String
+                if($LASTEXITCODE-eq 0 -and $raw.Trim()) { return ($raw | ConvertFrom-Json) }
+                $last=$raw.Trim()
+              } catch { $last=$_.Exception.Message }
+              if($attempt-lt 6){Start-Sleep -Seconds 5}
+            }
+            throw "health endpoint unavailable after retries: $Url :: $last"
+          }
+          $h=Get-JsonWithRetry "$base/healthz"
           if($h.service -ne 'chatgpt-kaggle-gateway' -or $h.status -ne 'ready'){throw 'canonical gateway unhealthy'}
-          $v3=Invoke-RestMethod -Uri "$base/control-plane/v3/healthz" -Method Get -TimeoutSec 30
+          $v3=Get-JsonWithRetry "$base/control-plane/v3/healthz"
           if($v3.status -ne 'ready' -or $v3.github_oidc_read_broker -ne $true -or $v3.github_oidc_action_broker -ne $true){throw 'v3 control plane unhealthy'}
           $requiredActionAccounts=@('kg-08','kg-09','kg-10','kg-11')
           foreach($account in $requiredActionAccounts){if(-not (@($v3.kaggle_action_accounts) -contains $account)){throw "v3 action broker missing required Kaggle account: $account"}}
