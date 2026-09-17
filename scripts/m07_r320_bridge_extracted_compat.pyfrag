@@ -1,42 +1,128 @@
+_M07_R320_BRIDGE_HANDLE = "trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1"
+_M07_R320_BRIDGE_DATASET = "trickermark/m07-r320-producer-v4-bridge-e3884dd1"
+_M07_R320_CAMPAIGN_RECEIPT = "e3884dd10e323d2f0925660599a420964781111d850664e8c88a830324460c77"
+_M07_R320_SPLIT_FINGERPRINT = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
+_M07_R320_RECIPE_FINGERPRINT = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
+_M07_R320_ARCHIVE_SHA256 = {
+    "FOLD_1_RECOVERY.zip": "cd18468bf9305bb801f809098f8917462b16fb69fe9313b8bd17f2a95a7d1531",
+    "FOLD_2_RECOVERY.zip": "a75967888cec5cea6133a2ed457bb998edb9ada01442be88b2cc35e970e6f72d",
+    "FOLD_3_RECOVERY.zip": "4b04f657ddfcab61dc720f17ba4a8a5a8f234cd2bb7ed10b64e7357e049a9ad6",
+    "FOLD_4_RECOVERY.zip": "74a7c69c572a66a139beb99dfa375185ce2f25e96689642eac2a1e56928deb93",
+}
+
+
+def _m07_exact_bridge_mode(model_id, resolution):
+    return (
+        str(model_id) == "M07"
+        and int(resolution) == 320
+        and str(globals().get("CGP_RUNTIME_SOURCE_STATE_HANDLE") or "")
+        == _M07_R320_BRIDGE_HANDLE
+    )
+
+
+def _m07_bridge_receipt_matches_locator(payload):
+    return (
+        isinstance(payload, dict)
+        and payload.get("schema") == "m07.r320.producer.bridge.v2"
+        and payload.get("status") == "COMPLETE"
+        and payload.get("target_dataset") == _M07_R320_BRIDGE_DATASET
+        and payload.get("campaign_receipt_sha256") == _M07_R320_CAMPAIGN_RECEIPT
+        and payload.get("split_fingerprint") == _M07_R320_SPLIT_FINGERPRINT
+        and payload.get("recipe_fingerprint") == _M07_R320_RECIPE_FINGERPRINT
+        and payload.get("sealed_fold_ids") == [1, 2, 3, 4]
+        and payload.get("missing_fold_ids") == [5]
+        and payload.get("locked_test_used_for_training") is False
+        and payload.get("external_used_for_training") is False
+        and payload.get("training_performed") is False
+        and payload.get("mutable_dataset_versions_5_6_used") is False
+    )
+
+
+def _m07_resolve_exact_bridge_root(model_id, resolution, temp):
+    """Resolve Kaggle's variable extracted-dataset layout without weakening lineage.
+
+    kagglehub may place a downloaded dataset directly in ``temp`` or one/more
+    directories below it.  For the one exact M07 R320 bridge only, discover the
+    unique directory containing both sealed campaign and bridge receipts.  Any
+    missing, corrupt, or ambiguous layout fails closed before training starts.
+    """
+    root = Path(temp)
+    if not _m07_exact_bridge_mode(model_id, resolution):
+        return root
+
+    candidates = []
+    for bridge_path in sorted(root.rglob("BRIDGE_RECEIPT.json")):
+        candidate = bridge_path.parent
+        marker = candidate / "CAMPAIGN_STATE.json"
+        if not marker.is_file():
+            continue
+        try:
+            bridge_payload = json.loads(bridge_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if _m07_bridge_receipt_matches_locator(bridge_payload):
+            candidates.append(candidate)
+
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        key = str(resolved)
+        if key not in seen:
+            seen.add(key)
+            unique.append(resolved)
+
+    if len(unique) != 1:
+        visible = []
+        for path in sorted(root.rglob("CAMPAIGN_STATE.json"))[:20]:
+            try:
+                visible.append(str(path.relative_to(root)))
+            except ValueError:
+                visible.append(path.name)
+        raise ValueError(
+            "M07 bridge layout resolution requires exactly one sealed root; "
+            f"found={len(unique)} campaign_markers={visible}"
+        )
+
+    resolved_root = unique[0]
+    try:
+        relative_root = str(resolved_root.relative_to(root.resolve())) or "."
+    except ValueError as exc:
+        raise ValueError("M07 bridge resolved outside the download root.") from exc
+
+    print(
+        "M07_R320_BRIDGE_LAYOUT_RESOLVED",
+        json.dumps(
+            {
+                "source_handle": _M07_R320_BRIDGE_HANDLE,
+                "relative_root": relative_root,
+                "candidate_count": 1,
+            },
+            sort_keys=True,
+        ),
+    )
+    return resolved_root
+
+
 def _m07_restore_exact_bridge_extracted(model_id, resolution, temp, payload):
-    expected_handle = "trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1"
     source_handle = str(globals().get("CGP_RUNTIME_SOURCE_STATE_HANDLE") or "")
     bridge_path = Path(temp) / "BRIDGE_RECEIPT.json"
     if not (
-        str(model_id) == "M07"
-        and int(resolution) == 320
-        and source_handle == expected_handle
+        _m07_exact_bridge_mode(model_id, resolution)
         and bridge_path.is_file()
     ):
         return None
 
-    expected_campaign_receipt = "e3884dd10e323d2f0925660599a420964781111d850664e8c88a830324460c77"
-    expected_split = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
-    expected_recipe = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
-    expected_archives = {
-        "FOLD_1_RECOVERY.zip": "cd18468bf9305bb801f809098f8917462b16fb69fe9313b8bd17f2a95a7d1531",
-        "FOLD_2_RECOVERY.zip": "a75967888cec5cea6133a2ed457bb998edb9ada01442be88b2cc35e970e6f72d",
-        "FOLD_3_RECOVERY.zip": "4b04f657ddfcab61dc720f17ba4a8a5a8f234cd2bb7ed10b64e7357e049a9ad6",
-        "FOLD_4_RECOVERY.zip": "74a7c69c572a66a139beb99dfa375185ce2f25e96689642eac2a1e56928deb93",
-    }
+    expected_campaign_receipt = _M07_R320_CAMPAIGN_RECEIPT
+    expected_split = _M07_R320_SPLIT_FINGERPRINT
+    expected_recipe = _M07_R320_RECIPE_FINGERPRINT
+    expected_archives = _M07_R320_ARCHIVE_SHA256
 
     bridge = json.loads(bridge_path.read_text(encoding="utf-8"))
-    if bridge.get("schema") != "m07.r320.producer.bridge.v2" or bridge.get("status") != "COMPLETE":
-        raise ValueError("M07 bridge receipt schema/status mismatch.")
-    if bridge.get("target_dataset") != "trickermark/m07-r320-producer-v4-bridge-e3884dd1":
-        raise ValueError("M07 bridge target identity mismatch.")
-    if bridge.get("campaign_receipt_sha256") != expected_campaign_receipt:
-        raise ValueError("M07 bridge campaign receipt mismatch.")
-    if bridge.get("split_fingerprint") != expected_split or bridge.get("recipe_fingerprint") != expected_recipe:
-        raise ValueError("M07 bridge frozen science fingerprint mismatch.")
+    if not _m07_bridge_receipt_matches_locator(bridge):
+        raise ValueError("M07 bridge receipt identity/policy mismatch.")
     if bridge.get("archive_sha256") != expected_archives:
         raise ValueError("M07 bridge original archive manifest mismatch.")
-    if bridge.get("sealed_fold_ids") != [1, 2, 3, 4] or bridge.get("missing_fold_ids") != [5]:
-        raise ValueError("M07 bridge fold inventory mismatch.")
-    if bridge.get("locked_test_used_for_training") is not False or bridge.get("external_used_for_training") is not False:
-        raise ValueError("M07 bridge forbidden training-source flag.")
-    if bridge.get("training_performed") is not False or bridge.get("mutable_dataset_versions_5_6_used") is not False:
-        raise ValueError("M07 bridge provenance policy mismatch.")
 
     if payload.get("schema") != "phase2.state.v2" or payload.get("status") != "COMPLETE":
         raise ValueError("M07 bridge campaign schema/status mismatch.")
