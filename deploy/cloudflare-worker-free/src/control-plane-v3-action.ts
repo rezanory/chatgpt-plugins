@@ -15,6 +15,9 @@ const ACTION_CLASSES = new Set<KaggleOperationClass>([
   "destructive",
   "privileged",
 ]);
+const M07_REPAIR_REF = "refs/heads/fix/m07-r320-producer-source-v1";
+const M07_REPAIR_WORKFLOW_REF =
+  "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/fix/m07-r320-producer-source-v1";
 const ACCOUNTS: Record<
   AccountId,
   { owner: string; username: string; envKey: keyof WorkerEnv }
@@ -112,6 +115,20 @@ export async function executeKaggleOidcAction(request: Request, env: ActionEnv):
   const service = String(payload.service ?? "");
   const method = String(payload.method ?? "");
   const body = object(payload.body ?? {});
+  if (identity.ref === M07_REPAIR_REF) {
+    const slug = typeof body.slug === "string" ? body.slug : "";
+    const repairAuthorized =
+      identity.workflow_ref === M07_REPAIR_WORKFLOW_REF &&
+      id === "kg-05" &&
+      opClass === "compute" &&
+      service === "kernels.KernelsApiService" &&
+      method === "SaveKernel" &&
+      slug.startsWith("trickermark/m07-") &&
+      body.isPrivate === true;
+    if (!repairAuthorized) {
+      throw new Error("M07 repair branch is restricted to private kg-05 M07 SaveKernel compute");
+    }
+  }
   const result = await kaggleAction(env, id, service, method, body);
 
   const requestedRef = typeof body.slug === "string" ? body.slug : null;

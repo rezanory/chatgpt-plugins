@@ -7,6 +7,8 @@ const TRUSTED_REPOSITORY_ID = "1337215097";
 const TRUSTED_OWNER_ID = "62356000";
 const TRUSTED_ACTOR_ID = "62356000";
 const TRUSTED_REF = "refs/heads/main";
+const M07_REPAIR_REF = "refs/heads/fix/m07-r320-producer-source-v1";
+const ACTION_TRUSTED_REFS = new Set([TRUSTED_REF, M07_REPAIR_REF]);
 const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   [
     "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main",
@@ -20,6 +22,10 @@ const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   ],
   [
     "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/main",
+    new Set(["workflow_dispatch"]),
+  ],
+  [
+    "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/fix/m07-r320-producer-source-v1",
     new Set(["workflow_dispatch"]),
   ],
 ]);
@@ -161,7 +167,8 @@ async function verifyBrokerOidc(
     throw new Error("GitHub OIDC owner/actor identity mismatch");
   }
   const allowedEvents = allowedWorkflows.get(workflowRef);
-  if (!allowedEvents || !allowedEvents.has(eventName) || ref !== TRUSTED_REF) {
+  const refAllowed = kind === "read" ? ref === TRUSTED_REF : ACTION_TRUSTED_REFS.has(ref);
+  if (!allowedEvents || !allowedEvents.has(eventName) || !refAllowed) {
     throw new Error("GitHub OIDC workflow/ref/event mismatch");
   }
   if (claims.repository_visibility !== "private") throw new Error("GitHub OIDC repository visibility mismatch");
