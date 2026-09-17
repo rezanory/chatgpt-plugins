@@ -30,7 +30,9 @@ permissions:
 
 concurrency:
   group: >-
-    ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R320_') &&
+    ${{ github.event.inputs.recovery == 'M07_PROBE_R320_PRODUCER_KERNEL_SOURCE' &&
+        'pneumonia-v17-d260914d-m07-producer-source-probe' ||
+        startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R320_') &&
         'pneumonia-v17-d260914d-m07-r320' ||
         startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R384_') &&
         'pneumonia-v17-d260914d-m07-r384' ||
