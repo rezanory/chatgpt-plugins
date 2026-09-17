@@ -152,7 +152,7 @@ async function createM07R320ProducerBridge(env: ActionEnv, body: Rec): Promise<R
     "kg-05",
     "datasets.DatasetApiService",
     "ListDatasets",
-    { group: "PROFILE", user: "trickermark", search: "m07-r320-producer-v4-bridge-e3884dd1", pageSize: 100 },
+    { group: 1, sortBy: 0, fileType: 0, license: 0, tagIds: "", search: "m07-r320-producer-v4-bridge-e3884dd1", user: "", page: 1, pageSize: 100, maxSize: 0, minSize: 0 },
   );
   const existing = Array.isArray(targetListing.datasets) ? targetListing.datasets : [];
   for (const item of existing) {
