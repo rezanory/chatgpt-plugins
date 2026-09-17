@@ -66,6 +66,95 @@ def _restore_light_source_compat(source):
     return 1
 
 
+_M07_RUNTIME_PREDECESSOR_HANDLE = "rezanory/m07-final-5fold-fix2-d260914d"
+_M07_RUNTIME_PREDECESSOR_SLUG = "m07-final-5fold-fix2-d260914d"
+
+
+def _runtime_readonly_predecessor_enabled():
+    return globals().get("CGP_RUNTIME_READONLY_PREDECESSOR", False) is True
+
+
+def _resolve_runtime_predecessor_mount(input_root=None):
+    """Resolve the already-attached immutable predecessor without dynamic attach.
+
+    Runtime candidates execute as ``trickermark`` while the immutable R224
+    predecessor is owned by ``rezanory``. SaveKernel already attaches that exact
+    dataset as an input source. Calling ``kagglehub.dataset_download`` here tries
+    to attach it again through the session JWT and can fail with HTTP 400.
+
+    Runtime mode therefore consumes only an existing /kaggle/input mount. The
+    exact predecessor handle, slug, sealed persistence manifest, artifact set and
+    artifact hashes must validate, and exactly one candidate root must exist.
+    """
+    if not _runtime_readonly_predecessor_enabled():
+        return None
+    if str(PERSIST_DATASET_HANDLE or "").strip() != _M07_RUNTIME_PREDECESSOR_HANDLE:
+        raise ValueError("RUNTIME_PREDECESSOR_HANDLE_DRIFT")
+
+    root = Path("/kaggle/input") if input_root is None else Path(input_root)
+    if not root.is_dir():
+        raise RuntimeError("RUNTIME_PREDECESSOR_INPUT_ROOT_MISSING")
+    root = root.resolve()
+
+    candidates = []
+    invalid = []
+    for manifest in sorted(root.rglob(PERSIST_MANIFEST_NAME)):
+        candidate = manifest.parent.resolve()
+        try:
+            relative_text = candidate.relative_to(root).as_posix()
+        except ValueError:
+            invalid.append({"path": str(candidate), "error": "OUTSIDE_INPUT_ROOT"})
+            continue
+        if _M07_RUNTIME_PREDECESSOR_SLUG not in relative_text.lower():
+            continue
+        try:
+            _verify_persistence_snapshot_compat(candidate)
+        except Exception as exc:
+            invalid.append({
+                "path": relative_text,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+            continue
+        candidates.append(candidate)
+
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+
+    if len(unique) != 1:
+        raise RuntimeError(
+            "RUNTIME_PREDECESSOR_MOUNT_RESOLUTION_FAILED: "
+            + json.dumps(
+                {
+                    "expected_handle": _M07_RUNTIME_PREDECESSOR_HANDLE,
+                    "valid_candidate_count": len(unique),
+                    "valid_candidates": [path.relative_to(root).as_posix() for path in unique],
+                    "invalid_candidates": invalid[:20],
+                },
+                sort_keys=True,
+            )
+        )
+
+    resolved = unique[0]
+    print(
+        "M07_RUNTIME_PREDECESSOR_MOUNT_VERIFIED",
+        json.dumps(
+            {
+                "handle": _M07_RUNTIME_PREDECESSOR_HANDLE,
+                "relative_root": resolved.relative_to(root).as_posix(),
+                "dynamic_attach_used": False,
+                "read_only": True,
+            },
+            sort_keys=True,
+        ),
+    )
+    return resolved
+
+
 def _try_restore_persisted_state_compat():
     global PERSIST_RESTORE_VERIFIED
     PERSIST_RESTORE_VERIFIED = False
@@ -73,26 +162,31 @@ def _try_restore_persisted_state_compat():
     if restore_dir.exists():
         shutil.rmtree(restore_dir)
     restore_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        downloaded = kagglehub.dataset_download(
-            PERSIST_DATASET_HANDLE, output_dir=str(restore_dir), force_download=True,
-        )
-    except Exception as exc:
-        if not _is_explicit_http_not_found(exc):
-            raise RuntimeError(
-                "PERSISTENCE_RESTORE_FAILED: absence was not confirmed; "
-                "training and all uploads remain blocked. Retry after resolving access/network."
-            ) from exc
-        if (PERSIST_ROOT / PERSIST_MANIFEST_NAME).exists():
-            raise RuntimeError("REMOTE_CAMPAIGN_MISSING_WITH_LOCAL_STATE: resolve explicitly") from exc
-        PERSIST_RESTORE_VERIFIED = True
-        print("Confirmed HTTP 404: starting a new v1.6 M07 campaign.")
-        return {"folds": 0, "light_state": 0, "restore_status": "CONFIRMED_NOT_FOUND"}
 
-    if not isinstance(downloaded, (str, Path)) or not Path(downloaded).is_dir():
-        raise RuntimeError("PERSISTENCE_DOWNLOAD_PATH_INVALID: Kaggle returned no readable snapshot directory")
-    downloaded_root = Path(downloaded).resolve()
-    _verify_persistence_snapshot_compat(downloaded_root)
+    if _runtime_readonly_predecessor_enabled():
+        downloaded_root = _resolve_runtime_predecessor_mount()
+    else:
+        try:
+            downloaded = kagglehub.dataset_download(
+                PERSIST_DATASET_HANDLE, output_dir=str(restore_dir), force_download=True,
+            )
+        except Exception as exc:
+            if not _is_explicit_http_not_found(exc):
+                raise RuntimeError(
+                    "PERSISTENCE_RESTORE_FAILED: absence was not confirmed; "
+                    "training and all uploads remain blocked. Retry after resolving access/network."
+                ) from exc
+            if (PERSIST_ROOT / PERSIST_MANIFEST_NAME).exists():
+                raise RuntimeError("REMOTE_CAMPAIGN_MISSING_WITH_LOCAL_STATE: resolve explicitly") from exc
+            PERSIST_RESTORE_VERIFIED = True
+            print("Confirmed HTTP 404: starting a new v1.6 M07 campaign.")
+            return {"folds": 0, "light_state": 0, "restore_status": "CONFIRMED_NOT_FOUND"}
+
+        if not isinstance(downloaded, (str, Path)) or not Path(downloaded).is_dir():
+            raise RuntimeError("PERSISTENCE_DOWNLOAD_PATH_INVALID: Kaggle returned no readable snapshot directory")
+        downloaded_root = Path(downloaded).resolve()
+        _verify_persistence_snapshot_compat(downloaded_root)
+
     for source in downloaded_root.rglob("*"):
         if source.is_file():
             target = PERSIST_ROOT / source.relative_to(downloaded_root)
@@ -117,7 +211,14 @@ def _try_restore_persisted_state_compat():
         raise ValueError("Ambiguous lightweight persistence archives")
     light = _restore_light_source_compat(light_paths[0]) if light_paths else 0
     PERSIST_RESTORE_VERIFIED = True
-    summary = {"folds": folds, "light_state": light, "restore_status": "VERIFIED_EXPANDED_LAYOUT"}
+    summary = {
+        "folds": folds,
+        "light_state": light,
+        "restore_status": (
+            "VERIFIED_PREATTACHED_READONLY_MOUNT"
+            if _runtime_readonly_predecessor_enabled()
+            else "VERIFIED_EXPANDED_LAYOUT"
+        ),
+    }
     print("✅ Restore summary:", summary)
     return summary
-

@@ -1902,3 +1902,141 @@ jobs:
           if(-not $result.ok){throw 'bridge mount probe submission rejected'}
           $providerRef=if($result.provider_ref){[string]$result.provider_ref}elseif($result.result.ref){[string]$result.result.ref}else{''}
           Write-Host "M07_R320_PRODUCER_BRIDGE_PROBE_SUBMITTED kernel=trickermark/m07-r320-producer-bridge-probe-$env:GITHUB_RUN_ID provider_ref=$providerRef gpu=false training=false"
+
+  probe-m07-runtime-predecessor-mount:
+    name: Probe immutable M07 runtime predecessor mount on kg05
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_PROBE_RUNTIME_PREDECESSOR_MOUNT' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 20
+    steps:
+      - name: Request trusted action OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'OIDC context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'OIDC unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Submit CPU-only immutable predecessor mount probe
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $script=@'
+          import hashlib, json
+          from pathlib import Path
+
+          HANDLE='rezanory/m07-final-5fold-fix2-d260914d'
+          SLUG='m07-final-5fold-fix2-d260914d'
+          MANIFEST='PERSISTENCE_MANIFEST_V1_4.json'
+          SPLIT='896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9'
+          base=Path('/kaggle/input').resolve()
+          assert base.is_dir(), 'M07_RUNTIME_PREDECESSOR_INPUT_ROOT_MISSING'
+          matches=[]
+          diagnostics=[]
+          for manifest_path in sorted(base.rglob(MANIFEST)):
+              candidate=manifest_path.parent.resolve()
+              try:
+                  relative=candidate.relative_to(base).as_posix()
+              except ValueError:
+                  continue
+              if SLUG not in relative.lower():
+                  continue
+              try:
+                  payload=json.loads(manifest_path.read_text(encoding='utf-8'))
+                  body={key:value for key,value in payload.items() if key!='receipt_sha256'}
+                  encoded=json.dumps(body,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False)
+                  observed_seal=hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+                  contract=payload.get('run_contract') or {}
+                  extra=contract.get('extra') or {}
+                  artifacts=payload.get('artifact_sha256')
+                  ok=(
+                      payload.get('status')=='SEALED'
+                      and payload.get('receipt_sha256')==observed_seal
+                      and contract.get('stage')=='M07_PERSISTENCE_CAMPAIGN'
+                      and contract.get('model_id')=='M07'
+                      and int(contract.get('resolution',-1))==224
+                      and contract.get('split_fingerprint')==SPLIT
+                      and extra.get('dataset_handle')==HANDLE
+                      and isinstance(artifacts,dict)
+                      and bool(artifacts)
+                  )
+                  missing=[]
+                  expanded=[]
+                  if ok:
+                      for name in sorted(artifacts):
+                          direct=candidate/name
+                          expanded_path=candidate/name[:-4] if str(name).endswith('.zip') else None
+                          if direct.is_file():
+                              continue
+                          if expanded_path is not None and expanded_path.is_dir():
+                              expanded.append(str(name))
+                              continue
+                          missing.append(str(name))
+                      ok=not missing
+                  diagnostics.append({
+                      'relative_root':relative,
+                      'sealed':payload.get('status'),
+                      'receipt_seal_matches':payload.get('receipt_sha256')==observed_seal,
+                      'artifact_count':len(artifacts) if isinstance(artifacts,dict) else -1,
+                      'missing':missing,
+                  })
+                  if ok:
+                      matches.append((candidate,payload,expanded))
+              except Exception as exc:
+                  diagnostics.append({'relative_root':relative,'error':f'{type(exc).__name__}: {exc}'})
+          unique=[]
+          seen=set()
+          for candidate,payload,expanded in matches:
+              key=candidate.as_posix()
+              if key not in seen:
+                  seen.add(key); unique.append((candidate,payload,expanded))
+          assert len(unique)==1, 'M07_RUNTIME_PREDECESSOR_MOUNT_DISCOVERY_MISMATCH:'+json.dumps(diagnostics,sort_keys=True)
+          root,payload,expanded=unique[0]
+          print('M07_RUNTIME_PREDECESSOR_MOUNT_PROBE '+json.dumps({
+              'status':'PASS',
+              'handle':HANDLE,
+              'relative_root':root.relative_to(base).as_posix(),
+              'manifest':MANIFEST,
+              'receipt_sha256':payload.get('receipt_sha256'),
+              'artifact_count':len(payload.get('artifact_sha256') or {}),
+              'expanded_archives':expanded,
+              'dynamic_attach_used':False,
+              'read_only':True,
+              'gpu':False,
+              'training':False,
+              'locked_test':False,
+          },sort_keys=True,separators=(',',':')))
+          '@
+          $payload=@{
+            request_id="m07-runtime-predecessor-mount-probe-$env:GITHUB_RUN_ID"
+            provider='kaggle'
+            operation_class='compute'
+            account_id='kg-05'
+            purpose='CPU-only verification of the pre-attached immutable M07 R224 predecessor mount; no dynamic attach, no training, no upload, no Locked Test.'
+            service='kernels.KernelsApiService'
+            method='SaveKernel'
+            body=@{
+              slug="trickermark/m07-runtime-predecessor-mount-probe-$env:GITHUB_RUN_ID"
+              newTitle="M07 Runtime Predecessor Mount Probe $env:GITHUB_RUN_ID"
+              text=$script
+              language='PYTHON'
+              kernelType='SCRIPT'
+              kernelExecutionType='SAVE_AND_RUN_ALL'
+              isPrivate=$true
+              enableGpu=$false
+              enableInternet=$false
+              datasetDataSources=@('rezanory/m07-final-5fold-fix2-d260914d')
+            }
+          } | ConvertTo-Json -Compress -Depth 20
+          $headers=@{Authorization="Bearer $env:CGP_ACTION_OIDC_TOKEN";'Content-Type'='application/json';Accept='application/json';'User-Agent'='m07-runtime-predecessor-mount-probe/1.0'}
+          $result=Invoke-RestMethod -Uri 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle' -Method Post -Headers $headers -Body $payload -TimeoutSec 240
+          if(-not $result.ok){throw 'runtime predecessor mount probe submission rejected'}
+          $providerRef=if($result.provider_ref){[string]$result.provider_ref}elseif($result.result.ref){[string]$result.result.ref}else{''}
+          if(-not $providerRef){throw 'runtime predecessor mount probe provider ref missing'}
+          Write-Host "M07_RUNTIME_PREDECESSOR_MOUNT_PROBE_SUBMITTED kernel=trickermark/m07-runtime-predecessor-mount-probe-$env:GITHUB_RUN_ID provider_ref=$providerRef gpu=false training=false locked_test=false"
