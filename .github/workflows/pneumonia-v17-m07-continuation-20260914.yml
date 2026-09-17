@@ -1071,6 +1071,174 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  build-m07-r320-producer-bridge:
+    name: Build exact M07 R320 producer recovery bridge on kg05
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_BUILD_R320_PRODUCER_BRIDGE' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 45
+    environment: kaggle-05
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: trickermark
+    steps:
+      - name: Checkout exact bridge implementation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Request trusted action OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'OIDC context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'OIDC unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Reconcile producer bytes and build bridge payload before upload
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python scripts/m07_build_r320_producer_bridge.py
+          if($LASTEXITCODE-ne 0){throw 'exact producer bridge reconciliation failed'}
+
+      - name: Install official Kaggle CLI
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install --disable-pip-version-check --quiet --upgrade kaggle
+          if($LASTEXITCODE-ne 0){throw 'Kaggle CLI install failed'}
+
+      - name: Create one immutable private bridge dataset only after reconciliation
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $kaggle=Join-Path (Split-Path $python -Parent) 'Scripts\kaggle.exe'
+          if(-not (Test-Path $kaggle)){$kaggle=(Get-Command kaggle.exe -ErrorAction Stop).Source}
+          $probe=& $kaggle datasets files -d $env:M07_BRIDGE_DATASET --page-size 100 2>&1 | Out-String
+          $probeExit=$LASTEXITCODE
+          if($probeExit-eq 0){
+            throw "BRIDGE_DATASET_ALREADY_EXISTS; refusing to create a second version: $env:M07_BRIDGE_DATASET"
+          }
+          if($probe -match '(?i)(401|403|unauthenticated|unauthorized|forbidden)'){
+            throw 'Kaggle kg-05 authentication/authorization failed before bridge creation'
+          }
+          if($probe -notmatch '(?i)(404|not found|does not exist|could not find)'){
+            throw ('Bridge existence preflight failed ambiguously: '+$probe.Substring(0,[Math]::Min(800,$probe.Length)))
+          }
+          & $kaggle datasets create -p $env:M07_BRIDGE_DIR -q -r skip
+          if($LASTEXITCODE-ne 0){throw 'private bridge dataset creation failed'}
+          $required=@('CAMPAIGN_STATE.json','FOLD_1_RECOVERY.zip','FOLD_2_RECOVERY.zip','FOLD_3_RECOVERY.zip','FOLD_4_RECOVERY.zip','BRIDGE_RECEIPT.json')
+          $listed=''
+          for($attempt=1;$attempt-le 12;$attempt++){
+            Start-Sleep -Seconds 5
+            $listed=& $kaggle datasets files -d $env:M07_BRIDGE_DATASET --page-size 100 2>&1 | Out-String
+            if($LASTEXITCODE-eq 0){
+              $missing=@($required|Where-Object{$listed -notmatch [regex]::Escape($_)})
+              if($missing.Count-eq 0){break}
+            }
+            if($attempt-eq 12){throw ('Bridge dataset post-create verification failed. Output: '+$listed.Substring(0,[Math]::Min(1200,$listed.Length)))}
+          }
+          Write-Host "M07_R320_PRODUCER_BRIDGE_CREATED dataset=$env:M07_BRIDGE_DATASET receipt_sha256=$env:M07_BRIDGE_RECEIPT_SHA256 private=true"
+
+      - name: Preserve exact bridge verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-r320-producer-bridge-${{ github.run_id }}
+          path: ${{ env.M07_BRIDGE_DIR }}\BRIDGE_RECEIPT.json
+          if-no-files-found: error
+          retention-days: 30
+
+  probe-m07-r320-producer-bridge:
+    name: Probe exact M07 R320 producer bridge mount on kg05
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.recovery == 'M07_PROBE_R320_PRODUCER_BRIDGE' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 20
+    steps:
+      - name: Request trusted action OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'OIDC context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'OIDC unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Submit isolated CPU bridge mount probe
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $script=@'
+          import hashlib, json
+          from pathlib import Path
+          root=Path('/kaggle/input/m07-r320-producer-v4-bridge-e3884dd1')
+          assert root.is_dir(), 'M07_BRIDGE_MOUNT_ROOT_MISSING'
+          marker=root/'CAMPAIGN_STATE.json'
+          bridge=root/'BRIDGE_RECEIPT.json'
+          assert marker.is_file(), 'M07_BRIDGE_CAMPAIGN_STATE_MISSING'
+          assert bridge.is_file(), 'M07_BRIDGE_RECEIPT_MISSING'
+          campaign=json.loads(marker.read_text(encoding='utf-8'))
+          receipt=json.loads(bridge.read_text(encoding='utf-8'))
+          assert campaign.get('schema')=='phase2.state.v2' and campaign.get('status')=='COMPLETE'
+          assert campaign.get('model_id')=='M07' and int(campaign.get('resolution'))==320
+          assert campaign.get('receipt_sha256')=='e3884dd10e323d2f0925660599a420964781111d850664e8c88a830324460c77'
+          assert (campaign.get('run_contract') or {}).get('split_fingerprint')=='896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9'
+          assert ((campaign.get('run_contract') or {}).get('extra') or {}).get('recipe_fingerprint')=='02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b'
+          expected={'FOLD_1_RECOVERY.zip':'cd18468bf9305bb801f809098f8917462b16fb69fe9313b8bd17f2a95a7d1531','FOLD_2_RECOVERY.zip':'a75967888cec5cea6133a2ed457bb998edb9ada01442be88b2cc35e970e6f72d','FOLD_3_RECOVERY.zip':'4b04f657ddfcab61dc720f17ba4a8a5a8f234cd2bb7ed10b64e7357e049a9ad6','FOLD_4_RECOVERY.zip':'74a7c69c572a66a139beb99dfa375185ce2f25e96689642eac2a1e56928deb93'}
+          assert receipt.get('schema')=='m07.r320.producer.bridge.v1'
+          assert receipt.get('sealed_fold_ids')==[1,2,3,4] and receipt.get('missing_fold_ids')==[5]
+          assert receipt.get('locked_test_used_for_training') is False and receipt.get('training_performed') is False
+          observed={}
+          for name,expected_sha in expected.items():
+              p=root/name
+              assert p.is_file(), 'M07_BRIDGE_ARCHIVE_MISSING:'+name
+              h=hashlib.sha256()
+              with p.open('rb') as fh:
+                  for chunk in iter(lambda:fh.read(8*1024*1024),b''): h.update(chunk)
+              observed[name]=h.hexdigest()
+              assert observed[name]==expected_sha, 'M07_BRIDGE_ARCHIVE_SHA_MISMATCH:'+name
+          print('M07_R320_PRODUCER_BRIDGE_PROBE '+json.dumps({'status':'PASS','archives':observed,'sealed_fold_ids':[1,2,3,4],'missing_fold_ids':[5]},sort_keys=True,separators=(',',':')))
+          '@
+          $payload=@{
+            request_id="m07-r320-producer-bridge-probe-$env:GITHUB_RUN_ID"
+            provider='kaggle'
+            operation_class='compute'
+            account_id='kg-05'
+            purpose='CPU-only verification of the exact private producer recovery bridge; no training, no upload, no Locked Test.'
+            service='kernels.KernelsApiService'
+            method='SaveKernel'
+            body=@{
+              slug="trickermark/m07-r320-producer-bridge-probe-$env:GITHUB_RUN_ID"
+              newTitle="M07 R320 Producer Bridge Probe $env:GITHUB_RUN_ID"
+              text=$script
+              language='PYTHON'
+              kernelType='SCRIPT'
+              kernelExecutionType='SAVE_AND_RUN_ALL'
+              isPrivate=$true
+              enableGpu=$false
+              enableInternet=$false
+              datasetDataSources=@('trickermark/m07-r320-producer-v4-bridge-e3884dd1')
+            }
+          } | ConvertTo-Json -Compress -Depth 20
+          $headers=@{Authorization="Bearer $env:CGP_ACTION_OIDC_TOKEN";'Content-Type'='application/json';Accept='application/json';'User-Agent'='m07-r320-producer-bridge-probe/1.0'}
+          $result=Invoke-RestMethod -Uri 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle' -Method Post -Headers $headers -Body $payload -TimeoutSec 240
+          if(-not $result.ok){throw 'bridge mount probe submission rejected'}
+          $providerRef=if($result.provider_ref){[string]$result.provider_ref}elseif($result.result.ref){[string]$result.result.ref}else{''}
+          Write-Host "M07_R320_PRODUCER_BRIDGE_PROBE_SUBMITTED kernel=trickermark/m07-r320-producer-bridge-probe-$env:GITHUB_RUN_ID provider_ref=$providerRef gpu=false training=false"
+
   probe-m07-r320-producer-kernel-source:
     name: Probe exact M07 R320 producer kernel source on kg05
     if: >-
