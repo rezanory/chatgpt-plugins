@@ -1077,17 +1077,8 @@ jobs:
       ${{ github.event_name == 'workflow_dispatch' &&
           github.event.inputs.recovery == 'M07_BUILD_R320_PRODUCER_BRIDGE' }}
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 45
-    environment: kaggle-05
-    env:
-      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-      KAGGLE_USERNAME: trickermark
+    timeout-minutes: 15
     steps:
-      - name: Checkout exact bridge implementation
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-
       - name: Request trusted action OIDC identity
         shell: powershell
         run: |
@@ -1100,62 +1091,26 @@ jobs:
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
-      - name: Reconcile producer bytes and build bridge payload before upload
+      - name: Submit exact CPU producer bridge through trusted broker
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          python scripts/m07_build_r320_producer_bridge.py
-          if($LASTEXITCODE-ne 0){throw 'exact producer bridge reconciliation failed'}
-
-      - name: Install official Kaggle CLI
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          python -m pip install --disable-pip-version-check --quiet --upgrade kaggle
-          if($LASTEXITCODE-ne 0){throw 'Kaggle CLI install failed'}
-
-      - name: Create one immutable private bridge dataset only after reconciliation
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
-          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
-          $kaggle=Join-Path (Split-Path $python -Parent) 'Scripts\kaggle.exe'
-          if(-not (Test-Path $kaggle)){$kaggle=(Get-Command kaggle.exe -ErrorAction Stop).Source}
-          $probe=& $kaggle datasets files -d $env:M07_BRIDGE_DATASET --page-size 100 2>&1 | Out-String
-          $probeExit=$LASTEXITCODE
-          if($probeExit-eq 0){
-            throw "BRIDGE_DATASET_ALREADY_EXISTS; refusing to create a second version: $env:M07_BRIDGE_DATASET"
-          }
-          if($probe -match '(?i)(401|403|unauthenticated|unauthorized|forbidden)'){
-            throw 'Kaggle kg-05 authentication/authorization failed before bridge creation'
-          }
-          if($probe -notmatch '(?i)(404|not found|does not exist|could not find)'){
-            throw ('Bridge existence preflight failed ambiguously: '+$probe.Substring(0,[Math]::Min(800,$probe.Length)))
-          }
-          & $kaggle datasets create -p $env:M07_BRIDGE_DIR -q -r skip
-          if($LASTEXITCODE-ne 0){throw 'private bridge dataset creation failed'}
-          $required=@('CAMPAIGN_STATE.json','FOLD_1_RECOVERY.zip','FOLD_2_RECOVERY.zip','FOLD_3_RECOVERY.zip','FOLD_4_RECOVERY.zip','BRIDGE_RECEIPT.json')
-          $listed=''
-          for($attempt=1;$attempt-le 12;$attempt++){
-            Start-Sleep -Seconds 5
-            $listed=& $kaggle datasets files -d $env:M07_BRIDGE_DATASET --page-size 100 2>&1 | Out-String
-            if($LASTEXITCODE-eq 0){
-              $missing=@($required|Where-Object{$listed -notmatch [regex]::Escape($_)})
-              if($missing.Count-eq 0){break}
-            }
-            if($attempt-eq 12){throw ('Bridge dataset post-create verification failed. Output: '+$listed.Substring(0,[Math]::Min(1200,$listed.Length)))}
-          }
-          Write-Host "M07_R320_PRODUCER_BRIDGE_CREATED dataset=$env:M07_BRIDGE_DATASET receipt_sha256=$env:M07_BRIDGE_RECEIPT_SHA256 private=true"
-
-      - name: Preserve exact bridge verification receipt
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: m07-r320-producer-bridge-${{ github.run_id }}
-          path: ${{ env.M07_BRIDGE_DIR }}\BRIDGE_RECEIPT.json
-          if-no-files-found: error
-          retention-days: 30
+          $payload=@{
+            request_id="m07-r320-producer-bridge-$env:GITHUB_RUN_ID"
+            provider='kaggle'
+            operation_class='compute'
+            account_id='kg-05'
+            purpose='Create exactly one private kg-05 bridge from verified R320 producer folds 1-4; CPU only, no training, no Locked Test.'
+            service='m07.RecoveryBridge'
+            method='CreateProducerMirror'
+            body=@{slug="trickermark/m07-r320-producer-bridge-$env:GITHUB_RUN_ID"}
+          } | ConvertTo-Json -Compress -Depth 10
+          $headers=@{Authorization="Bearer $env:CGP_ACTION_OIDC_TOKEN";'Content-Type'='application/json';Accept='application/json';'User-Agent'='m07-r320-producer-bridge/2.0'}
+          $result=Invoke-RestMethod -Uri 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle' -Method Post -Headers $headers -Body $payload -TimeoutSec 240
+          if(-not $result.ok){throw 'producer bridge broker submission rejected'}
+          $ref=if($result.provider_ref){[string]$result.provider_ref}elseif($result.result.ref){[string]$result.result.ref}else{''}
+          if(-not $ref){throw 'producer bridge provider ref missing'}
+          Write-Host "M07_R320_PRODUCER_BRIDGE_SUBMITTED kernel=$ref target=trickermark/m07-r320-producer-v4-bridge-e3884dd1 gpu=false training=false"
 
   probe-m07-r320-producer-bridge:
     name: Probe exact M07 R320 producer bridge mount on kg05
@@ -1198,9 +1153,12 @@ jobs:
           assert (campaign.get('run_contract') or {}).get('split_fingerprint')=='896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9'
           assert ((campaign.get('run_contract') or {}).get('extra') or {}).get('recipe_fingerprint')=='02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b'
           expected={'FOLD_1_RECOVERY.zip':'cd18468bf9305bb801f809098f8917462b16fb69fe9313b8bd17f2a95a7d1531','FOLD_2_RECOVERY.zip':'a75967888cec5cea6133a2ed457bb998edb9ada01442be88b2cc35e970e6f72d','FOLD_3_RECOVERY.zip':'4b04f657ddfcab61dc720f17ba4a8a5a8f234cd2bb7ed10b64e7357e049a9ad6','FOLD_4_RECOVERY.zip':'74a7c69c572a66a139beb99dfa375185ce2f25e96689642eac2a1e56928deb93'}
-          assert receipt.get('schema')=='m07.r320.producer.bridge.v1'
+          assert receipt.get('schema')=='m07.r320.producer.bridge.v2' and receipt.get('status')=='COMPLETE'
+          assert receipt.get('target_dataset')=='trickermark/m07-r320-producer-v4-bridge-e3884dd1'
           assert receipt.get('sealed_fold_ids')==[1,2,3,4] and receipt.get('missing_fold_ids')==[5]
-          assert receipt.get('locked_test_used_for_training') is False and receipt.get('training_performed') is False
+          assert receipt.get('locked_test_used_for_training') is False and receipt.get('external_used_for_training') is False
+          assert receipt.get('training_performed') is False and receipt.get('mutable_dataset_versions_5_6_used') is False
+          assert sorted((receipt.get('fold_receipts') or {}).keys())==['1','2','3','4']
           observed={}
           for name,expected_sha in expected.items():
               p=root/name
@@ -1238,98 +1196,3 @@ jobs:
           if(-not $result.ok){throw 'bridge mount probe submission rejected'}
           $providerRef=if($result.provider_ref){[string]$result.provider_ref}elseif($result.result.ref){[string]$result.result.ref}else{''}
           Write-Host "M07_R320_PRODUCER_BRIDGE_PROBE_SUBMITTED kernel=trickermark/m07-r320-producer-bridge-probe-$env:GITHUB_RUN_ID provider_ref=$providerRef gpu=false training=false"
-
-  probe-m07-r320-producer-kernel-source:
-    name: Probe exact M07 R320 producer kernel source on kg05
-    if: >-
-      ${{ github.event_name == 'workflow_dispatch' &&
-          github.event.inputs.recovery == 'M07_PROBE_R320_PRODUCER_KERNEL_SOURCE' }}
-    runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 20
-    steps:
-      - name: Request trusted action OIDC identity
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'OIDC context unavailable'}
-          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
-          $token=[string]$r.value
-          if($token.Length -lt 100){throw 'OIDC unavailable'}
-          Write-Host "::add-mask::$token"
-          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
-
-      - name: Submit isolated CPU producer-kernel source probe
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
-          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
-          $script=@'
-          import json, os, urllib.request, urllib.error
-          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
-          run_id=os.environ['GITHUB_RUN_ID']
-          kernel_ref=f'trickermark/m07-r320-producer-source-probe-{run_id}'
-          source='\n'.join([
-              'from pathlib import Path',
-              'import hashlib, json',
-              "base=Path('/kaggle/input')",
-              "candidates=[base/'m07-phase2-unlock-20260915', base/'notebooks'/'rezanory'/'m07-phase2-unlock-20260915']",
-              "root=next((p for p in candidates if (p/'M07_GATE_MULTIRES_V17/STATE/R320/CAMPAIGN_STATE.json').is_file()), None)",
-              "if root is None:",
-              "    matches=[p.parents[3] for p in base.rglob('M07_GATE_MULTIRES_V17/STATE/R320/CAMPAIGN_STATE.json')]",
-              "    root=matches[0] if len(matches)==1 else None",
-              "assert root is not None and root.is_dir(), 'M07_PRODUCER_KERNEL_ROOT_MISSING'",
-              "print('M07_PRODUCER_MOUNT_ROOT '+root.as_posix())",
-              "state=root/'M07_GATE_MULTIRES_V17/STATE/R320'",
-              "runs=root/'M07_GATE_MULTIRES_V17/RUNS/R320/FOLDS'",
-              "marker=state/'CAMPAIGN_STATE.json'",
-              "fold4=runs/'fold_4/COMPLETED.json'",
-              "fold5=runs/'fold_5/COMPLETED.json'",
-              "assert marker.is_file(), 'M07_PRODUCER_CAMPAIGN_STATE_MISSING'",
-              "assert fold4.is_file(), 'M07_PRODUCER_FOLD4_RECEIPT_MISSING'",
-              "assert not fold5.is_file(), 'M07_PRODUCER_FOLD5_MUST_NOT_BE_SEALED'",
-              "campaign=json.loads(marker.read_text(encoding='utf-8'))",
-              "receipt=json.loads(fold4.read_text(encoding='utf-8'))",
-              "assert campaign.get('schema')=='phase2.state.v2' and campaign.get('status')=='COMPLETE'",
-              "assert campaign.get('model_id')=='M07' and int(campaign.get('resolution'))==320",
-              "assert campaign.get('receipt_sha256')=='e3884dd10e323d2f0925660599a420964781111d850664e8c88a830324460c77'",
-              "assert receipt.get('schema')=='pneumonia.phase2.fold.v1.7' and receipt.get('status')=='COMPLETED'",
-              "assert int(receipt.get('fold_id'))==4 and int(receipt.get('resolution'))==320",
-              "assert receipt.get('confirmed_m07_recipe_fingerprint')=='02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b'",
-              "assert receipt.get('split_fingerprint')=='896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9'",
-              "assert receipt.get('locked_test_used_for_training') is False",
-              "assert receipt.get('external_used_for_training') is False",
-              "expected=campaign.get('artifact_sha256') or {}",
-              "required=[f'FOLD_{i}_RECOVERY.zip' for i in range(1,5)]",
-              "assert set(expected)==set(required), 'M07_PRODUCER_ARCHIVE_INVENTORY_MISMATCH'",
-              "observed={}",
-              "for name in required:",
-              "    p=state/name",
-              "    assert p.is_file(), 'M07_PRODUCER_ARCHIVE_MISSING:'+name",
-              "    h=hashlib.sha256()",
-              "    with p.open('rb') as fh:",
-              "        for chunk in iter(lambda: fh.read(8*1024*1024), b''): h.update(chunk)",
-              "    observed[name]=h.hexdigest()",
-              "    assert observed[name]==expected[name], 'M07_PRODUCER_ARCHIVE_SHA_MISMATCH:'+name",
-              "print('M07_PRODUCER_SOURCE_PROBE '+json.dumps({'status':'PASS','campaign_receipt_sha256':campaign['receipt_sha256'],'fold4_receipt_sha256':receipt.get('receipt_sha256'),'archives':observed,'fold5_sealed':False},sort_keys=True,separators=(',',':')))",
-          ])
-          payload={'request_id':f'm07-r320-producer-source-probe-{run_id}','provider':'kaggle','operation_class':'compute','account_id':'kg-05','purpose':'CPU-only verification that kg-05 can mount the immutable cancelled M07 producer output containing sealed R320 folds 1-4; no training, no upload, no Locked Test access.','service':'kernels.KernelsApiService','method':'SaveKernel','body':{'slug':kernel_ref,'newTitle':f'M07 R320 Producer Source Probe {run_id}','text':source,'language':'PYTHON','kernelType':'SCRIPT','kernelExecutionType':'SAVE_AND_RUN_ALL','isPrivate':True,'enableGpu':False,'enableInternet':False,'kernelDataSources':['rezanory/m07-phase2-unlock-20260915']}}
-          req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['CGP_ACTION_OIDC_TOKEN'],'Content-Type':'application/json','Accept':'application/json','User-Agent':'m07-r320-producer-source-probe/1.0'})
-          try:
-              with urllib.request.urlopen(req,timeout=240) as response:
-                  result=json.loads(response.read().decode('utf-8','replace') or '{}')
-          except urllib.error.HTTPError as error:
-              detail=error.read(3000).decode('utf-8','replace')[:1200]
-              diagnostic={'status':'HTTP_ERROR','http_status':int(error.code),'detail':detail.replace(os.environ.get('CGP_ACTION_OIDC_TOKEN',''),'***')}
-              print('M07_PRODUCER_SOURCE_BROKER_DIAGNOSTIC '+json.dumps(diagnostic,sort_keys=True,separators=(',',':')))
-              raise SystemExit(0)
-          if result.get('ok') is not True:
-              diagnostic={'status':'BROKER_REJECTED','detail':json.dumps(result,sort_keys=True)[:1200]}
-              print('M07_PRODUCER_SOURCE_BROKER_DIAGNOSTIC '+json.dumps(diagnostic,sort_keys=True,separators=(',',':')))
-              raise SystemExit(0)
-          receipt={'status':'SUBMITTED','kernel_ref':kernel_ref,'account_id':'kg-05','kernel_source':'rezanory/m07-phase2-unlock-20260915','gpu':False,'training':False,'provider_ref':result.get('provider_ref') or (result.get('result') or {}).get('ref')}
-          print('M07_PRODUCER_SOURCE_BROKER_DIAGNOSTIC '+json.dumps(receipt,sort_keys=True,separators=(',',':')))
-          '@
-          $script|&$python -
-          if($LASTEXITCODE-ne 0){throw 'M07 producer-kernel source diagnostic failed unexpectedly'}
