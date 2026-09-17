@@ -1,0 +1,131 @@
+def _m07_restore_exact_bridge_extracted(model_id, resolution, temp, payload):
+    expected_handle = "trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1"
+    source_handle = str(globals().get("CGP_RUNTIME_SOURCE_STATE_HANDLE") or "")
+    bridge_path = Path(temp) / "BRIDGE_RECEIPT.json"
+    if not (
+        str(model_id) == "M07"
+        and int(resolution) == 320
+        and source_handle == expected_handle
+        and bridge_path.is_file()
+    ):
+        return None
+
+    expected_campaign_receipt = "e3884dd10e323d2f0925660599a420964781111d850664e8c88a830324460c77"
+    expected_split = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
+    expected_recipe = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
+    expected_archives = {
+        "FOLD_1_RECOVERY.zip": "cd18468bf9305bb801f809098f8917462b16fb69fe9313b8bd17f2a95a7d1531",
+        "FOLD_2_RECOVERY.zip": "a75967888cec5cea6133a2ed457bb998edb9ada01442be88b2cc35e970e6f72d",
+        "FOLD_3_RECOVERY.zip": "4b04f657ddfcab61dc720f17ba4a8a5a8f234cd2bb7ed10b64e7357e049a9ad6",
+        "FOLD_4_RECOVERY.zip": "74a7c69c572a66a139beb99dfa375185ce2f25e96689642eac2a1e56928deb93",
+    }
+
+    bridge = json.loads(bridge_path.read_text(encoding="utf-8"))
+    if bridge.get("schema") != "m07.r320.producer.bridge.v2" or bridge.get("status") != "COMPLETE":
+        raise ValueError("M07 bridge receipt schema/status mismatch.")
+    if bridge.get("target_dataset") != "trickermark/m07-r320-producer-v4-bridge-e3884dd1":
+        raise ValueError("M07 bridge target identity mismatch.")
+    if bridge.get("campaign_receipt_sha256") != expected_campaign_receipt:
+        raise ValueError("M07 bridge campaign receipt mismatch.")
+    if bridge.get("split_fingerprint") != expected_split or bridge.get("recipe_fingerprint") != expected_recipe:
+        raise ValueError("M07 bridge frozen science fingerprint mismatch.")
+    if bridge.get("archive_sha256") != expected_archives:
+        raise ValueError("M07 bridge original archive manifest mismatch.")
+    if bridge.get("sealed_fold_ids") != [1, 2, 3, 4] or bridge.get("missing_fold_ids") != [5]:
+        raise ValueError("M07 bridge fold inventory mismatch.")
+    if bridge.get("locked_test_used_for_training") is not False or bridge.get("external_used_for_training") is not False:
+        raise ValueError("M07 bridge forbidden training-source flag.")
+    if bridge.get("training_performed") is not False or bridge.get("mutable_dataset_versions_5_6_used") is not False:
+        raise ValueError("M07 bridge provenance policy mismatch.")
+
+    if payload.get("schema") != "phase2.state.v2" or payload.get("status") != "COMPLETE":
+        raise ValueError("M07 bridge campaign schema/status mismatch.")
+    if payload.get("model_id") != "M07" or int(payload.get("resolution", -1)) != 320:
+        raise ValueError("M07 bridge campaign identity mismatch.")
+    if payload.get("receipt_sha256") != expected_campaign_receipt:
+        raise ValueError("M07 bridge campaign receipt identity mismatch.")
+    contract = payload.get("run_contract") or {}
+    if contract.get("split_fingerprint") != expected_split:
+        raise ValueError("M07 bridge campaign split mismatch.")
+    if ((contract.get("extra") or {}).get("recipe_fingerprint")) != expected_recipe:
+        raise ValueError("M07 bridge campaign recipe mismatch.")
+    if payload.get("artifact_sha256") != expected_archives:
+        raise ValueError("M07 bridge campaign archive manifest mismatch.")
+
+    fold_receipts = bridge.get("fold_receipts") or {}
+    if sorted(fold_receipts) != ["1", "2", "3", "4"]:
+        raise ValueError("M07 bridge fold receipt inventory mismatch.")
+
+    staged = Path(temp) / "_validated_output"
+    staged.mkdir()
+    repacked = Path(temp) / "_bridge_repacked_state"
+    repacked.mkdir()
+    archives = {}
+    verified_artifact_count = 0
+
+    for fold in range(1, 5):
+        source_fold = Path(temp) / f"FOLD_{fold}_RECOVERY" / "FOLDS" / f"fold_{fold}"
+        completed_path = source_fold / "COMPLETED.json"
+        if not source_fold.is_dir() or not completed_path.is_file():
+            raise ValueError(f"M07 bridge extracted fold {fold} is missing.")
+        fold_payload = json.loads(completed_path.read_text(encoding="utf-8"))
+        fold_meta = fold_receipts[str(fold)]
+        if not isinstance(fold_meta, dict):
+            raise ValueError(f"M07 bridge fold {fold} metadata is invalid.")
+        if fold_payload.get("schema") != "pneumonia.phase2.fold.v1.7" or fold_payload.get("status") != "COMPLETED":
+            raise ValueError(f"M07 bridge fold {fold} receipt status/schema mismatch.")
+        if (fold_payload.get("model_id"), int(fold_payload.get("resolution", -1)), int(fold_payload.get("fold_id", -1))) != ("M07", 320, fold):
+            raise ValueError(f"M07 bridge fold {fold} identity mismatch.")
+        if fold_payload.get("confirmed_m07_recipe_fingerprint") != expected_recipe or fold_payload.get("split_fingerprint") != expected_split:
+            raise ValueError(f"M07 bridge fold {fold} frozen fingerprint mismatch.")
+        if fold_payload.get("locked_test_used_for_training") is not False or fold_payload.get("external_used_for_training") is not False:
+            raise ValueError(f"M07 bridge fold {fold} policy mismatch.")
+        if fold_payload.get("receipt_sha256") != fold_meta.get("receipt_sha256"):
+            raise ValueError(f"M07 bridge fold {fold} receipt hash mismatch.")
+        if fold_payload.get("run_fingerprint") != fold_meta.get("run_fingerprint"):
+            raise ValueError(f"M07 bridge fold {fold} run fingerprint mismatch.")
+        artifact_manifest = fold_meta.get("artifact_sha256") or {}
+        if not isinstance(artifact_manifest, dict) or not artifact_manifest:
+            raise ValueError(f"M07 bridge fold {fold} artifact manifest missing.")
+        if (fold_payload.get("artifact_sha256") or {}) != artifact_manifest:
+            raise ValueError(f"M07 bridge fold {fold} receipt artifact manifest mismatch.")
+        for file_name, expected_sha in sorted(artifact_manifest.items()):
+            if not isinstance(file_name, str) or not file_name or file_name != Path(file_name).name or file_name in {".", ".."}:
+                raise ValueError(f"M07 bridge fold {fold} unsafe artifact name.")
+            artifact_path = source_fold / file_name
+            if not artifact_path.is_file():
+                raise ValueError(f"M07 bridge fold {fold} artifact missing: {file_name}")
+            if run_file_sha256(artifact_path) != expected_sha:
+                raise ValueError(f"M07 bridge fold {fold} artifact hash mismatch: {file_name}")
+            verified_artifact_count += 1
+
+        target_fold = staged / "FOLDS" / f"fold_{fold}"
+        target_fold.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source_fold, target_fold)
+
+        zpath = repacked / f"FOLD_{fold}_RECOVERY.zip"
+        with zipfile.ZipFile(zpath, "w", compression=zipfile.ZIP_DEFLATED) as z:
+            for artifact_path in sorted(source_fold.rglob("*")):
+                if artifact_path.is_file():
+                    z.write(
+                        artifact_path,
+                        arcname=str(Path("FOLDS") / f"fold_{fold}" / artifact_path.relative_to(source_fold)),
+                    )
+        archives[zpath.name] = zpath
+
+    print(
+        "M07_R320_BRIDGE_EXTRACTED_RESTORE_VERIFIED",
+        json.dumps(
+            {
+                "source_handle": source_handle,
+                "sealed_fold_ids": [1, 2, 3, 4],
+                "missing_fold_ids": [5],
+                "verified_artifact_count": verified_artifact_count,
+                "repacked_archive_sha256": {name: run_file_sha256(path) for name, path in sorted(archives.items())},
+                "locked_test_used_for_training": False,
+                "external_used_for_training": False,
+            },
+            sort_keys=True,
+        ),
+    )
+    return staged, archives, bridge_path

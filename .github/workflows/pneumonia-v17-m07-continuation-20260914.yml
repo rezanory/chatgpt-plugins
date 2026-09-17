@@ -483,6 +483,80 @@ jobs:
               if restore_download_hits != 1:
                   raise SystemExit(f"M07_RUNTIME_RESTORE_DOWNLOAD_ANCHOR_COUNT={restore_download_hits}")
 
+
+              # The one-shot kg-05 bridge is stored by Kaggle as extracted dataset
+              # files rather than preserving the uploaded ZIP containers. Inject a
+              # fail-closed compatibility reader only into the generated runtime
+              # notebook; the frozen canonical notebook remains byte-unchanged.
+              bridge_helper = pathlib.Path("scripts/m07_r320_bridge_extracted_compat.pyfrag").read_text(encoding="utf-8")
+              bridge_restore_old = "\n".join([
+                  '    archives = {p.name: p for p in temp.glob("*.zip")}',
+                  '    if set(archives) != set(payload.get("artifact_sha256", {})) or not archives:',
+                  '        raise ValueError("Phase-2 archive inventory mismatch.")',
+                  '    if any(not re.fullmatch(r"(?:FOLD_[1-5]_RECOVERY|FINAL_EVIDENCE)\\.zip", name) for name in archives):',
+                  '        raise ValueError("Unexpected Phase-2 archive name.")',
+                  '    validate_receipt(payload, phase2_contract(model_id, resolution, stage="phase2_campaign"),',
+                  '                     archives, allowed_statuses={"COMPLETE"})',
+                  '    staged = temp / "_validated_output"',
+                  '    staged.mkdir()',
+                  '    for name, archive in sorted(archives.items()):',
+                  '        safe_extract_zip(archive, staged)',
+              ])
+              bridge_restore_new = "\n".join([
+                  '    bridge_restore_result = _m07_restore_exact_bridge_extracted(model_id, resolution, temp, payload)',
+                  '    bridge_receipt_path = None',
+                  '    if bridge_restore_result is None:',
+                  '        archives = {p.name: p for p in temp.glob("*.zip")}',
+                  '        if set(archives) != set(payload.get("artifact_sha256", {})) or not archives:',
+                  '            raise ValueError("Phase-2 archive inventory mismatch.")',
+                  '        if any(not re.fullmatch(r"(?:FOLD_[1-5]_RECOVERY|FINAL_EVIDENCE)\\.zip", name) for name in archives):',
+                  '            raise ValueError("Unexpected Phase-2 archive name.")',
+                  '        validate_receipt(payload, phase2_contract(model_id, resolution, stage="phase2_campaign"),',
+                  '                         archives, allowed_statuses={"COMPLETE"})',
+                  '        staged = temp / "_validated_output"',
+                  '        staged.mkdir()',
+                  '        for name, archive in sorted(archives.items()):',
+                  '            safe_extract_zip(archive, staged)',
+                  '    else:',
+                  '        staged, archives, bridge_receipt_path = bridge_restore_result',
+              ])
+              bridge_tail_old = "\n".join([
+                  '    for source in [marker, *archives.values()]:',
+                  '        shutil.copy2(source, state / source.name)',
+                  '    PHASE2_RESTORE_VERIFIED.add(identity)',
+              ])
+              bridge_tail_new = "\n".join([
+                  '    if bridge_receipt_path is None:',
+                  '        for source in [marker, *archives.values()]:',
+                  '            shutil.copy2(source, state / source.name)',
+                  '    else:',
+                  '        for source in archives.values():',
+                  '            shutil.copy2(source, state / source.name)',
+                  '        shutil.copy2(marker, state / "BRIDGE_SOURCE_CAMPAIGN_STATE.json")',
+                  '        shutil.copy2(bridge_receipt_path, state / "BRIDGE_SOURCE_RECEIPT.json")',
+                  '        phase2_seal_persistence(model_id, resolution)',
+                  '    PHASE2_RESTORE_VERIFIED.add(identity)',
+              ])
+              bridge_patch_hits = 0
+              for cell in notebook["cells"]:
+                  source = "".join(cell.get("source", []))
+                  if (
+                      'def phase2_restore(model_id, resolution):' in source
+                      and bridge_restore_old in source
+                      and bridge_tail_old in source
+                  ):
+                      source = source.replace(
+                          'def phase2_restore(model_id, resolution):',
+                          bridge_helper.rstrip() + "\n\ndef phase2_restore(model_id, resolution):",
+                          1,
+                      )
+                      source = source.replace(bridge_restore_old, bridge_restore_new, 1)
+                      source = source.replace(bridge_tail_old, bridge_tail_new, 1)
+                      cell["source"] = source.splitlines(keepends=True)
+                      bridge_patch_hits += 1
+              if bridge_patch_hits != 1:
+                  raise SystemExit(f"M07_RUNTIME_BRIDGE_EXTRACTED_PATCH_COUNT={bridge_patch_hits}")
+
               gate_cell_hits = []
               gate_marker = "# 1) Complete M07 at R320/R384 using the exact frozen R224 recipe."
               for index, cell in enumerate(notebook["cells"]):
@@ -1243,20 +1317,45 @@ jobs:
           expected={'FOLD_1_RECOVERY.zip':'cd18468bf9305bb801f809098f8917462b16fb69fe9313b8bd17f2a95a7d1531','FOLD_2_RECOVERY.zip':'a75967888cec5cea6133a2ed457bb998edb9ada01442be88b2cc35e970e6f72d','FOLD_3_RECOVERY.zip':'4b04f657ddfcab61dc720f17ba4a8a5a8f234cd2bb7ed10b64e7357e049a9ad6','FOLD_4_RECOVERY.zip':'74a7c69c572a66a139beb99dfa375185ce2f25e96689642eac2a1e56928deb93'}
           assert receipt.get('schema')=='m07.r320.producer.bridge.v2' and receipt.get('status')=='COMPLETE'
           assert receipt.get('target_dataset')=='trickermark/m07-r320-producer-v4-bridge-e3884dd1'
+          assert receipt.get('archive_sha256')==expected
+          assert campaign.get('artifact_sha256')==expected
           assert receipt.get('sealed_fold_ids')==[1,2,3,4] and receipt.get('missing_fold_ids')==[5]
           assert receipt.get('locked_test_used_for_training') is False and receipt.get('external_used_for_training') is False
           assert receipt.get('training_performed') is False and receipt.get('mutable_dataset_versions_5_6_used') is False
-          assert sorted((receipt.get('fold_receipts') or {}).keys())==['1','2','3','4']
+          fold_receipts=receipt.get('fold_receipts') or {}
+          assert sorted(fold_receipts.keys())==['1','2','3','4']
+          assert not (root/'FOLD_5_RECOVERY').exists(), 'M07_BRIDGE_FOLD5_MUST_BE_ABSENT'
           observed={}
-          for name,expected_sha in expected.items():
-              p=root/name
-              assert p.is_file(), 'M07_BRIDGE_ARCHIVE_MISSING:'+name
-              h=hashlib.sha256()
-              with p.open('rb') as fh:
-                  for chunk in iter(lambda:fh.read(8*1024*1024),b''): h.update(chunk)
-              observed[name]=h.hexdigest()
-              assert observed[name]==expected_sha, 'M07_BRIDGE_ARCHIVE_SHA_MISMATCH:'+name
-          print('M07_R320_PRODUCER_BRIDGE_PROBE '+json.dumps({'status':'PASS','archives':observed,'sealed_fold_ids':[1,2,3,4],'missing_fold_ids':[5]},sort_keys=True,separators=(',',':')))
+          verified_artifacts=0
+          for fold_id in range(1,5):
+              fold_root=root/f'FOLD_{fold_id}_RECOVERY'/'FOLDS'/f'fold_{fold_id}'
+              completed=fold_root/'COMPLETED.json'
+              assert completed.is_file(), 'M07_BRIDGE_FOLD_RECEIPT_MISSING:'+str(fold_id)
+              fold_payload=json.loads(completed.read_text(encoding='utf-8'))
+              fold_meta=fold_receipts[str(fold_id)]
+              assert fold_payload.get('schema')=='pneumonia.phase2.fold.v1.7' and fold_payload.get('status')=='COMPLETED'
+              assert (fold_payload.get('model_id'),int(fold_payload.get('resolution',-1)),int(fold_payload.get('fold_id',-1)))==('M07',320,fold_id)
+              assert fold_payload.get('confirmed_m07_recipe_fingerprint')=='02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b'
+              assert fold_payload.get('split_fingerprint')=='896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9'
+              assert fold_payload.get('locked_test_used_for_training') is False and fold_payload.get('external_used_for_training') is False
+              assert fold_payload.get('receipt_sha256')==fold_meta.get('receipt_sha256')
+              assert fold_payload.get('run_fingerprint')==fold_meta.get('run_fingerprint')
+              artifact_manifest=fold_meta.get('artifact_sha256') or {}
+              assert artifact_manifest and (fold_payload.get('artifact_sha256') or {})==artifact_manifest
+              fold_observed={}
+              for file_name,expected_sha in sorted(artifact_manifest.items()):
+                  assert isinstance(file_name,str) and file_name and file_name==Path(file_name).name and file_name not in {'.','..'}
+                  p=fold_root/file_name
+                  assert p.is_file(), 'M07_BRIDGE_FOLD_ARTIFACT_MISSING:'+str(fold_id)+':'+file_name
+                  h=hashlib.sha256()
+                  with p.open('rb') as fh:
+                      for chunk in iter(lambda:fh.read(8*1024*1024),b''): h.update(chunk)
+                  actual=h.hexdigest()
+                  assert actual==expected_sha, 'M07_BRIDGE_FOLD_ARTIFACT_SHA_MISMATCH:'+str(fold_id)+':'+file_name
+                  fold_observed[file_name]=actual
+                  verified_artifacts+=1
+              observed[str(fold_id)]={'receipt_sha256':fold_payload.get('receipt_sha256'),'artifacts':fold_observed}
+          print('M07_R320_PRODUCER_BRIDGE_PROBE '+json.dumps({'status':'PASS','archive_sha256':expected,'folds':observed,'verified_artifact_count':verified_artifacts,'sealed_fold_ids':[1,2,3,4],'missing_fold_ids':[5]},sort_keys=True,separators=(',',':')))
           '@
           $payload=@{
             request_id="m07-r320-producer-bridge-probe-$env:GITHUB_RUN_ID"
