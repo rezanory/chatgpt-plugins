@@ -47,7 +47,7 @@ jobs:
           github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER') ||
           (github.event_name == 'workflow_dispatch' &&
           startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R')) }}
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 30
     steps:
       - name: Checkout exact workflow revision
@@ -66,7 +66,7 @@ jobs:
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           $script=@'
-          import json, os, pathlib, re, urllib.request
+          import datetime, json, os, pathlib, re, urllib.request
 
           REPO = "rezanory/chatgpt-plugins"
           COMMENTS = f"https://api.github.com/repos/{REPO}/issues/33/comments"
@@ -88,15 +88,21 @@ jobs:
           RUNTIME_ATTEMPT = int(runtime_match.group(2)) if runtime_match else None
           if RUNTIME_MODE and not 1 <= RUNTIME_ATTEMPT <= 99:
               raise SystemExit("M07_RUNTIME_ATTEMPT_OUT_OF_RANGE")
-          RUNTIME_ACCOUNT = "kg-05" if RUNTIME_RESOLUTION == 384 else "kg-03"
-          RUNTIME_OWNER = "trickermark" if RUNTIME_RESOLUTION == 384 else "rezanory"
-          # R320 recovery reads only the last independently validated sealed state.
-          # Versions 5/6 regressed to fold 1; restore and upload identities stay separate.
+          if RUNTIME_MODE and RUNTIME_RESOLUTION == 320 and RUNTIME_ATTEMPT < 7:
+              raise SystemExit("M07_R320_HISTORICAL_ATTEMPT_RELAUNCH_BLOCKED")
+          RUNTIME_ACCOUNT = "kg-05" if RUNTIME_MODE else "kg-03"
+          RUNTIME_OWNER = "trickermark" if RUNTIME_MODE else "rezanory"
+          # R320 restore is pinned to the one-shot private bridge built only from the
+          # verified producer output. Mutable dataset versions 5/6 remain excluded.
           RUNTIME_SOURCE_STATE_HANDLE = (
-              "rezanory/m07-gate-r320-state-v1-7/versions/4"
+              "trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1"
               if RUNTIME_MODE and RUNTIME_RESOLUTION == 320
               else None
           )
+          RUNTIME_RUN_ID = os.environ.get("GITHUB_RUN_ID", "").strip()
+          if RUNTIME_MODE and not RUNTIME_RUN_ID.isdigit():
+              raise SystemExit("M07_RUNTIME_RUN_ID_INVALID")
+          RUNTIME_DATE = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
           headers = {
               "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
               "Accept": "application/vnd.github+json",
@@ -653,21 +659,21 @@ jobs:
           if phase2_owner_hits != 1:
               raise SystemExit(f"M07_PHASE2_OWNER_BINDING_COUNT={phase2_owner_hits}")
           kernel_slug = (
-              f"{RUNTIME_OWNER}/m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-20260915"
+              f"{RUNTIME_OWNER}/m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-{RUNTIME_DATE}-{RUNTIME_RUN_ID}"
               if RUNTIME_MODE else
               "rezanory/m07-phase2-unlock-20260915"
               if UNLOCK_MODE else
               "rezanory/m07-locked-test-diagnostics-fix1-20260914"
           )
           kernel_title = (
-              f"M07 Runtime R{RUNTIME_RESOLUTION} A{RUNTIME_ATTEMPT:02d} 20260915"
+              f"M07 Runtime R{RUNTIME_RESOLUTION} A{RUNTIME_ATTEMPT:02d} {RUNTIME_DATE} {RUNTIME_RUN_ID}"
               if RUNTIME_MODE else
               "M07 Phase2 Unlock 20260915"
               if UNLOCK_MODE else
               "M07 Locked Test Diagnostics Fix1 20260914"
           )
           request_id = (
-              f"pneumonia-v17-d260914d-m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-v1"
+              f"pneumonia-v17-d260914d-m07-runtime-r{RUNTIME_RESOLUTION}-a{RUNTIME_ATTEMPT:02d}-{RUNTIME_RUN_ID}-v1"
               if RUNTIME_MODE else
               "pneumonia-v17-d260914d-m07-phase2-unlock-v1"
               if UNLOCK_MODE else
@@ -754,16 +760,22 @@ jobs:
           import json, os, pathlib, urllib.request, urllib.error
           endpoint = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
           notebook = pathlib.Path(os.environ["CGP_NOTEBOOK_PATH"]).read_text(encoding="utf-8")
+          runtime_stage = os.environ.get("CGP_RUNTIME_STAGE", "")
+          dataset_sources = ["paultimothymooney/chest-xray-pneumonia", "rezanory/m07-final-5fold-fix2-d260914d"]
+          if runtime_stage.startswith("M07_RUNTIME_M07_R320_"):
+              dataset_sources.append("trickermark/m07-r320-producer-v4-bridge-e3884dd1")
+          body = {"slug": os.environ["CGP_KERNEL_SLUG"].strip(), "newTitle": os.environ["CGP_KERNEL_TITLE"].strip(), "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": dataset_sources}
+          if runtime_stage.startswith("M07_RUNTIME_M07_R"):
+              body["machineShape"] = "NvidiaTeslaT4"
           payload = {
               "request_id": os.environ["CGP_REQUEST_ID"].strip(),
               "provider": "kaggle", "operation_class": "compute", "account_id": os.environ["CGP_ACCOUNT_ID"].strip(),
-              "purpose": (f"d260914d bounded M07 runtime recovery {os.environ.get('CGP_RUNTIME_STAGE')}: restore only sealed folds, complete at most one missing fold, persist it, and exit successfully."
-                          if os.environ.get("CGP_RUNTIME_STAGE", "").startswith("M07_RUNTIME_M07_R")
+              "purpose": (f"d260914d bounded M07 runtime recovery {runtime_stage}: restore only sealed folds, complete at most one missing fold, persist it, and exit successfully."
+                          if runtime_stage.startswith("M07_RUNTIME_M07_R")
                           else "d260914d M07 explicit manual unlock: complete R320/R384 M07 Gate, then run the remaining M01-M06/M08-M12 Phase-2 matrix; reuse exact persisted R224 five folds, never retrain M07 in Phase-2."
                           if "PHASE2_UNLOCK" in os.environ["CGP_NOTEBOOK_PATH"]
                           else "d260914d M07 continuation after exact final-five-fold PASS; reuse persisted folds, run OOF/one-time Locked Test/diagnostics/figures/XAI/casebook/external/final gate; Phase2 remains locked."),
-              "service": "kernels.KernelsApiService", "method": "SaveKernel",
-              "body": {"slug": os.environ["CGP_KERNEL_SLUG"].strip(), "newTitle": os.environ["CGP_KERNEL_TITLE"].strip(), "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": ["paultimothymooney/chest-xray-pneumonia", "rezanory/m07-final-5fold-fix2-d260914d"]},
+              "service": "kernels.KernelsApiService", "method": "SaveKernel", "body": body,
           }
           req = urllib.request.Request(endpoint, data=json.dumps(payload, separators=(",", ":")).encode(), method="POST", headers={"Authorization": "Bearer " + os.environ["CGP_ACTION_OIDC_TOKEN"], "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "pneumonia-v17-continuation/1.0"})
           try:
