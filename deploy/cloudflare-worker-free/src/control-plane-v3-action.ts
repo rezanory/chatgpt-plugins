@@ -79,6 +79,9 @@ async function kaggleAction(
   if (!IDENTIFIER.test(service)) throw new Error("invalid Kaggle service identifier");
   if (!METHOD.test(method)) throw new Error("invalid Kaggle method identifier");
   const token = tokenFor(env, id);
+  const isDatasetDownload =
+    service === "datasets.DatasetApiService" &&
+    (method === "DownloadDataset" || method === "DownloadDatasetRaw");
   const response = await fetch(`${API_ROOT}/${service}/${method}`, {
     method: "POST",
     headers: {
@@ -87,7 +90,24 @@ async function kaggleAction(
       "User-Agent": "chatgpt-control-plane-v3-action/1.0",
     },
     body: JSON.stringify(body),
+    redirect: isDatasetDownload ? "manual" : "follow",
   });
+  if (isDatasetDownload && [301, 302, 303, 307, 308].includes(response.status)) {
+    const location = response.headers.get("location")?.trim() ?? "";
+    if (!location) throw new Error(`${method} redirect missing Location header`);
+    let downloadUrl: URL;
+    try { downloadUrl = new URL(location); }
+    catch { throw new Error(`${method} returned an invalid redirect URL`); }
+    if (downloadUrl.protocol !== "https:") {
+      throw new Error(`${method} returned a non-HTTPS redirect URL`);
+    }
+    return {
+      url: downloadUrl.toString(),
+      permanent: response.status === 301 || response.status === 308,
+      bypassEncoding: true,
+      signedUrlEphemeral: true,
+    };
+  }
   const text = await response.text();
   let parsed: unknown = {};
   try {
