@@ -1,3 +1,77 @@
+def _m07_resolve_exact_bridge_download_root(model_id, resolution, temp, source_handle):
+    temp = Path(temp)
+    expected_handle = "trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1"
+    if not (
+        str(model_id) == "M07"
+        and int(resolution) == 320
+        and str(source_handle or "") == expected_handle
+    ):
+        return temp
+
+    expected_campaign_receipt = "e3884dd10e323d2f0925660599a420964781111d850664e8c88a830324460c77"
+    expected_split = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
+    expected_recipe = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
+    expected_target = "trickermark/m07-r320-producer-v4-bridge-e3884dd1"
+
+    candidates = [temp]
+    candidates.extend(path.parent for path in temp.rglob("BRIDGE_RECEIPT.json"))
+    matches = []
+    seen = set()
+    temp_resolved = temp.resolve()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(temp_resolved)
+        except Exception:
+            continue
+        key = resolved.as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        marker = resolved / "CAMPAIGN_STATE.json"
+        bridge = resolved / "BRIDGE_RECEIPT.json"
+        if not marker.is_file() or not bridge.is_file():
+            continue
+        try:
+            campaign = json.loads(marker.read_text(encoding="utf-8"))
+            receipt = json.loads(bridge.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        contract = campaign.get("run_contract") or {}
+        if not (
+            receipt.get("schema") == "m07.r320.producer.bridge.v2"
+            and receipt.get("status") == "COMPLETE"
+            and receipt.get("target_dataset") == expected_target
+            and receipt.get("campaign_receipt_sha256") == expected_campaign_receipt
+            and receipt.get("split_fingerprint") == expected_split
+            and receipt.get("recipe_fingerprint") == expected_recipe
+            and campaign.get("schema") == "phase2.state.v2"
+            and campaign.get("status") == "COMPLETE"
+            and campaign.get("model_id") == "M07"
+            and int(campaign.get("resolution", -1)) == 320
+            and campaign.get("receipt_sha256") == expected_campaign_receipt
+            and contract.get("split_fingerprint") == expected_split
+            and ((contract.get("extra") or {}).get("recipe_fingerprint")) == expected_recipe
+        ):
+            continue
+        matches.append(resolved)
+
+    unique = []
+    observed = set()
+    for candidate in matches:
+        key = candidate.as_posix()
+        if key not in observed:
+            observed.add(key)
+            unique.append(candidate)
+    if len(unique) != 1:
+        raise ValueError(
+            "M07_BRIDGE_DOWNLOAD_ROOT_DISCOVERY_MISMATCH:"
+            + json.dumps([path.as_posix() for path in unique], sort_keys=True)
+        )
+    print("M07_BRIDGE_DOWNLOAD_ROOT", unique[0].as_posix())
+    return unique[0]
+
+
 def _m07_restore_exact_bridge_extracted(model_id, resolution, temp, payload):
     expected_handle = "trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1"
     source_handle = str(globals().get("CGP_RUNTIME_SOURCE_STATE_HANDLE") or "")
