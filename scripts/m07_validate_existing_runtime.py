@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import pathlib
@@ -19,6 +20,22 @@ from m07_runtime_contract import (
 
 READ_ENDPOINT = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle"
 OIDC_AUDIENCE = "cgp-control-plane-v3"
+
+# A13 was generated from this exact immutable notebook contract. The Cloudflare
+# read broker parses nested JSON before wrapping it in another JSON response.
+# JavaScript JSON.parse/JSON.stringify erases the lexical distinction between
+# integral floats such as 2.0 and integers such as 2. The runtime canonical
+# seal, however, was computed by Python before that transport conversion.
+#
+# These are the ONLY integral-float fields in the frozen V1.7 phase2_campaign
+# contract that the A13 source defines as floats. Repair is allowed only for the
+# exact A13 object and only if restoring these three types exactly reproduces
+# BOTH the embedded run_fingerprint and the embedded receipt_sha256.
+A13_TOKEN = "M07_RUNTIME_M07_R320_A13"
+A13_KERNEL_REF = "trickermark/m07-runtime-r320-a13-20260917-35265801216"
+A13_CODE_SHA256 = "d099b6e51c243b3c489f0a280ca247971e84b1cf1c504cba2a51028c93fba27f"
+A13_SPLIT_FINGERPRINT = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
+A13_RECIPE_FINGERPRINT = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
 
 
 def request_oidc_token() -> str:
@@ -84,7 +101,7 @@ class ReadBroker:
                     "Authorization": "Bearer " + token,
                     "Content-Type": "application/json",
                     "Accept": "application/json",
-                    "User-Agent": "m07-existing-runtime-validator/1.0",
+                    "User-Agent": "m07-existing-runtime-validator/1.1",
                 },
             )
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -106,37 +123,91 @@ class ReadBroker:
             raise RuntimeError(f"Control-plane read HTTP {exc.code}: {detail[:1600]}") from exc
 
 
-def download_json(url: str) -> dict:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname != "www.kaggleusercontent.com":
-        raise RuntimeError("Unsafe Kaggle output URL")
-    request = urllib.request.Request(url, headers={"User-Agent": "m07-existing-runtime-validator/1.0"})
-    with urllib.request.urlopen(request, timeout=90) as response:
-        raw = response.read(262145)
-    if len(raw) > 262144:
-        raise RuntimeError("Runtime receipt exceeds bounded size")
-    value = json.loads(raw.decode("utf-8-sig"))
-    if not isinstance(value, dict):
-        raise RuntimeError("Runtime receipt JSON object missing")
-    return value
+def _seal_diagnostic(scientific: dict) -> dict:
+    receipt_body = {key: value for key, value in scientific.items() if key != "receipt_sha256"}
+    observed_receipt_sha = str(scientific.get("receipt_sha256") or "").lower()
+    expected_receipt_sha = canonical_fingerprint(receipt_body)
+    run_contract = scientific.get("run_contract") if isinstance(scientific.get("run_contract"), dict) else {}
+    observed_run_fp = str(scientific.get("run_fingerprint") or "").lower()
+    expected_run_fp = canonical_fingerprint(run_contract) if run_contract else ""
+    return {
+        "observed_receipt_sha256": observed_receipt_sha,
+        "expected_receipt_sha256": expected_receipt_sha,
+        "receipt_seal_matches": bool(observed_receipt_sha) and observed_receipt_sha == expected_receipt_sha,
+        "observed_run_fingerprint": observed_run_fp,
+        "expected_run_fingerprint": expected_run_fp,
+        "run_fingerprint_matches": bool(expected_run_fp) and observed_run_fp == expected_run_fp,
+    }
 
 
-def find_output_listing(value: object) -> tuple[list[object], str] | None:
-    if isinstance(value, dict):
-        files = value.get("files")
-        if isinstance(files, list):
-            if not files or any(isinstance(item, dict) and item.get("fileName") for item in files):
-                return files, str(value.get("nextPageToken") or "").strip()
-        for child in value.values():
-            found = find_output_listing(child)
-            if found is not None:
-                return found
-    elif isinstance(value, list):
-        for child in value:
-            found = find_output_listing(child)
-            if found is not None:
-                return found
-    return None
+def _restore_a13_integral_float_types(
+    scientific: dict,
+    *,
+    token: str,
+    kernel_ref: str,
+) -> tuple[dict, dict]:
+    if token != A13_TOKEN or kernel_ref != A13_KERNEL_REF:
+        raise RuntimeError("Transport number-type repair is restricted to the exact immutable A13 object")
+
+    contract = scientific.get("run_contract")
+    if not isinstance(contract, dict):
+        raise RuntimeError("A13 run contract missing")
+    extra = contract.get("extra")
+    if not isinstance(extra, dict):
+        raise RuntimeError("A13 run-contract extra missing")
+    if contract.get("code_sha256") != A13_CODE_SHA256:
+        raise RuntimeError("A13 code SHA drift; transport repair forbidden")
+    if contract.get("split_fingerprint") != A13_SPLIT_FINGERPRINT:
+        raise RuntimeError("A13 split fingerprint drift; transport repair forbidden")
+    if extra.get("recipe_fingerprint") != A13_RECIPE_FINGERPRINT:
+        raise RuntimeError("A13 recipe fingerprint drift; transport repair forbidden")
+
+    before = _seal_diagnostic(scientific)
+    if before["receipt_seal_matches"] or before["run_fingerprint_matches"]:
+        raise RuntimeError("A13 transport repair requires the exact dual seal/fingerprint mismatch pattern")
+
+    repaired = copy.deepcopy(scientific)
+    repaired_extra = repaired["run_contract"]["extra"]
+
+    # Fail closed if any field is already a float, a bool, missing, or has a
+    # value other than the exact integer produced by JS number normalization.
+    static_value = repaired_extra.get("static_focal_gamma")
+    if isinstance(static_value, bool) or type(static_value) is not int or static_value != 2:
+        raise RuntimeError("A13 static_focal_gamma transport pattern mismatch")
+    repaired_extra["static_focal_gamma"] = 2.0
+
+    flsd = repaired_extra.get("flsd")
+    if not isinstance(flsd, list) or len(flsd) != 3:
+        raise RuntimeError("A13 FLSD transport pattern mismatch")
+    if isinstance(flsd[1], bool) or type(flsd[1]) is not int or flsd[1] != 5:
+        raise RuntimeError("A13 hard-gamma transport pattern mismatch")
+    if isinstance(flsd[2], bool) or type(flsd[2]) is not int or flsd[2] != 3:
+        raise RuntimeError("A13 easy-gamma transport pattern mismatch")
+    flsd[1] = 5.0
+    flsd[2] = 3.0
+
+    after = _seal_diagnostic(repaired)
+    if not after["run_fingerprint_matches"] or not after["receipt_seal_matches"]:
+        raise RuntimeError("A13 transport type restoration did not reproduce both original seals")
+
+    reconciliation = {
+        "schema": "m07.d260914d.runtime.transport-number-type-reconciliation.v1",
+        "status": "PASS",
+        "kernel_ref": kernel_ref,
+        "runtime_token": token,
+        "cause": "JS_JSON_NUMBER_NORMALIZATION_OF_INTEGRAL_FLOATS",
+        "restored_fields": [
+            {"path": "/run_contract/extra/static_focal_gamma", "transport_value": 2, "sealed_python_value": 2.0},
+            {"path": "/run_contract/extra/flsd/1", "transport_value": 5, "sealed_python_value": 5.0},
+            {"path": "/run_contract/extra/flsd/2", "transport_value": 3, "sealed_python_value": 3.0},
+        ],
+        "before": before,
+        "after": after,
+        "observed_run_fingerprint_preserved": scientific.get("run_fingerprint"),
+        "observed_receipt_sha256_preserved": scientific.get("receipt_sha256"),
+        "acceptance_rule": "repair is exact-object-bound and accepted only because both embedded hashes reproduce exactly",
+    }
+    return repaired, reconciliation
 
 
 def main() -> int:
@@ -209,6 +280,7 @@ def main() -> int:
     scientific = item.get("json")
     if not isinstance(scientific, dict):
         raise SystemExit("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime receipt JSON object missing")
+
     (out / "output-inventory.json").write_text(
         json.dumps(
             {
@@ -222,44 +294,55 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
-    # Preserve the exact fetched scientific object before fail-closed acceptance.
-    # This is read-only diagnostic evidence and never permits a seal mismatch.
     (out / args.expected_receipt).write_text(
         json.dumps(scientific, ensure_ascii=False, indent=2, allow_nan=False),
         encoding="utf-8",
     )
-    receipt_body = {key: value for key, value in scientific.items() if key != "receipt_sha256"}
-    observed_receipt_sha = str(scientific.get("receipt_sha256") or "").lower()
-    expected_receipt_sha = canonical_fingerprint(receipt_body)
-    run_contract = scientific.get("run_contract") if isinstance(scientific.get("run_contract"), dict) else {}
-    observed_run_fp = str(scientific.get("run_fingerprint") or "").lower()
-    expected_run_fp = canonical_fingerprint(run_contract) if run_contract else ""
-    seal_diagnostic = {
-        "schema": "m07.d260914d.runtime.receipt-seal-diagnostic.v1",
-        "status": "PASS" if observed_receipt_sha == expected_receipt_sha else "SEAL_MISMATCH",
-        "kernel_ref": args.kernel_ref,
-        "runtime_token": args.token,
-        "source_file_name": source_file_name,
-        "observed_receipt_sha256": observed_receipt_sha,
-        "expected_receipt_sha256": expected_receipt_sha,
-        "receipt_seal_matches": observed_receipt_sha == expected_receipt_sha,
-        "observed_run_fingerprint": observed_run_fp,
-        "expected_run_fingerprint": expected_run_fp,
-        "run_fingerprint_matches": bool(expected_run_fp) and observed_run_fp == expected_run_fp,
-        "top_level_keys": sorted(scientific),
-    }
+
+    before = _seal_diagnostic(scientific)
     (out / "receipt-seal-diagnostic.json").write_text(
-        json.dumps(seal_diagnostic, ensure_ascii=False, indent=2),
+        json.dumps(
+            {
+                "schema": "m07.d260914d.runtime.receipt-seal-diagnostic.v2",
+                "status": "PASS" if before["receipt_seal_matches"] else "SEAL_MISMATCH",
+                "kernel_ref": args.kernel_ref,
+                "runtime_token": args.token,
+                "source_file_name": source_file_name,
+                **before,
+                "top_level_keys": sorted(scientific),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
-    report = validate_runtime_receipt(scientific, token=args.token)
+
+    scientific_for_validation = scientific
+    reconciliation = None
+    if not before["receipt_seal_matches"] or not before["run_fingerprint_matches"]:
+        scientific_for_validation, reconciliation = _restore_a13_integral_float_types(
+            scientific,
+            token=args.token,
+            kernel_ref=args.kernel_ref,
+        )
+        (out / "transport-number-type-reconciliation.json").write_text(
+            json.dumps(reconciliation, ensure_ascii=False, indent=2, allow_nan=False),
+            encoding="utf-8",
+        )
+        (out / "reconciled-runtime-receipt.json").write_text(
+            json.dumps(scientific_for_validation, ensure_ascii=False, indent=2, allow_nan=False),
+            encoding="utf-8",
+        )
+
+    report = validate_runtime_receipt(scientific_for_validation, token=args.token)
     evidence = {
-        "schema": "m07.d260914d.runtime.existing-output-validation.v1",
+        "schema": "m07.d260914d.runtime.existing-output-validation.v2",
         "status": "SCIENTIFIC_RECEIPT_PASS",
         "kernel_ref": args.kernel_ref,
         "terminal_state": state,
         "runtime_token": args.token,
         "scientific_report": report,
+        "transport_reconciliation": reconciliation,
         "read_transport": "control-plane-v3-oidc",
         "github_run_id": os.environ.get("GITHUB_RUN_ID", ""),
         "source_sha": os.environ.get("GITHUB_SHA", ""),
