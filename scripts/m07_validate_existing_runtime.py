@@ -202,6 +202,9 @@ def main() -> int:
     item = files[0]
     if not isinstance(item, dict) or item.get("file_name") != args.expected_receipt:
         raise SystemExit("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: exact runtime receipt name mismatch")
+    source_file_name = str(item.get("source_file_name") or "")
+    if pathlib.PurePosixPath(source_file_name).name != args.expected_receipt:
+        raise SystemExit("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime receipt source basename mismatch")
     scientific = item.get("json")
     if not isinstance(scientific, dict):
         raise SystemExit("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime receipt JSON object missing")
@@ -210,6 +213,7 @@ def main() -> int:
             {
                 "kernel_ref": args.kernel_ref,
                 "file_names": [args.expected_receipt],
+                "source_file_name": source_file_name,
                 "signed_urls_returned": output.get("signed_urls_returned"),
             },
             ensure_ascii=False,

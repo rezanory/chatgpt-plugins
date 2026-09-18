@@ -329,6 +329,7 @@ export async function kaggleOutputJsonFiles(
     exactNames.add(name);
   }
   const byName = new Map<string, Record<string, unknown>>();
+  const byBaseName = new Map<string, Array<Record<string, unknown>>>();
   const seenPageTokens = new Set<string>();
   let pageToken = "";
   let paginationComplete = false;
@@ -353,6 +354,12 @@ export async function kaggleOutputJsonFiles(
         if (!name) continue;
         if (byName.has(name)) throw new Error(`duplicate Kaggle output filename: ${name}`);
         byName.set(name, rec);
+        const baseName = name.split("/").filter(Boolean).pop() ?? "";
+        if (baseName) {
+          const matches = byBaseName.get(baseName) ?? [];
+          matches.push(rec);
+          byBaseName.set(baseName, matches);
+        }
       }
     }
     const nextPageToken = String(listing.nextPageToken ?? "").trim();
@@ -369,8 +376,18 @@ export async function kaggleOutputJsonFiles(
   if (!paginationComplete) throw new Error("Kaggle output pagination exceeded bounded page limit");
   const outputs: Array<Record<string, unknown>> = [];
   for (const name of exactNames) {
-    const item = byName.get(name);
+    let item: Record<string, unknown> | undefined;
+    if (name.includes("/")) {
+      item = byName.get(name);
+    } else {
+      const matches = byBaseName.get(name) ?? [];
+      if (matches.length > 1) {
+        throw new Error(`requested Kaggle output JSON basename is ambiguous: ${name}`);
+      }
+      item = matches[0];
+    }
     if (!item) throw new Error(`requested Kaggle output JSON not found: ${name}`);
+    const sourceFileName = String(item.fileName ?? "");
     const rawUrl = String(item.url ?? "");
     let url: URL;
     try { url = new URL(rawUrl); }
@@ -392,7 +409,7 @@ export async function kaggleOutputJsonFiles(
     if (!value || typeof value !== "object") {
       throw new Error(`output JSON must be object/array: ${name}`);
     }
-    outputs.push({ file_name: name, json: value });
+    outputs.push({ file_name: name, source_file_name: sourceFileName, json: value });
   }
   return {
     account_id: accountId,
