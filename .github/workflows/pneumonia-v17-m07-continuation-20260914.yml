@@ -1418,23 +1418,30 @@ jobs:
 
           expected_name=f'M07_RUNTIME_R{resolution}_A{attempt:02d}_RECEIPT.json'
           matches=[]
-          previous=None
-          for page in range(1,21):
+          page_token=''
+          seen_page_tokens=set()
+          for _ in range(20):
+              body={'userName':owner,'kernelSlug':kernel_slug,'pageSize':50}
+              if page_token:
+                  body['pageToken']=page_token
               listing=read({
                   'action':'raw_read','account_id':account_id,
                   'service':'kernels.KernelsApiService','method':'ListKernelSessionOutput',
-                  'body':{'userName':owner,'kernelSlug':kernel_slug,'page':page,'pageSize':10},
+                  'body':body,
               },timeout=60)
               files=listing.get('files') or []
-              signature=tuple(str(item.get('fileName','')) for item in files if isinstance(item,dict))
-              if page>1 and signature and signature==previous:
-                  raise SystemExit('BLOCKED_VALIDATION_INFRASTRUCTURE: output pagination did not advance')
-              previous=signature
               for item in files:
                   if isinstance(item,dict) and pathlib.PurePosixPath(str(item.get('fileName',''))).name==expected_name:
                       matches.append(item)
-              if len(files)<10:
+              next_token=str(listing.get('nextPageToken') or '')
+              if not next_token:
                   break
+              if next_token==page_token or next_token in seen_page_tokens:
+                  raise SystemExit('BLOCKED_VALIDATION_INFRASTRUCTURE: output page token did not advance')
+              seen_page_tokens.add(next_token)
+              page_token=next_token
+          else:
+              raise SystemExit('BLOCKED_VALIDATION_INFRASTRUCTURE: output pagination exceeded bounded page limit')
           if len(matches)!=1:
               raise SystemExit(f'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime_receipt_matches={len(matches)} expected={expected_name}')
           url=str(matches[0].get('url') or '')
