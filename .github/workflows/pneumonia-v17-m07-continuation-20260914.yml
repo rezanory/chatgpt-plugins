@@ -1477,6 +1477,43 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  validate-existing-m07-r320-a13:
+    name: Validate existing M07 R320 A13 output
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main' &&
+          github.event.inputs.recovery == 'M07_VALIDATE_EXISTING_R320_A13' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate exact existing A13 scientific receipt
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python scripts/m07_validate_existing_runtime.py `
+            --token M07_RUNTIME_M07_R320_A13 `
+            --kernel-ref trickermark/m07-runtime-r320-a13-20260917-35265801216 `
+            --account-id kg-05 `
+            --expected-receipt M07_RUNTIME_R320_A13_RECEIPT.json `
+            --output-dir existing-runtime-evidence
+          if($LASTEXITCODE-ne 0){throw 'M07 existing A13 scientific validation failed'}
+
+      - name: Preserve existing-runtime validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-existing-a13-validation-${{ github.run_id }}
+          path: existing-runtime-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
   launch-exact-runtime-from-artifact:
     name: Launch exact M07 runtime candidate
     needs: launch-m07-continuation
