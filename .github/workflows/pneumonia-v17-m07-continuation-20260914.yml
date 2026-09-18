@@ -1417,43 +1417,32 @@ jobs:
               )
 
           expected_name=f'M07_RUNTIME_R{resolution}_A{attempt:02d}_RECEIPT.json'
-          matches=[]
-          page_token=''
-          seen_page_tokens=set()
-          for _ in range(20):
-              body={'userName':owner,'kernelSlug':kernel_slug,'pageSize':50}
-              if page_token:
-                  body['pageToken']=page_token
-              listing=read({
-                  'action':'raw_read','account_id':account_id,
-                  'service':'kernels.KernelsApiService','method':'ListKernelSessionOutput',
-                  'body':body,
-              },timeout=60)
-              files=listing.get('files') or []
-              for item in files:
-                  if isinstance(item,dict) and pathlib.PurePosixPath(str(item.get('fileName',''))).name==expected_name:
-                      matches.append(item)
-              next_token=str(listing.get('nextPageToken') or '')
-              if not next_token:
-                  break
-              if next_token==page_token or next_token in seen_page_tokens:
-                  raise SystemExit('BLOCKED_VALIDATION_INFRASTRUCTURE: output page token did not advance')
-              seen_page_tokens.add(next_token)
-              page_token=next_token
-          else:
-              raise SystemExit('BLOCKED_VALIDATION_INFRASTRUCTURE: output pagination exceeded bounded page limit')
-          if len(matches)!=1:
-              raise SystemExit(f'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime_receipt_matches={len(matches)} expected={expected_name}')
-          url=str(matches[0].get('url') or '')
-          parsed=urllib.parse.urlparse(url)
-          if parsed.scheme!='https' or parsed.hostname!='www.kaggleusercontent.com':
-              raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: unsafe runtime receipt URL')
-          req=urllib.request.Request(url,headers={'User-Agent':'m07-runtime-terminal/2.0'})
-          with urllib.request.urlopen(req,timeout=90) as response:
-              raw=response.read(262145)
-          if len(raw)>262144:
-              raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime receipt exceeds bounded size')
-          scientific=json.loads(raw.decode('utf-8-sig'))
+          exact_output=read({
+              'action':'output_json_files',
+              'account_id':account_id,
+              'kernel_ref':kernel_ref,
+              'file_names':[expected_name],
+              'max_bytes_per_file':262144,
+          },timeout=180)
+          if exact_output.get('account_id')!=account_id or exact_output.get('kernel_ref')!=kernel_ref:
+              raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: output broker identity drift')
+          if exact_output.get('signed_urls_returned') is not False:
+              raise SystemExit('BLOCKED_VALIDATION_INFRASTRUCTURE: signed output URLs escaped read broker')
+          exact_files=exact_output.get('files')
+          if not isinstance(exact_files,list) or len(exact_files)!=1:
+              count=0 if not isinstance(exact_files,list) else len(exact_files)
+              raise SystemExit(
+                  f'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime_receipt_matches={count} expected={expected_name}'
+              )
+          exact_item=exact_files[0]
+          if not isinstance(exact_item,dict) or exact_item.get('file_name')!=expected_name:
+              raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: output broker requested-file drift')
+          source_name=str(exact_item.get('source_file_name') or '')
+          if pathlib.PurePosixPath(source_name).name!=expected_name:
+              raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime receipt source basename drift')
+          scientific=exact_item.get('json')
+          if not isinstance(scientific,dict):
+              raise SystemExit('BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime receipt JSON missing')
           report=validate_runtime_receipt(scientific,token=runtime_token)
           scientific_path=evidence_dir/expected_name
           scientific_path.write_text(json.dumps(scientific,ensure_ascii=False,indent=2),encoding='utf-8')
