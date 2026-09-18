@@ -18,7 +18,7 @@ const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   ],
   [
     "rezanory/chatgpt-plugins/.github/workflows/m07-a13-readonly-evidence-probe.yml@refs/heads/main",
-    new Set(["issue_comment", "push"]),
+    new Set(["issue_comment", "push", "workflow_dispatch"]),
   ],
 ]);
 const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
