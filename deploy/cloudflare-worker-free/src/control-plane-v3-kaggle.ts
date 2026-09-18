@@ -328,21 +328,45 @@ export async function kaggleOutputJsonFiles(
     if (exactNames.has(name)) throw new Error("file_names must be unique");
     exactNames.add(name);
   }
-  const listing = await kaggleReadCall(env, {
-    accountId,
-    service: "kernels.KernelsApiService",
-    method: "ListKernelSessionOutput",
-    body: { userName: ACCOUNTS[accountId].owner, kernelSlug: slug, pageSize: 100 },
-  });
-  const files = Array.isArray(listing.files) ? listing.files : [];
   const byName = new Map<string, Record<string, unknown>>();
-  for (const item of files) {
-    if (item && typeof item === "object" && !Array.isArray(item)) {
-      const rec = item as Record<string, unknown>;
-      const name = String(rec.fileName ?? "");
-      if (name) byName.set(name, rec);
+  const seenPageTokens = new Set<string>();
+  let pageToken = "";
+  let paginationComplete = false;
+  for (let page = 0; page < 20; page += 1) {
+    const body: Record<string, unknown> = {
+      userName: ACCOUNTS[accountId].owner,
+      kernelSlug: slug,
+      pageSize: 200,
+    };
+    if (pageToken) body.pageToken = pageToken;
+    const listing = await kaggleReadCall(env, {
+      accountId,
+      service: "kernels.KernelsApiService",
+      method: "ListKernelSessionOutput",
+      body,
+    });
+    const files = Array.isArray(listing.files) ? listing.files : [];
+    for (const item of files) {
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const rec = item as Record<string, unknown>;
+        const name = String(rec.fileName ?? "");
+        if (!name) continue;
+        if (byName.has(name)) throw new Error(`duplicate Kaggle output filename: ${name}`);
+        byName.set(name, rec);
+      }
     }
+    const nextPageToken = String(listing.nextPageToken ?? "").trim();
+    if (!nextPageToken) {
+      paginationComplete = true;
+      break;
+    }
+    if (seenPageTokens.has(nextPageToken)) {
+      throw new Error("Kaggle output pagination token repeated");
+    }
+    seenPageTokens.add(nextPageToken);
+    pageToken = nextPageToken;
   }
+  if (!paginationComplete) throw new Error("Kaggle output pagination exceeded bounded page limit");
   const outputs: Array<Record<string, unknown>> = [];
   for (const name of exactNames) {
     const item = byName.get(name);
