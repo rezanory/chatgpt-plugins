@@ -1,6 +1,8 @@
 name: m07-a13-readonly-evidence-probe
 
 on:
+  push:
+    branches: [main]
   issue_comment:
     types: [created]
 
@@ -11,9 +13,12 @@ permissions:
 jobs:
   probe:
     if: >-
-      ${{ github.event.issue.number == 33 &&
-          github.event.comment.user.id == 62356000 &&
-          github.event.comment.body == 'M07_A13_READONLY_EVIDENCE_PROBE_V1' }}
+      ${{ (github.event_name == 'push' &&
+           startsWith(github.event.head_commit.message, 'M07 A13 read-only evidence probe trigger')) ||
+          (github.event_name == 'issue_comment' &&
+           github.event.issue.number == 33 &&
+           github.event.comment.user.id == 62356000 &&
+           github.event.comment.body == 'M07_A13_READONLY_EVIDENCE_PROBE_V1') }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 20
     steps:
