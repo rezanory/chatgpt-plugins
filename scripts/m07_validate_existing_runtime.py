@@ -120,6 +120,24 @@ def download_json(url: str) -> dict:
     return value
 
 
+def find_output_listing(value: object) -> tuple[list[object], str] | None:
+    if isinstance(value, dict):
+        files = value.get("files")
+        if isinstance(files, list):
+            if not files or any(isinstance(item, dict) and item.get("fileName") for item in files):
+                return files, str(value.get("nextPageToken") or "").strip()
+        for child in value.values():
+            found = find_output_listing(child)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = find_output_listing(child)
+            if found is not None:
+                return found
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--token", required=True)
@@ -163,6 +181,7 @@ def main() -> int:
         raise SystemExit(f"M07_EXISTING_RUNTIME_NOT_COMPLETE:{state}")
 
     matches: list[dict] = []
+    inventory_names: list[str] = []
     page_token = ""
     seen_tokens: set[str] = set()
     for _ in range(20):
@@ -173,7 +192,7 @@ def main() -> int:
         }
         if page_token:
             body["pageToken"] = page_token
-        listing = broker.read(
+        raw_listing = broker.read(
             {
                 "action": "raw_read",
                 "account_id": args.account_id,
@@ -183,17 +202,20 @@ def main() -> int:
             },
             timeout=90,
         )
-        files = listing.get("files") or []
-        if not isinstance(files, list):
+        found = find_output_listing(raw_listing)
+        if found is None:
             raise SystemExit("BLOCKED_VALIDATION_INFRASTRUCTURE: output files list missing")
+        files, listing_token = found
         for item in files:
-            if (
-                isinstance(item, dict)
-                and pathlib.PurePosixPath(str(item.get("fileName", ""))).name == args.expected_receipt
-            ):
+            if not isinstance(item, dict):
+                continue
+            file_name = str(item.get("fileName") or "")
+            if file_name:
+                inventory_names.append(file_name)
+            if pathlib.PurePosixPath(file_name).name == args.expected_receipt:
                 matches.append(item)
 
-        next_token = str(listing.get("nextPageToken") or "").strip()
+        next_token = listing_token
         if not next_token:
             break
         if next_token in seen_tokens:
@@ -203,6 +225,10 @@ def main() -> int:
     else:
         raise SystemExit("BLOCKED_VALIDATION_INFRASTRUCTURE: output pagination exceeded bounded page limit")
 
+    (out / "output-inventory.json").write_text(
+        json.dumps({"kernel_ref": args.kernel_ref, "file_names": inventory_names}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     if len(matches) != 1:
         raise SystemExit(
             f"BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime_receipt_matches={len(matches)} "
