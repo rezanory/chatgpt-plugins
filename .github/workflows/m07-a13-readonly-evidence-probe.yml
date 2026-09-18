@@ -19,7 +19,10 @@ jobs:
            github.event.issue.number == 33 &&
            github.event.comment.user.id == 62356000 &&
            github.event.comment.body == 'M07_A13_READONLY_EVIDENCE_PROBE_V1') }}
-    runs-on: ubuntu-latest
+    # GitHub-hosted jobs are currently failing before runner steps because the
+    # account has no hosted-runner capacity. Reuse the online v622 self-hosted
+    # runner; this workflow remains strictly read-only and launches no Kaggle compute.
+    runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 20
     steps:
       - name: Checkout exact default-branch revision
@@ -28,12 +31,15 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Recover exact existing A13 evidence read-only
-        shell: bash
+        shell: powershell
         env:
           M07_EVIDENCE_DIR: m07-a13-readonly-evidence
         run: |
-          set -euo pipefail
-          python scripts/m07_probe_a13_evidence.py
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python scripts/m07_probe_a13_evidence.py
+          if($LASTEXITCODE -ne 0){throw "A13 read-only evidence probe failed with exit code $LASTEXITCODE"}
 
       - name: Preserve A13 read-only evidence
         if: always()
