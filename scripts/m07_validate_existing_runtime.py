@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 
 from m07_runtime_contract import (
+    canonical_fingerprint,
     extract_session_state,
     expected_runtime_contract,
     validate_runtime_receipt,
@@ -221,11 +222,37 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
-    report = validate_runtime_receipt(scientific, token=args.token)
+    # Preserve the exact fetched scientific object before fail-closed acceptance.
+    # This is read-only diagnostic evidence and never permits a seal mismatch.
     (out / args.expected_receipt).write_text(
-        json.dumps(scientific, ensure_ascii=False, indent=2),
+        json.dumps(scientific, ensure_ascii=False, indent=2, allow_nan=False),
         encoding="utf-8",
     )
+    receipt_body = {key: value for key, value in scientific.items() if key != "receipt_sha256"}
+    observed_receipt_sha = str(scientific.get("receipt_sha256") or "").lower()
+    expected_receipt_sha = canonical_fingerprint(receipt_body)
+    run_contract = scientific.get("run_contract") if isinstance(scientific.get("run_contract"), dict) else {}
+    observed_run_fp = str(scientific.get("run_fingerprint") or "").lower()
+    expected_run_fp = canonical_fingerprint(run_contract) if run_contract else ""
+    seal_diagnostic = {
+        "schema": "m07.d260914d.runtime.receipt-seal-diagnostic.v1",
+        "status": "PASS" if observed_receipt_sha == expected_receipt_sha else "SEAL_MISMATCH",
+        "kernel_ref": args.kernel_ref,
+        "runtime_token": args.token,
+        "source_file_name": source_file_name,
+        "observed_receipt_sha256": observed_receipt_sha,
+        "expected_receipt_sha256": expected_receipt_sha,
+        "receipt_seal_matches": observed_receipt_sha == expected_receipt_sha,
+        "observed_run_fingerprint": observed_run_fp,
+        "expected_run_fingerprint": expected_run_fp,
+        "run_fingerprint_matches": bool(expected_run_fp) and observed_run_fp == expected_run_fp,
+        "top_level_keys": sorted(scientific),
+    }
+    (out / "receipt-seal-diagnostic.json").write_text(
+        json.dumps(seal_diagnostic, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    report = validate_runtime_receipt(scientific, token=args.token)
     evidence = {
         "schema": "m07.d260914d.runtime.existing-output-validation.v1",
         "status": "SCIENTIFIC_RECEIPT_PASS",
