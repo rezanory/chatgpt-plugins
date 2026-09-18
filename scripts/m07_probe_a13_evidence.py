@@ -218,9 +218,9 @@ def main() -> int:
     require(partial.get("five_fold_ready") is True, "partial five-fold boundary not ready")
     require(partial.get("next_action") == "VALIDATE_FIVE_FOLD_STATE_BEFORE_LOCKED_TEST", "partial next-action drift")
 
-    require(fold5.get("status") == "COMPLETE", "Fold5 receipt status is not COMPLETE")
+    require(fold5.get("status") == "COMPLETED", "Fold5 receipt status is not COMPLETED")
     require(fold5.get("model_id") == "M07" and fold5.get("resolution") == 320, "Fold5 identity drift")
-    require(fold5.get("fold") == 5, "Fold5 receipt fold identity drift")
+    require(fold5.get("fold_id") == 5, "Fold5 receipt fold identity drift")
     require(fold5.get("locked_test_used_for_training") is False, "Fold5 used Locked Test for training")
     require(fold5.get("external_used_for_training") is False, "Fold5 used external data for training")
 
