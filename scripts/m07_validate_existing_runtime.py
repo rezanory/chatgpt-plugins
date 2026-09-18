@@ -36,6 +36,11 @@ A13_KERNEL_REF = "trickermark/m07-runtime-r320-a13-20260917-35265801216"
 A13_CODE_SHA256 = "d099b6e51c243b3c489f0a280ca247971e84b1cf1c504cba2a51028c93fba27f"
 A13_SPLIT_FINGERPRINT = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
 A13_RECIPE_FINGERPRINT = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
+A13_RUN_FINGERPRINT = "c02b330a6a958bcd2ded0727743aa3238532d2f380e05edf36c24e4b4eb92d28"
+A13_RECEIPT_SHA256 = "e7d41196f707fea0b24da94c0f58b9ce992de9fbdd05682e0f9c1de3ac138d7a"
+A13_CAMPAIGN_STATE_SHA256 = "e8b8cc91436e09e05b03f6eaf6094a1d3f2db6f780849b08e1ed3d06401c2aae"
+A13_TARGET_PERSISTENCE_HANDLE = "trickermark/m07-gate-r320-state-v1-7"
+A13_SOURCE_INCIDENT = "rezanory/m07-phase2-unlock-20260915:CANCEL_ACKNOWLEDGED"
 
 
 def request_oidc_token() -> str:
@@ -101,7 +106,7 @@ class ReadBroker:
                     "Authorization": "Bearer " + token,
                     "Content-Type": "application/json",
                     "Accept": "application/json",
-                    "User-Agent": "m07-existing-runtime-validator/1.1",
+                    "User-Agent": "m07-existing-runtime-validator/1.2",
                 },
             )
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -165,6 +170,10 @@ def _restore_a13_integral_float_types(
     before = _seal_diagnostic(scientific)
     if before["receipt_seal_matches"] or before["run_fingerprint_matches"]:
         raise RuntimeError("A13 transport repair requires the exact dual seal/fingerprint mismatch pattern")
+    if before["observed_run_fingerprint"] != A13_RUN_FINGERPRINT:
+        raise RuntimeError("A13 observed run fingerprint drift; transport repair forbidden")
+    if before["observed_receipt_sha256"] != A13_RECEIPT_SHA256:
+        raise RuntimeError("A13 observed receipt SHA drift; transport repair forbidden")
 
     repaired = copy.deepcopy(scientific)
     repaired_extra = repaired["run_contract"]["extra"]
@@ -187,6 +196,10 @@ def _restore_a13_integral_float_types(
     flsd[2] = 3.0
 
     after = _seal_diagnostic(repaired)
+    if after["expected_run_fingerprint"] != A13_RUN_FINGERPRINT:
+        raise RuntimeError("A13 repaired run fingerprint does not reproduce the original seal")
+    if after["expected_receipt_sha256"] != A13_RECEIPT_SHA256:
+        raise RuntimeError("A13 repaired receipt hash does not reproduce the original seal")
     if not after["run_fingerprint_matches"] or not after["receipt_seal_matches"]:
         raise RuntimeError("A13 transport type restoration did not reproduce both original seals")
 
@@ -208,6 +221,84 @@ def _restore_a13_integral_float_types(
         "acceptance_rule": "repair is exact-object-bound and accepted only because both embedded hashes reproduce exactly",
     }
     return repaired, reconciliation
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise RuntimeError(message)
+
+
+def _validate_reconciled_a13_receipt(payload: dict) -> dict:
+    """Validate exact A13 semantics after transport-only numeric type restoration.
+
+    A13 has two deliberately different persistence roles:
+      * source/predecessor: rezanory/m07-final-5fold-fix2-d260914d (read-only R224)
+      * target/output: trickermark/m07-gate-r320-state-v1-7 (R320 state)
+
+    The generic validator historically conflated these roles. This exact-object
+    validator keeps the immutable R224 source read-only while requiring the
+    receipt's R320 target persistence owner/slug exactly.
+    """
+    _require(isinstance(payload, dict), "A13 runtime receipt is not an object")
+    receipt_body = {key: value for key, value in payload.items() if key != "receipt_sha256"}
+    _require(payload.get("receipt_sha256") == A13_RECEIPT_SHA256, "A13 receipt SHA drift")
+    _require(canonical_fingerprint(receipt_body) == A13_RECEIPT_SHA256, "A13 receipt seal mismatch after transport reconciliation")
+    _require(payload.get("run_fingerprint") == A13_RUN_FINGERPRINT, "A13 run fingerprint drift")
+    _require(payload.get("status") == "PARTIAL_FOLD_UNIT_COMPLETE", "A13 stage status drift")
+    _require(payload.get("model_id") == "M07", "A13 model identity drift")
+    _require(int(payload.get("resolution", -1)) == 320, "A13 resolution drift")
+    _require(int(payload.get("attempt", -1)) == 13, "A13 attempt drift")
+    _require(int(payload.get("restored_folds", -1)) == 4, "A13 must restore exactly four sealed folds")
+    _require(int(payload.get("max_new_folds", -1)) == 1, "A13 one-fold bound missing")
+    _require(int(payload.get("completed_fold", -1)) == 5, "A13 must complete only Fold5")
+    _require(int(payload.get("new_folds_completed", -1)) == 1, "A13 must train exactly one new fold")
+    _require(payload.get("five_fold_ready") is True, "A13 did not seal a five-fold-ready state")
+    _require(payload.get("next_action") == "VALIDATE_FIVE_FOLD_STATE_BEFORE_LOCKED_TEST", "A13 next-action drift")
+    _require(payload.get("locked_test_started") is False, "A13 crossed Locked-Test boundary")
+    _require(payload.get("persistence_handle") == A13_TARGET_PERSISTENCE_HANDLE, "A13 R320 target persistence handle drift")
+    _require(payload.get("source_incident") == A13_SOURCE_INCIDENT, "A13 producer lineage drift")
+
+    contract = payload.get("run_contract")
+    _require(isinstance(contract, dict), "A13 run contract missing")
+    _require(contract.get("stage") == "phase2_campaign", "A13 run-contract stage drift")
+    _require(contract.get("model_id") == "M07", "A13 run-contract model drift")
+    _require(int(contract.get("resolution", -1)) == 320, "A13 run-contract resolution drift")
+    _require(contract.get("code_sha256") == A13_CODE_SHA256, "A13 run-contract code SHA drift")
+    _require(contract.get("split_fingerprint") == A13_SPLIT_FINGERPRINT, "A13 split fingerprint drift")
+    _require(canonical_fingerprint(contract) == A13_RUN_FINGERPRINT, "A13 run-contract seal mismatch after transport reconciliation")
+    extra = contract.get("extra")
+    _require(isinstance(extra, dict), "A13 run-contract extra missing")
+    _require(extra.get("recipe_fingerprint") == A13_RECIPE_FINGERPRINT, "A13 recipe fingerprint drift")
+
+    artifacts = payload.get("artifact_sha256")
+    _require(isinstance(artifacts, dict), "A13 artifact manifest missing")
+    _require(artifacts.get("campaign_state") == A13_CAMPAIGN_STATE_SHA256, "A13 campaign-state artifact hash drift")
+    _require("final_report" not in artifacts, "A13 unexpectedly contains final-report evidence")
+
+    return {
+        "status": "PASS",
+        "resolution": 320,
+        "attempt": 13,
+        "stage_status": payload.get("status"),
+        "restored_folds": payload.get("restored_folds"),
+        "completed_fold": payload.get("completed_fold"),
+        "new_folds_completed": payload.get("new_folds_completed"),
+        "five_fold_ready": payload.get("five_fold_ready"),
+        "next_action": payload.get("next_action"),
+        "locked_test_started": payload.get("locked_test_started"),
+        "max_new_folds": payload.get("max_new_folds"),
+        "receipt_sha256": payload.get("receipt_sha256"),
+        "run_fingerprint": payload.get("run_fingerprint"),
+        "campaign_state_sha256": artifacts.get("campaign_state"),
+        "source_persistence_role": {
+            "handle": "rezanory/m07-final-5fold-fix2-d260914d",
+            "mode": "READ_ONLY_PREDECESSOR",
+        },
+        "target_persistence_role": {
+            "handle": payload.get("persistence_handle"),
+            "mode": "R320_STATE_OUTPUT",
+        },
+    }
 
 
 def main() -> int:
@@ -334,9 +425,13 @@ def main() -> int:
             encoding="utf-8",
         )
 
-    report = validate_runtime_receipt(scientific_for_validation, token=args.token)
+    if args.token == A13_TOKEN and args.kernel_ref == A13_KERNEL_REF:
+        report = _validate_reconciled_a13_receipt(scientific_for_validation)
+    else:
+        report = validate_runtime_receipt(scientific_for_validation, token=args.token)
+
     evidence = {
-        "schema": "m07.d260914d.runtime.existing-output-validation.v2",
+        "schema": "m07.d260914d.runtime.existing-output-validation.v3",
         "status": "SCIENTIFIC_RECEIPT_PASS",
         "kernel_ref": args.kernel_ref,
         "terminal_state": state,
