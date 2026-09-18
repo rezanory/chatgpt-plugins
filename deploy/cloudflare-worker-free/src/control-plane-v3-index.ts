@@ -27,6 +27,10 @@ const ACCOUNTS = new Set<AccountId>([
   "master",
 ]);
 const SECRET_KEY = /(token|secret|password|authorization|credential|api[_-]?key|cookie|signed[_-]?url)/i;
+// Safe boolean sentinels may contain a secret-like word in the key while
+// intentionally carrying no secret material. Preserve their boolean value so
+// fail-closed callers can prove that sensitive URLs did not escape the Worker.
+const SAFE_SECRET_METADATA_KEYS = new Set(["signed_urls_returned"]);
 const SECRET_VALUE = /(KGAT_[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._~-]+|Basic\s+[A-Za-z0-9+/=]+|X-Goog-Signature=|X-Amz-Signature=)/i;
 const MAX_RESPONSE_CHARS = 200_000;
 
@@ -62,7 +66,11 @@ function sanitize(value: unknown, depth = 0): unknown {
   if (!value || typeof value !== "object") return String(value ?? "");
   const result: Rec = {};
   for (const [key, child] of Object.entries(value as Rec).slice(0, 2000)) {
-    result[key] = SECRET_KEY.test(key) ? "<redacted>" : sanitize(child, depth + 1);
+    if (SECRET_KEY.test(key)) {
+      result[key] = SAFE_SECRET_METADATA_KEYS.has(key) && typeof child === "boolean" ? child : "<redacted>";
+    } else {
+      result[key] = sanitize(child, depth + 1);
+    }
   }
   return result;
 }
