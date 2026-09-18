@@ -88,7 +88,10 @@ def kaggle_output_json_files(payload: dict[str, Any]) -> Any:
         body: dict[str, Any] = {
             "userName": owner,
             "kernelSlug": slug,
-            "pageSize": 50,
+            # A13 proved token paging can surface a Kaggle 500 on the continuation page.
+            # Request the bounded output inventory in one page when possible; the
+            # token loop remains as a fail-closed fallback for unusually large outputs.
+            "pageSize": 200,
         }
         if page_token:
             body["pageToken"] = page_token
