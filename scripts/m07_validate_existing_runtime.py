@@ -180,62 +180,43 @@ def main() -> int:
         )
         raise SystemExit(f"M07_EXISTING_RUNTIME_NOT_COMPLETE:{state}")
 
-    matches: list[dict] = []
-    inventory_names: list[str] = []
-    page_token = ""
-    seen_tokens: set[str] = set()
-    for _ in range(20):
-        body: dict[str, object] = {
-            "userName": owner,
-            "kernelSlug": kernel_slug,
-            "pageSize": 200,
-        }
-        if page_token:
-            body["pageToken"] = page_token
-        raw_listing = broker.read(
-            {
-                "action": "raw_read",
-                "account_id": args.account_id,
-                "service": "kernels.KernelsApiService",
-                "method": "ListKernelSessionOutput",
-                "body": body,
-            },
-            timeout=90,
-        )
-        found = find_output_listing(raw_listing)
-        if found is None:
-            raise SystemExit("BLOCKED_VALIDATION_INFRASTRUCTURE: output files list missing")
-        files, listing_token = found
-        for item in files:
-            if not isinstance(item, dict):
-                continue
-            file_name = str(item.get("fileName") or "")
-            if file_name:
-                inventory_names.append(file_name)
-            if pathlib.PurePosixPath(file_name).name == args.expected_receipt:
-                matches.append(item)
-
-        next_token = listing_token
-        if not next_token:
-            break
-        if next_token in seen_tokens:
-            raise SystemExit("BLOCKED_VALIDATION_INFRASTRUCTURE: output pagination token repeated")
-        seen_tokens.add(next_token)
-        page_token = next_token
-    else:
-        raise SystemExit("BLOCKED_VALIDATION_INFRASTRUCTURE: output pagination exceeded bounded page limit")
-
-    (out / "output-inventory.json").write_text(
-        json.dumps({"kernel_ref": args.kernel_ref, "file_names": inventory_names}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    output = broker.read(
+        {
+            "action": "output_json_files",
+            "account_id": args.account_id,
+            "kernel_ref": args.kernel_ref,
+            "file_names": [args.expected_receipt],
+            "max_bytes_per_file": 262144,
+        },
+        timeout=120,
     )
-    if len(matches) != 1:
+    if output.get("account_id") != args.account_id or output.get("kernel_ref") != args.kernel_ref:
+        raise SystemExit("BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: output broker identity drift")
+    files = output.get("files")
+    if not isinstance(files, list) or len(files) != 1:
+        count = len(files) if isinstance(files, list) else -1
         raise SystemExit(
-            f"BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime_receipt_matches={len(matches)} "
+            f"BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime_receipt_matches={count} "
             f"expected={args.expected_receipt}"
         )
-
-    scientific = download_json(str(matches[0].get("url") or ""))
+    item = files[0]
+    if not isinstance(item, dict) or item.get("file_name") != args.expected_receipt:
+        raise SystemExit("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: exact runtime receipt name mismatch")
+    scientific = item.get("json")
+    if not isinstance(scientific, dict):
+        raise SystemExit("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: runtime receipt JSON object missing")
+    (out / "output-inventory.json").write_text(
+        json.dumps(
+            {
+                "kernel_ref": args.kernel_ref,
+                "file_names": [args.expected_receipt],
+                "signed_urls_returned": output.get("signed_urls_returned"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     report = validate_runtime_receipt(scientific, token=args.token)
     (out / args.expected_receipt).write_text(
         json.dumps(scientific, ensure_ascii=False, indent=2),
