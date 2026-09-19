@@ -66,7 +66,7 @@ jobs:
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           $script=@'
-          import datetime, json, os, pathlib, re, time, urllib.error, urllib.request
+          import datetime, http.client, json, os, pathlib, re, time, urllib.error, urllib.request
 
           REPO = "rezanory/chatgpt-plugins"
           COMMENTS = f"https://api.github.com/repos/{REPO}/issues/33/comments"
@@ -121,7 +121,7 @@ jobs:
                       if exc.code not in {408, 429} and not 500 <= exc.code <= 599:
                           raise
                       last_error = exc
-                  except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                  except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
                       last_error = exc
                   if attempt >= 4:
                       break
