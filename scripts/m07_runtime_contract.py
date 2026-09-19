@@ -9,6 +9,7 @@ receipt after the exact kernel reaches a terminal state.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -19,6 +20,7 @@ CAMPAIGN_ID = "d260914d"
 PERSISTENCE_HANDLE = "rezanory/m07-final-5fold-fix2-d260914d"
 R320_BRIDGE_HANDLE = "trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1"
 R320_BRIDGE_DATASET = "trickermark/m07-r320-producer-v4-bridge-e3884dd1"
+R320_STATE_HANDLE = "trickermark/m07-gate-r320-state-v1-7"
 R384_STATE_HANDLE = "trickermark/m07-gate-r384-state-v1-7"
 RAW_DATASET_HANDLE = "paultimothymooney/chest-xray-pneumonia"
 SPLIT_FINGERPRINT = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
@@ -59,6 +61,9 @@ def expected_runtime_contract(token: str) -> dict[str, Any]:
         "owner": "trickermark",
         "source_phase2_state_handle": R320_BRIDGE_HANDLE if resolution == 320 else None,
         "source_persistence_handle": PERSISTENCE_HANDLE,
+        "target_persistence_handle": (
+            R320_STATE_HANDLE if resolution == 320 else R384_STATE_HANDLE
+        ),
         "max_new_folds": 1,
         "machine_shape": "NvidiaTeslaT4",
         "execution_scope": "SETUP_DEFINITIONS_EXACT_RUNTIME_STAGE_ONLY",
@@ -214,6 +219,120 @@ def canonical_fingerprint(value: Any) -> str:
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise ContractError(message)
+
+
+def _runtime_receipt_seal_diagnostic(payload: dict[str, Any]) -> dict[str, Any]:
+    contract = payload.get("run_contract")
+    body = {key: value for key, value in payload.items() if key != "receipt_sha256"}
+    observed_receipt = str(payload.get("receipt_sha256") or "").lower()
+    observed_run = str(payload.get("run_fingerprint") or "").lower()
+    expected_receipt = canonical_fingerprint(body)
+    expected_run = canonical_fingerprint(contract) if isinstance(contract, dict) else ""
+    return {
+        "observed_receipt_sha256": observed_receipt,
+        "expected_receipt_sha256": expected_receipt,
+        "receipt_seal_matches": observed_receipt == expected_receipt,
+        "observed_run_fingerprint": observed_run,
+        "expected_run_fingerprint": expected_run,
+        "run_fingerprint_matches": bool(expected_run) and observed_run == expected_run,
+    }
+
+
+def _reconcile_runtime_transport_number_types(
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Restore only the proven JS integral-float normalization pattern.
+
+    The read broker parses provider JSON in JavaScript, which cannot preserve the
+    distinction between Python integral floats such as ``2.0`` and integers such
+    as ``2``.  Reconciliation is accepted only when restoring the three known
+    recipe fields reproduces *both* immutable embedded hashes exactly.
+    """
+    before = _runtime_receipt_seal_diagnostic(payload)
+    if before["receipt_seal_matches"] and before["run_fingerprint_matches"]:
+        return payload, {
+            "status": "NOT_REQUIRED",
+            "cause": None,
+            "restored_fields": [],
+            "before": before,
+            "after": before,
+        }
+
+    _require(
+        bool(SHA256_RE.fullmatch(before["observed_receipt_sha256"])),
+        "runtime receipt SHA missing/invalid",
+    )
+    _require(
+        bool(SHA256_RE.fullmatch(before["observed_run_fingerprint"])),
+        "runtime run fingerprint missing/invalid",
+    )
+    _require(
+        not before["receipt_seal_matches"] and not before["run_fingerprint_matches"],
+        "runtime receipt seal mismatch; fingerprint mismatch is not the known transport pattern",
+    )
+
+    repaired = copy.deepcopy(payload)
+    contract = repaired.get("run_contract")
+    _require(isinstance(contract, dict), "runtime run contract missing")
+    extra = contract.get("extra")
+    _require(isinstance(extra, dict), "runtime run-contract extra missing")
+
+    static_value = extra.get("static_focal_gamma")
+    _require(
+        not isinstance(static_value, bool)
+        and type(static_value) is int
+        and static_value == 2,
+        "runtime static_focal_gamma transport pattern mismatch",
+    )
+    flsd = extra.get("flsd")
+    _require(
+        isinstance(flsd, list)
+        and len(flsd) == 3
+        and type(flsd[0]) is float
+        and flsd[0] == 0.2,
+        "runtime FLSD transport pattern mismatch",
+    )
+    _require(
+        not isinstance(flsd[1], bool) and type(flsd[1]) is int and flsd[1] == 5,
+        "runtime hard-gamma transport pattern mismatch",
+    )
+    _require(
+        not isinstance(flsd[2], bool) and type(flsd[2]) is int and flsd[2] == 3,
+        "runtime easy-gamma transport pattern mismatch",
+    )
+
+    extra["static_focal_gamma"] = 2.0
+    flsd[1] = 5.0
+    flsd[2] = 3.0
+    after = _runtime_receipt_seal_diagnostic(repaired)
+    _require(
+        after["run_fingerprint_matches"] and after["receipt_seal_matches"],
+        "runtime transport type restoration did not reproduce both original seals",
+    )
+
+    return repaired, {
+        "status": "PASS",
+        "cause": "JS_JSON_NUMBER_NORMALIZATION_OF_INTEGRAL_FLOATS",
+        "restored_fields": [
+            {
+                "path": "/run_contract/extra/static_focal_gamma",
+                "transport_value": 2,
+                "sealed_python_value": 2.0,
+            },
+            {
+                "path": "/run_contract/extra/flsd/1",
+                "transport_value": 5,
+                "sealed_python_value": 5.0,
+            },
+            {
+                "path": "/run_contract/extra/flsd/2",
+                "transport_value": 3,
+                "sealed_python_value": 3.0,
+            },
+        ],
+        "before": before,
+        "after": after,
+    }
 
 
 def validate_runtime_artifact(
@@ -394,6 +513,7 @@ def extract_session_state(payload: Any) -> str | None:
 def validate_runtime_receipt(payload: dict[str, Any], *, token: str) -> dict[str, Any]:
     expected = expected_runtime_contract(token)
     _require(isinstance(payload, dict), "runtime receipt is not an object")
+    payload, transport_reconciliation = _reconcile_runtime_transport_number_types(payload)
     body = {key: value for key, value in payload.items() if key != "receipt_sha256"}
     receipt_sha = str(payload.get("receipt_sha256") or "").lower()
     _require(bool(SHA256_RE.fullmatch(receipt_sha)), "runtime receipt SHA missing/invalid")
@@ -403,7 +523,10 @@ def validate_runtime_receipt(payload: dict[str, Any], *, token: str) -> dict[str
     _require(int(payload.get("resolution", -1)) == expected["resolution"], "runtime receipt resolution mismatch")
     _require(int(payload.get("attempt", -1)) == expected["attempt"], "runtime receipt attempt mismatch")
     _require(int(payload.get("max_new_folds", -1)) == 1, "runtime receipt one-fold bound missing")
-    _require(payload.get("persistence_handle") == PERSISTENCE_HANDLE, "runtime receipt persistence handle mismatch")
+    _require(
+        payload.get("persistence_handle") == expected["target_persistence_handle"],
+        "runtime receipt persistence handle mismatch",
+    )
     if expected["resolution"] == 320:
         _require(
             int(payload.get("restored_folds", -1)) == 4,
@@ -421,7 +544,52 @@ def validate_runtime_receipt(payload: dict[str, Any], *, token: str) -> dict[str
             "R320 recovery next-action drift",
         )
         _require(payload.get("locked_test_started") is False, "R320 Fold5 recovery crossed the Locked-Test boundary")
+    elif expected["resolution"] == 384:
+        restored_folds = int(payload.get("restored_folds", -1))
+        completed_fold = int(payload.get("completed_fold", -1))
+        new_folds_completed = int(payload.get("new_folds_completed", -1))
+        _require(0 <= restored_folds <= 4, "R384 restored-fold inventory is out of range")
+        if expected["attempt"] == 1:
+            _require(restored_folds == 0, "R384 A01 must start from an empty sealed state")
+        else:
+            _require(restored_folds >= 1, "R384 continuation must restore at least one sealed fold")
+        _require(
+            payload.get("status") == "PARTIAL_FOLD_UNIT_COMPLETE",
+            "R384 bounded runtime must stop after one fold unit",
+        )
+        _require(new_folds_completed == 1, "R384 runtime must train exactly one new fold")
+        _require(
+            completed_fold == restored_folds + 1,
+            "R384 runtime did not complete the exact next sequential fold",
+        )
+        five_fold_ready = completed_fold == 5
+        _require(
+            payload.get("five_fold_ready") is five_fold_ready,
+            "R384 five-fold-ready boundary drift",
+        )
+        expected_next_action = (
+            "VALIDATE_FIVE_FOLD_STATE_BEFORE_LOCKED_TEST"
+            if five_fold_ready
+            else "LAUNCH_NEW_IMMUTABLE_CANDIDATE"
+        )
+        _require(
+            payload.get("next_action") == expected_next_action,
+            "R384 next-action drift",
+        )
+        _require(
+            payload.get("locked_test_started") is False,
+            "R384 runtime crossed the Locked-Test boundary",
+        )
     contract = payload.get("run_contract") or {}
+    run_fingerprint = str(payload.get("run_fingerprint") or "").lower()
+    _require(
+        bool(SHA256_RE.fullmatch(run_fingerprint)),
+        "runtime run fingerprint missing/invalid",
+    )
+    _require(
+        run_fingerprint == canonical_fingerprint(contract),
+        "runtime run fingerprint mismatch",
+    )
     _require(contract.get("stage") == "phase2_campaign", "runtime receipt stage mismatch")
     _require(contract.get("model_id") == "M07", "runtime run contract model mismatch")
     _require(int(contract.get("resolution", -1)) == expected["resolution"], "runtime run contract resolution mismatch")
@@ -433,6 +601,9 @@ def validate_runtime_receipt(payload: dict[str, Any], *, token: str) -> dict[str
     if expected["resolution"] == 320:
         _require("campaign_state" in artifacts, "R320 recovery campaign-state hash missing")
         _require("final_report" not in artifacts, "R320 Fold5 recovery unexpectedly contains final-report evidence")
+    elif expected["resolution"] == 384:
+        _require("campaign_state" in artifacts, "R384 recovery campaign-state hash missing")
+        _require("final_report" not in artifacts, "R384 bounded runtime unexpectedly contains final-report evidence")
     return {
         "status": "PASS",
         "resolution": expected["resolution"],
@@ -445,7 +616,13 @@ def validate_runtime_receipt(payload: dict[str, Any], *, token: str) -> dict[str
         "next_action": payload.get("next_action"),
         "locked_test_started": payload.get("locked_test_started"),
         "max_new_folds": payload.get("max_new_folds"),
+        "target_persistence_handle": expected["target_persistence_handle"],
+        "run_fingerprint": run_fingerprint,
         "receipt_sha256": receipt_sha,
+        "transport_reconciliation_status": transport_reconciliation["status"],
+        "transport_number_types_reconciled": (
+            transport_reconciliation["status"] == "PASS"
+        ),
     }
 
 
