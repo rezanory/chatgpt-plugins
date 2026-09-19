@@ -1,0 +1,230 @@
+_M07_R384_STATE_DATASET = "trickermark/m07-gate-r384-state-v1-7"
+_M07_R384_STATE_SLUG = "m07-gate-r384-state-v1-7"
+_M07_R384_SPLIT_FINGERPRINT = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
+_M07_R384_RECIPE_FINGERPRINT = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
+
+
+def _m07_r384_expanded_state_mode(model_id, resolution):
+    try:
+        attempt = int(globals().get("CGP_RUNTIME_ATTEMPT") or 0)
+    except (TypeError, ValueError):
+        return False
+    return str(model_id) == "M07" and int(resolution) == 384 and attempt > 1
+
+
+def _m07_r384_campaign_fold_ids(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("M07_R384_STATE_CAMPAIGN_NOT_OBJECT")
+    if payload.get("schema") != "phase2.state.v2" or payload.get("status") != "COMPLETE":
+        raise ValueError("M07_R384_STATE_CAMPAIGN_SCHEMA_STATUS_MISMATCH")
+    if payload.get("model_id") != "M07" or int(payload.get("resolution", -1)) != 384:
+        raise ValueError("M07_R384_STATE_CAMPAIGN_IDENTITY_MISMATCH")
+    contract = payload.get("run_contract") or {}
+    if contract.get("split_fingerprint") != _M07_R384_SPLIT_FINGERPRINT:
+        raise ValueError("M07_R384_STATE_SPLIT_MISMATCH")
+    if ((contract.get("extra") or {}).get("recipe_fingerprint")) != _M07_R384_RECIPE_FINGERPRINT:
+        raise ValueError("M07_R384_STATE_RECIPE_MISMATCH")
+    validate_receipt(
+        payload,
+        phase2_contract("M07", 384, stage="phase2_campaign"),
+        artifacts={},
+        allowed_statuses={"COMPLETE"},
+    )
+    hashes = payload.get("artifact_sha256") or {}
+    if not isinstance(hashes, dict) or not hashes:
+        raise ValueError("M07_R384_STATE_ARCHIVE_MANIFEST_MISSING")
+    fold_ids = []
+    for name, digest in sorted(hashes.items()):
+        match = re.fullmatch(r"FOLD_([1-5])_RECOVERY\.zip", str(name))
+        if match is None:
+            raise ValueError(f"M07_R384_STATE_UNEXPECTED_ARCHIVE={name}")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(digest or "")):
+            raise ValueError(f"M07_R384_STATE_ARCHIVE_SHA_INVALID={name}")
+        fold_ids.append(int(match.group(1)))
+    fold_ids = sorted(fold_ids)
+    if fold_ids != list(range(1, fold_ids[-1] + 1)):
+        raise ValueError("M07_R384_STATE_FOLD_SEQUENCE_GAP")
+    if fold_ids[-1] >= 5:
+        raise ValueError("M07_R384_STATE_ALREADY_FIVE_FOLD_COMPLETE")
+    return fold_ids
+
+
+def _m07_resolve_r384_state_mount(model_id, resolution, input_root=None):
+    if not _m07_r384_expanded_state_mode(model_id, resolution):
+        raise ValueError("M07 R384 state mount resolver invoked outside continuation mode.")
+    if str(phase2_handle(model_id, resolution)) != _M07_R384_STATE_DATASET:
+        raise ValueError("M07_R384_STATE_HANDLE_DRIFT")
+    root = Path("/kaggle/input") if input_root is None else Path(input_root)
+    if not root.is_dir():
+        raise RuntimeError("M07_R384_STATE_INPUT_ROOT_MISSING")
+    root = root.resolve()
+    candidates = []
+    diagnostics = []
+    for marker in sorted(root.rglob("CAMPAIGN_STATE.json")):
+        candidate = marker.parent.resolve()
+        try:
+            relative = candidate.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if _M07_R384_STATE_SLUG not in relative.lower():
+            continue
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            fold_ids = _m07_r384_campaign_fold_ids(payload)
+            missing = [
+                fold
+                for fold in fold_ids
+                if not (
+                    candidate
+                    / f"FOLD_{fold}_RECOVERY"
+                    / "FOLDS"
+                    / f"fold_{fold}"
+                    / "COMPLETED.json"
+                ).is_file()
+            ]
+            if missing:
+                raise ValueError(f"expanded fold directories missing: {missing}")
+        except Exception as exc:
+            diagnostics.append(
+                {"relative_root": relative, "error": f"{type(exc).__name__}: {exc}"}
+            )
+            continue
+        diagnostics.append(
+            {"relative_root": relative, "fold_ids": fold_ids, "campaign_valid": True}
+        )
+        candidates.append(candidate)
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        key = candidate.as_posix()
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    if len(unique) != 1:
+        raise RuntimeError(
+            "M07_R384_STATE_MOUNT_RESOLUTION_FAILED: "
+            + json.dumps(
+                {
+                    "expected_dataset": _M07_R384_STATE_DATASET,
+                    "valid_candidate_count": len(unique),
+                    "valid_candidates": [
+                        path.relative_to(root).as_posix() for path in unique
+                    ],
+                    "diagnostics": diagnostics[:20],
+                },
+                sort_keys=True,
+            )
+        )
+    resolved = unique[0]
+    payload = json.loads(
+        (resolved / "CAMPAIGN_STATE.json").read_text(encoding="utf-8")
+    )
+    print(
+        "M07_R384_STATE_MOUNT_VERIFIED",
+        json.dumps(
+            {
+                "dataset": _M07_R384_STATE_DATASET,
+                "relative_root": resolved.relative_to(root).as_posix(),
+                "fold_ids": _m07_r384_campaign_fold_ids(payload),
+                "campaign_receipt_sha256": payload.get("receipt_sha256"),
+                "dynamic_attach_used": False,
+                "read_only": True,
+            },
+            sort_keys=True,
+        ),
+    )
+    return resolved
+
+
+def _m07_restore_r384_expanded_state(model_id, resolution, input_root=None):
+    if not _m07_r384_expanded_state_mode(model_id, resolution):
+        return None
+    identity = (str(model_id), int(resolution))
+    source_root = _m07_resolve_r384_state_mount(
+        model_id, resolution, input_root=input_root
+    )
+    source_marker = source_root / "CAMPAIGN_STATE.json"
+    source_payload = json.loads(source_marker.read_text(encoding="utf-8"))
+    fold_ids = _m07_r384_campaign_fold_ids(source_payload)
+    out = phase2_output_root(model_id, resolution)
+    state = phase2_state_root(model_id, resolution)
+    existing = [path.name for path in state.glob("*.zip")]
+    if existing or (state / "CAMPAIGN_STATE.json").exists():
+        raise ValueError(f"M07_R384_LOCAL_STATE_NOT_EMPTY={existing}")
+
+    repacked = {}
+    for fold in fold_ids:
+        source_fold = (
+            source_root
+            / f"FOLD_{fold}_RECOVERY"
+            / "FOLDS"
+            / f"fold_{fold}"
+        )
+        phase2_validate_fold(model_id, resolution, fold, source_fold)
+        target_fold = out / "FOLDS" / f"fold_{fold}"
+
+        for source in sorted(source_fold.rglob("*")):
+            if not source.is_file():
+                continue
+            target = target_fold / source.relative_to(source_fold)
+            if target.exists() and (
+                not target.is_file()
+                or run_file_sha256(target) != run_file_sha256(source)
+            ):
+                raise ValueError(f"M07_R384_LOCAL_REMOTE_CONFLICT={target.name}")
+
+        for source in sorted(source_fold.rglob("*")):
+            if not source.is_file():
+                continue
+            target = target_fold / source.relative_to(source_fold)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                shutil.copy2(source, target)
+
+        zpath = state / f"FOLD_{fold}_RECOVERY.zip"
+        with zipfile.ZipFile(
+            zpath, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+            for artifact in sorted(target_fold.rglob("*")):
+                if artifact.is_file():
+                    archive.write(
+                        artifact,
+                        arcname=str(
+                            Path("FOLDS")
+                            / f"fold_{fold}"
+                            / artifact.relative_to(target_fold)
+                        ),
+                    )
+        repacked[zpath.name] = run_file_sha256(zpath)
+
+    phase2_seal_persistence(model_id, resolution)
+    local_marker = state / "CAMPAIGN_STATE.json"
+    local_payload = json.loads(local_marker.read_text(encoding="utf-8"))
+
+    PHASE2_RESTORE_VERIFIED.add(identity)
+    for fold in fold_ids:
+        PHASE2_REMOTE_FOLD_RECEIPTS[(*identity, fold)] = run_file_sha256(
+            out / "FOLDS" / f"fold_{fold}" / "COMPLETED.json"
+        )
+
+    print(
+        "M07_R384_EXPANDED_STATE_RESTORE_VERIFIED",
+        json.dumps(
+            {
+                "dataset": _M07_R384_STATE_DATASET,
+                "restored_fold_ids": fold_ids,
+                "source_campaign_receipt_sha256": source_payload.get(
+                    "receipt_sha256"
+                ),
+                "source_archive_sha256": source_payload.get("artifact_sha256"),
+                "local_repacked_archive_sha256": repacked,
+                "local_campaign_receipt_sha256": local_payload.get(
+                    "receipt_sha256"
+                ),
+                "locked_test_used_for_training": False,
+                "external_used_for_training": False,
+            },
+            sort_keys=True,
+        ),
+    )
+    return len(fold_ids)

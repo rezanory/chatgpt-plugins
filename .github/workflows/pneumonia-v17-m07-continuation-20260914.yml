@@ -507,6 +507,7 @@ jobs:
               # fail-closed compatibility reader only into the generated runtime
               # notebook; the frozen canonical notebook remains byte-unchanged.
               bridge_helper = pathlib.Path("scripts/m07_r320_bridge_extracted_compat.pyfrag").read_text(encoding="utf-8")
+              r384_state_helper = pathlib.Path("scripts/m07_r384_state_expanded_compat.pyfrag").read_text(encoding="utf-8")
               bridge_marker_old = "\n".join([
                   '    marker = temp / "CAMPAIGN_STATE.json"',
                   '    if not marker.is_file():',
@@ -578,7 +579,7 @@ jobs:
                   ):
                       source = source.replace(
                           'def phase2_restore(model_id, resolution):',
-                          bridge_helper.rstrip() + "\n\ndef phase2_restore(model_id, resolution):",
+                          bridge_helper.rstrip() + "\n\n" + r384_state_helper.rstrip() + "\n\ndef phase2_restore(model_id, resolution):",
                           1,
                       )
                       source = source.replace(bridge_marker_old, bridge_marker_new, 1)
@@ -588,6 +589,27 @@ jobs:
                       bridge_patch_hits += 1
               if bridge_patch_hits != 1:
                   raise SystemExit(f"M07_RUNTIME_BRIDGE_EXTRACTED_PATCH_COUNT={bridge_patch_hits}")
+
+              r384_restore_anchor = "\n".join([
+                  '    temp.mkdir(parents=True, exist_ok=True)',
+                  '    try:',
+              ])
+              r384_restore_new = "\n".join([
+                  '    temp.mkdir(parents=True, exist_ok=True)',
+                  '    r384_restored = _m07_restore_r384_expanded_state(model_id, resolution)',
+                  '    if r384_restored is not None:',
+                  '        return r384_restored',
+                  '    try:',
+              ])
+              r384_restore_hits = 0
+              for cell in notebook["cells"]:
+                  source = "".join(cell.get("source", []))
+                  if 'def phase2_restore(model_id, resolution):' in source and r384_restore_anchor in source:
+                      source = source.replace(r384_restore_anchor, r384_restore_new, 1)
+                      cell["source"] = source.splitlines(keepends=True)
+                      r384_restore_hits += 1
+              if r384_restore_hits != 1:
+                  raise SystemExit(f"M07_RUNTIME_R384_EXPANDED_PATCH_COUNT={r384_restore_hits}")
 
               gate_cell_hits = []
               gate_marker = "# 1) Complete M07 at R320/R384 using the exact frozen R224 recipe."
