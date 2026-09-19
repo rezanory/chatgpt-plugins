@@ -335,6 +335,24 @@ def validate_runtime_artifact(
             "M07_RUNTIME_PREDECESSOR_MOUNT_VERIFIED" in source,
             "runtime predecessor mount evidence marker missing",
         )
+    if resolution == 384 and attempt > 1:
+        _require(R384_STATE_HANDLE in source, "exact R384 state dataset handle missing")
+        _require(
+            "def _m07_resolve_r384_state_mount" in source,
+            "R384 pre-attached state mount resolver missing",
+        )
+        _require(
+            "def _m07_restore_r384_expanded_state" in source,
+            "R384 expanded-state restore helper missing",
+        )
+        _require(
+            "r384_restored = _m07_restore_r384_expanded_state(model_id, resolution)" in source,
+            "R384 phase2_restore is not routed through expanded-state compatibility",
+        )
+        _require(
+            "M07_R384_EXPANDED_STATE_RESTORE_VERIFIED" in source,
+            "R384 expanded-state evidence marker missing",
+        )
 
     return {
         "status": "PASS",
