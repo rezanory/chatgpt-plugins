@@ -18,6 +18,9 @@ from typing import Any
 CAMPAIGN_ID = "d260914d"
 PERSISTENCE_HANDLE = "rezanory/m07-final-5fold-fix2-d260914d"
 R320_BRIDGE_HANDLE = "trickermark/m07-r320-producer-v4-bridge-e3884dd1/versions/1"
+R320_BRIDGE_DATASET = "trickermark/m07-r320-producer-v4-bridge-e3884dd1"
+R384_STATE_HANDLE = "trickermark/m07-gate-r384-state-v1-7"
+RAW_DATASET_HANDLE = "paultimothymooney/chest-xray-pneumonia"
 SPLIT_FINGERPRINT = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
 RECIPE_FINGERPRINT = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
 TOKEN_RE = re.compile(r"M07_RUNTIME_M07_R(320|384)_A([0-9]{2})")
@@ -64,6 +67,51 @@ def expected_runtime_contract(token: str) -> dict[str, Any]:
         "bridge_restore_mode": (
             "PREATTACHED_READONLY_MOUNT" if resolution == 320 else None
         ),
+    }
+
+
+def runtime_dataset_sources(token: str) -> list[str]:
+    """Return exact pre-attached datasets required by one immutable runtime attempt."""
+    resolution, attempt = parse_runtime_token(token)
+    sources = [RAW_DATASET_HANDLE, PERSISTENCE_HANDLE]
+    if resolution == 320:
+        sources.append(R320_BRIDGE_DATASET)
+    elif resolution == 384 and attempt > 1:
+        sources.append(R384_STATE_HANDLE)
+    return sources
+
+
+def validate_runtime_state_dataset(payload: dict[str, Any], *, token: str) -> dict[str, Any]:
+    """Fail closed unless the required R384 continuation state is an exact Ready version."""
+    resolution, attempt = parse_runtime_token(token)
+    required = resolution == 384 and attempt > 1
+    if not required:
+        return {"status": "NOT_REQUIRED", "required": False}
+    _require(isinstance(payload, dict), "runtime state dataset payload is not an object")
+    _require(payload.get("ref") == R384_STATE_HANDLE, "R384 runtime state dataset ref mismatch")
+    _require(
+        str(payload.get("ownerRef") or "").lower() == "trickermark",
+        "R384 runtime state owner mismatch",
+    )
+    version = int(
+        payload.get("currentVersionNumber")
+        or payload.get("current_version_number")
+        or 0
+    )
+    _require(version >= 1, "R384 runtime state dataset has no published version")
+    versions = payload.get("versions") or []
+    ready = any(
+        isinstance(item, dict)
+        and int(item.get("versionNumber") or item.get("version_number") or 0) == version
+        and str(item.get("status") or "").strip().upper() == "READY"
+        for item in versions
+    )
+    _require(ready, "R384 runtime state current version is not Ready")
+    return {
+        "status": "PASS",
+        "required": True,
+        "dataset_ref": R384_STATE_HANDLE,
+        "current_version_number": version,
     }
 
 

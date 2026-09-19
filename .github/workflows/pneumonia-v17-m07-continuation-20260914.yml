@@ -996,7 +996,7 @@ jobs:
           sys.path.insert(0, str(pathlib.Path('scripts').resolve()))
           from m07_runtime_contract import (
               assess_runtime_inventory, expected_runtime_contract,
-              parse_runtime_kernel_ref,
+              parse_runtime_kernel_ref, validate_runtime_state_dataset,
           )
 
           runtime_token=os.environ['CGP_RUNTIME_STAGE'].strip()
@@ -1099,6 +1099,15 @@ jobs:
                   'body':{'userName':owner,'kernelSlug':slug},
               })
           report=assess_runtime_inventory(token=runtime_token,kernels=kernels,statuses=statuses)
+          if resolution == 384 and int(expected['attempt']) > 1:
+              dataset=read({
+                  'action':'raw_read','account_id':expected['account_id'],
+                  'service':'datasets.DatasetApiService','method':'GetDataset',
+                  'body':{'ownerSlug':'trickermark','datasetSlug':'m07-gate-r384-state-v1-7'},
+              })
+              report['state_dataset']=validate_runtime_state_dataset(
+                  dataset,token=runtime_token
+              )
           report.update({
               'schema':'m07.d260914d.runtime.admission.v1',
               'account_id':expected['account_id'],'owner':owner,
@@ -1133,13 +1142,17 @@ jobs:
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           $script=@'
-          import json, os, pathlib, urllib.request, urllib.error
+          import json, os, pathlib, sys, urllib.request, urllib.error
+          sys.path.insert(0, str(pathlib.Path('scripts').resolve()))
+          from m07_runtime_contract import runtime_dataset_sources
           endpoint = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
           notebook = pathlib.Path(os.environ["CGP_NOTEBOOK_PATH"]).read_text(encoding="utf-8")
           runtime_stage = os.environ.get("CGP_RUNTIME_STAGE", "")
-          dataset_sources = ["paultimothymooney/chest-xray-pneumonia", "rezanory/m07-final-5fold-fix2-d260914d"]
-          if runtime_stage.startswith("M07_RUNTIME_M07_R320_"):
-              dataset_sources.append("trickermark/m07-r320-producer-v4-bridge-e3884dd1")
+          dataset_sources = (
+              runtime_dataset_sources(runtime_stage)
+              if runtime_stage.startswith("M07_RUNTIME_M07_R")
+              else ["paultimothymooney/chest-xray-pneumonia", "rezanory/m07-final-5fold-fix2-d260914d"]
+          )
           body = {"slug": os.environ["CGP_KERNEL_SLUG"].strip(), "newTitle": os.environ["CGP_KERNEL_TITLE"].strip(), "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": dataset_sources}
           if runtime_stage.startswith("M07_RUNTIME_M07_R"):
               body["machineShape"] = "NvidiaTeslaT4"
