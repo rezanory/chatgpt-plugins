@@ -1060,10 +1060,33 @@ jobs:
                   req=urllib.request.Request(
                       endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
                       headers={'Authorization':'Bearer '+token,'Content-Type':'application/json',
-                               'Accept':'application/json','User-Agent':'m07-runtime-admission/1.1'},
+                               'Accept':'application/json','User-Agent':'m07-runtime-admission/1.2'},
                   )
-                  with urllib.request.urlopen(req,timeout=90) as response:
-                      return json.loads(response.read().decode('utf-8','replace') or '{}')
+                  last_error=None
+                  for attempt in range(1,5):
+                      try:
+                          with urllib.request.urlopen(req,timeout=90) as response:
+                              return json.loads(response.read().decode('utf-8','replace') or '{}')
+                      except urllib.error.HTTPError as exc:
+                          if exc.code not in {408,429} and not 500 <= exc.code <= 599:
+                              raise
+                          last_error=exc
+                      except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                          last_error=exc
+                      if attempt==4:
+                          raise RuntimeError(
+                              'Runtime admission read broker transient retry exhausted'
+                          ) from last_error
+                      delay=min(2**(attempt-1),4)
+                      print(
+                          f'M07_RUNTIME_READ_RETRY scope=admission '
+                          f'attempt={attempt} delay={delay}s',
+                          flush=True,
+                      )
+                      time.sleep(delay)
+                  raise RuntimeError(
+                      'Runtime admission read broker transient retry exhausted'
+                  ) from last_error
 
               try:
                   value=broker_request(oidc_state['token'])
@@ -1347,10 +1370,33 @@ jobs:
                   req=urllib.request.Request(
                       endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
                       headers={'Authorization':'Bearer '+token,'Content-Type':'application/json',
-                               'Accept':'application/json','User-Agent':'m07-runtime-terminal/2.1'},
+                               'Accept':'application/json','User-Agent':'m07-runtime-terminal/2.2'},
                   )
-                  with urllib.request.urlopen(req,timeout=timeout) as response:
-                      return json.loads(response.read().decode('utf-8','replace') or '{}')
+                  last_error=None
+                  for attempt in range(1,5):
+                      try:
+                          with urllib.request.urlopen(req,timeout=timeout) as response:
+                              return json.loads(response.read().decode('utf-8','replace') or '{}')
+                      except urllib.error.HTTPError as exc:
+                          if exc.code not in {408,429} and not 500 <= exc.code <= 599:
+                              raise
+                          last_error=exc
+                      except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                          last_error=exc
+                      if attempt==4:
+                          raise RuntimeError(
+                              'Runtime terminal read broker transient retry exhausted'
+                          ) from last_error
+                      delay=min(2**(attempt-1),4)
+                      print(
+                          f'M07_RUNTIME_READ_RETRY scope=terminal '
+                          f'attempt={attempt} delay={delay}s',
+                          flush=True,
+                      )
+                      time.sleep(delay)
+                  raise RuntimeError(
+                      'Runtime terminal read broker transient retry exhausted'
+                  ) from last_error
 
               try:
                   value=broker_request(oidc_state['token'])
