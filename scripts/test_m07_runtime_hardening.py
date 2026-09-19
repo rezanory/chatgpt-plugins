@@ -202,7 +202,7 @@ def _sealed_runtime_receipt(attempt: int = 9) -> dict:
         "five_fold_ready": True,
         "next_action": "VALIDATE_FIVE_FOLD_STATE_BEFORE_LOCKED_TEST",
         "locked_test_started": False,
-        "persistence_handle": contract.PERSISTENCE_HANDLE,
+        "persistence_handle": contract.R320_STATE_HANDLE,
         "run_contract": {
             "stage": "phase2_campaign",
             "model_id": "M07",
@@ -212,6 +212,7 @@ def _sealed_runtime_receipt(attempt: int = 9) -> dict:
         },
         "artifact_sha256": {"campaign_state": "a" * 64},
     }
+    body["run_fingerprint"] = contract.canonical_fingerprint(body["run_contract"])
     return {**body, "receipt_sha256": contract.canonical_fingerprint(body)}
 
 
@@ -229,6 +230,138 @@ def test_runtime_scientific_receipt_rejects_tampering() -> None:
     receipt["restored_folds"] = 3
     with pytest.raises(contract.ContractError, match="seal mismatch"):
         contract.validate_runtime_receipt(receipt, token="M07_RUNTIME_M07_R320_A09")
+
+
+def _sealed_r384_runtime_receipt(*, attempt: int = 5, restored_folds: int = 1) -> dict:
+    completed_fold = restored_folds + 1
+    five_fold_ready = completed_fold == 5
+    body = {
+        "status": "PARTIAL_FOLD_UNIT_COMPLETE",
+        "model_id": "M07",
+        "resolution": 384,
+        "attempt": attempt,
+        "restored_folds": restored_folds,
+        "max_new_folds": 1,
+        "completed_fold": completed_fold,
+        "new_folds_completed": 1,
+        "five_fold_ready": five_fold_ready,
+        "next_action": (
+            "VALIDATE_FIVE_FOLD_STATE_BEFORE_LOCKED_TEST"
+            if five_fold_ready
+            else "LAUNCH_NEW_IMMUTABLE_CANDIDATE"
+        ),
+        "locked_test_started": False,
+        "persistence_handle": contract.R384_STATE_HANDLE,
+        "run_contract": {
+            "stage": "phase2_campaign",
+            "model_id": "M07",
+            "resolution": 384,
+            "split_fingerprint": contract.SPLIT_FINGERPRINT,
+            "extra": {"recipe_fingerprint": contract.RECIPE_FINGERPRINT},
+        },
+        "artifact_sha256": {"campaign_state": "b" * 64},
+    }
+    body["run_fingerprint"] = contract.canonical_fingerprint(body["run_contract"])
+    return {**body, "receipt_sha256": contract.canonical_fingerprint(body)}
+
+
+def test_r384_a01_scientific_receipt_accepts_exact_first_fold() -> None:
+    report = contract.validate_runtime_receipt(
+        _sealed_r384_runtime_receipt(attempt=1, restored_folds=0),
+        token="M07_RUNTIME_M07_R384_A01",
+    )
+    assert report["completed_fold"] == 1
+    assert report["five_fold_ready"] is False
+
+
+def test_r384_receipt_reconciles_proven_js_integral_float_transport() -> None:
+    receipt = _sealed_r384_runtime_receipt(attempt=5, restored_folds=1)
+    body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    extra = body["run_contract"]["extra"]
+    extra.update({"static_focal_gamma": 2.0, "flsd": [0.2, 5.0, 3.0]})
+    body["run_fingerprint"] = contract.canonical_fingerprint(body["run_contract"])
+    sealed = {**body, "receipt_sha256": contract.canonical_fingerprint(body)}
+
+    transport = json.loads(json.dumps(sealed))
+    transport_extra = transport["run_contract"]["extra"]
+    transport_extra["static_focal_gamma"] = 2
+    transport_extra["flsd"][1] = 5
+    transport_extra["flsd"][2] = 3
+
+    report = contract.validate_runtime_receipt(
+        transport, token="M07_RUNTIME_M07_R384_A05"
+    )
+    assert report["transport_number_types_reconciled"] is True
+    assert report["transport_reconciliation_status"] == "PASS"
+
+
+def test_r384_receipt_rejects_unproven_number_transport_pattern() -> None:
+    receipt = _sealed_r384_runtime_receipt(attempt=5, restored_folds=1)
+    body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    extra = body["run_contract"]["extra"]
+    extra.update({"static_focal_gamma": 2.0, "flsd": [0.2, 5.0, 3.0]})
+    body["run_fingerprint"] = contract.canonical_fingerprint(body["run_contract"])
+    sealed = {**body, "receipt_sha256": contract.canonical_fingerprint(body)}
+
+    transport = json.loads(json.dumps(sealed))
+    transport["run_contract"]["extra"]["static_focal_gamma"] = 4
+    with pytest.raises(contract.ContractError, match="transport pattern mismatch"):
+        contract.validate_runtime_receipt(
+            transport, token="M07_RUNTIME_M07_R384_A05"
+        )
+
+
+def test_r384_continuation_scientific_receipt_accepts_exact_next_fold() -> None:
+    report = contract.validate_runtime_receipt(
+        _sealed_r384_runtime_receipt(attempt=5, restored_folds=1),
+        token="M07_RUNTIME_M07_R384_A05",
+    )
+    assert report["restored_folds"] == 1
+    assert report["completed_fold"] == 2
+    assert report["next_action"] == "LAUNCH_NEW_IMMUTABLE_CANDIDATE"
+
+
+def test_r384_scientific_receipt_accepts_fold5_boundary() -> None:
+    report = contract.validate_runtime_receipt(
+        _sealed_r384_runtime_receipt(attempt=8, restored_folds=4),
+        token="M07_RUNTIME_M07_R384_A08",
+    )
+    assert report["completed_fold"] == 5
+    assert report["five_fold_ready"] is True
+    assert report["next_action"] == "VALIDATE_FIVE_FOLD_STATE_BEFORE_LOCKED_TEST"
+
+
+def test_r384_scientific_receipt_rejects_fold_sequence_skip() -> None:
+    receipt = _sealed_r384_runtime_receipt(attempt=5, restored_folds=1)
+    body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    body["completed_fold"] = 3
+    tampered = {**body, "receipt_sha256": contract.canonical_fingerprint(body)}
+    with pytest.raises(contract.ContractError, match="exact next sequential fold"):
+        contract.validate_runtime_receipt(tampered, token="M07_RUNTIME_M07_R384_A05")
+
+
+def test_r384_continuation_scientific_receipt_rejects_empty_restore() -> None:
+    receipt = _sealed_r384_runtime_receipt(attempt=5, restored_folds=0)
+    with pytest.raises(contract.ContractError, match="at least one sealed fold"):
+        contract.validate_runtime_receipt(receipt, token="M07_RUNTIME_M07_R384_A05")
+
+
+def test_r384_scientific_receipt_rejects_source_persistence_handle() -> None:
+    receipt = _sealed_r384_runtime_receipt(attempt=5, restored_folds=1)
+    body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    body["persistence_handle"] = contract.PERSISTENCE_HANDLE
+    tampered = {**body, "receipt_sha256": contract.canonical_fingerprint(body)}
+    with pytest.raises(contract.ContractError, match="persistence handle mismatch"):
+        contract.validate_runtime_receipt(tampered, token="M07_RUNTIME_M07_R384_A05")
+
+
+def test_r384_scientific_receipt_rejects_locked_test_boundary_crossing() -> None:
+    receipt = _sealed_r384_runtime_receipt(attempt=5, restored_folds=1)
+    body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    body["locked_test_started"] = True
+    tampered = {**body, "receipt_sha256": contract.canonical_fingerprint(body)}
+    with pytest.raises(contract.ContractError, match="Locked-Test boundary"):
+        contract.validate_runtime_receipt(tampered, token="M07_RUNTIME_M07_R384_A05")
 
 
 def test_extract_session_state_reads_status_field_only() -> None:
