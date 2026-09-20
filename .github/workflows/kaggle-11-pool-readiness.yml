@@ -119,3 +119,64 @@ jobs:
           '@
           $script | & $python -
           if($LASTEXITCODE -ne 0){throw '11-account Cloudflare Kaggle probe failed'}
+      - name: Diagnose exact Phase2 kernel read surfaces
+        if: ${{ github.ref == 'refs/heads/fix/phase2-verifier-403-20260920' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, urllib.error, urllib.request
+
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
+          token=os.environ['CGP_OIDC_TOKEN']
+          targets=[
+            ('master','azadka','p17-p2-m01-r224-a01-20260920-35531382748'),
+            ('kg-02','radlinaradlina','p17-p2-m02-r224-a01-20260920-35531386401'),
+            ('kg-03','rezanory','p17-p2-m03-r224-a01-20260920-35531394688'),
+            ('kg-04','reyhanehazad','p17-p2-m04-r224-a01-20260920-35531397274'),
+            ('kg-05','trickermark','p17-p2-m05-r224-a01-20260920-35531402776'),
+            ('kg-06','msdenis','p17-p2-m06-r224-a01-20260920-35531405681'),
+            ('kg-07','nisabulutmark','p17-p2-m08-r224-a01-20260920-35531409770'),
+            ('kg-08','azadkk','p17-p2-m09-r224-a01-20260920-35531415284'),
+            ('kg-09','mylovevpn1','p17-p2-m10-r224-a01-20260920-35531419407'),
+            ('kg-10','computstu1','p17-p2-m11-r224-a01-20260920-35531422030'),
+            ('kg-11','jobreza1','p17-p2-m12-r224-a01-20260920-35531424115'),
+          ]
+
+          def read(account,method,body):
+            payload={'action':'raw_read','account_id':account,'service':'kernels.KernelsApiService','method':method,'body':body}
+            request=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={
+              'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json',
+              'User-Agent':'phase2-exact-read-diagnostic/1.0'})
+            try:
+              with urllib.request.urlopen(request,timeout=60) as response:
+                value=json.load(response)
+              return {'http_status':response.status,'ok':value.get('ok') is True,'result':value.get('result')}
+            except urllib.error.HTTPError as error:
+              detail=error.read(2000).decode('utf-8','replace')
+              return {'http_status':int(error.code),'ok':False,'error':detail}
+
+          for account,owner,slug in targets:
+            listed=read(account,'ListKernels',{'group':'PROFILE','user':owner,'search':slug,'sortBy':'DATE_RUN','page':1,'pageSize':100})
+            kernels=(listed.get('result') or {}).get('kernels') if listed.get('ok') else []
+            kernels=kernels if isinstance(kernels,list) else []
+            matches=[]
+            for item in kernels:
+              if not isinstance(item,dict): continue
+              ref=str(item.get('ref') or '')
+              if ref.lower()==f'{owner}/{slug}'.lower() or slug.lower() in ref.lower():
+                matches.append({key:item.get(key) for key in sorted(item) if key.lower() not in {'token','secret','authorization','url'}})
+            status=read(account,'GetKernelSessionStatus',{'userName':owner,'kernelSlug':slug})
+            output=read(account,'ListKernelSessionOutput',{'userName':owner,'kernelSlug':slug,'pageSize':1})
+            row={
+              'account_id':account,'kernel_ref':f'{owner}/{slug}',
+              'list_http':listed.get('http_status'),'listed_exact':matches,
+              'status_http':status.get('http_status'),'status_result':status.get('result'),'status_error':status.get('error'),
+              'output_http':output.get('http_status'),'output_keys':sorted((output.get('result') or {}).keys()) if isinstance(output.get('result'),dict) else [],'output_error':output.get('error'),
+            }
+            print('PHASE2_EXACT_READ_DIAGNOSTIC='+json.dumps(row,sort_keys=True,separators=(',',':')))
+          '@
+          $script | & $python -
+          if($LASTEXITCODE -ne 0){throw 'Phase2 exact read diagnostic failed'}
