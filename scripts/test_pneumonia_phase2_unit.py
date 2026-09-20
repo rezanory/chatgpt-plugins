@@ -32,6 +32,14 @@ class Phase2UnitTests(unittest.TestCase):
         self.assertEqual(set(manifest["models"]), set(phase2.MODEL_ASSIGNMENTS))
         self.assertNotIn("M07", manifest["models"])
         self.assertTrue(all(item["folds"] == [1, 2, 3, 4, 5] for item in units))
+        self.assertEqual(
+            manifest["shared_recipe"]["fingerprint"],
+            phase2.FROZEN_M07_RECIPE_FINGERPRINT,
+        )
+        self.assertEqual(
+            manifest["shared_recipe"]["receipt_sha256"],
+            phase2.FROZEN_M07_RECIPE_RECEIPT_SHA256,
+        )
 
     def test_frozen_manifest_matches_generated_contract(self):
         frozen = json.loads(MANIFEST.read_text(encoding="utf-8"))
@@ -86,10 +94,15 @@ class Phase2UnitTests(unittest.TestCase):
             )
             notebook = json.loads(output.read_text(encoding="utf-8"))
             joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
-            self.assertEqual(result["output_cell_count"], 15)
+            self.assertEqual(result["output_cell_count"], 16)
             self.assertIn("PHASE2_UNIT_MODEL_ID = 'M01'", joined)
             self.assertIn("CGP_PHASE2_MAX_NEW_FOLDS = 1", joined)
             self.assertIn("PHASE2_UNIT_LEGACY_M07_PERSISTENCE_SKIPPED", joined)
+            self.assertIn("PHASE2_UNIT_FROZEN_M07_RECIPE_BOUND", joined)
+            self.assertIn(phase2.FROZEN_M07_RECIPE_FINGERPRINT, joined)
+            self.assertIn(phase2.FROZEN_M07_RECIPE_RECEIPT_SHA256, joined)
+            self.assertIn("'batch_size': 12", joined)
+            self.assertIn("'edge_filters': 16", joined)
             self.assertEqual(joined.count("PHASE2_UNIT_NEW_FOLD_BOUND_EXCEEDED"), 1)
             self.assertIn("run_phase2_model_resolution(\n    PHASE2_UNIT_MODEL_ID", joined)
             self.assertNotIn("RESTORE_SUMMARY = _try_restore_persisted_state_compat()", joined)
@@ -97,6 +110,9 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertNotIn("M07 run-safe persistence healthcheck before training", joined)
             self.assertNotIn("M07 RUNTIME PRE-FLIGHT PASS", joined)
             self.assertNotIn("M07_CONTINUATION_PRECHECK_PASS", joined)
+            self.assertNotIn("STAGEB_WINNER", joined)
+            self.assertNotIn("generate_confirmation_candidates()", joined)
+            self.assertNotIn("run_or_restore_hpo_candidate_fold(", joined)
             self.assertNotIn("MASTER / PHASE-2 ORCHESTRATOR", joined)
             self.assertNotIn("CONFIRMATION HPO — DETERMINISTIC", joined)
 

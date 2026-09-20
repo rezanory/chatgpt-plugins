@@ -1,5 +1,5 @@
 {
-  "manifest_sha256": "ce56c3ec37d33c434fb13ab2b6a340c645f03a17cc1ee9c032e47f021a3c1783",
+  "manifest_sha256": "ee60ecd2e48bf8e69bcd6bff4336cc68764915f29fe90972b57263b90b9bab60",
   "models": [
     "M01",
     "M02",
@@ -19,6 +19,26 @@
     384
   ],
   "schema": "pneumonia.phase2.campaign.v1",
+  "shared_recipe": {
+    "fingerprint": "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b",
+    "params": {
+      "batch_size": 12,
+      "cbam_reduction": 32,
+      "dropout": 0.2,
+      "edge_filters": 16,
+      "edge_max_gate": 0.25,
+      "finetune_lr": 5.4346062237001635e-05,
+      "finetune_warmup_epochs": 0,
+      "head_lr": 0.00013819845844024556,
+      "head_warmup_epochs": 1,
+      "lr_schedule": "cosine",
+      "min_lr": 3e-07,
+      "patience": 4,
+      "weight_decay": 0.00018992423414663237
+    },
+    "receipt_sha256": "81d7165c247d27d867d3e0f82239dcb7f71a360775105c969f422cd69269ae54",
+    "source_run_id": "35505225105"
+  },
   "split_fingerprint": "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9",
   "units": [
     {
