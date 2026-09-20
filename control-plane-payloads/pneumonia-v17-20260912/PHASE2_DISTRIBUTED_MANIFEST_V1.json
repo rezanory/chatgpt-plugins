@@ -1,0 +1,454 @@
+{
+  "manifest_sha256": "ce56c3ec37d33c434fb13ab2b6a340c645f03a17cc1ee9c032e47f021a3c1783",
+  "models": [
+    "M01",
+    "M02",
+    "M03",
+    "M04",
+    "M05",
+    "M06",
+    "M08",
+    "M09",
+    "M10",
+    "M11",
+    "M12"
+  ],
+  "resolutions": [
+    224,
+    320,
+    384
+  ],
+  "schema": "pneumonia.phase2.campaign.v1",
+  "split_fingerprint": "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9",
+  "units": [
+    {
+      "account_id": "master",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M01",
+      "owner": "azadka",
+      "resolution": 224
+    },
+    {
+      "account_id": "master",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M01",
+      "owner": "azadka",
+      "resolution": 320
+    },
+    {
+      "account_id": "master",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M01",
+      "owner": "azadka",
+      "resolution": 384
+    },
+    {
+      "account_id": "kg-02",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M02",
+      "owner": "radlinaradlina",
+      "resolution": 224
+    },
+    {
+      "account_id": "kg-02",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M02",
+      "owner": "radlinaradlina",
+      "resolution": 320
+    },
+    {
+      "account_id": "kg-02",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M02",
+      "owner": "radlinaradlina",
+      "resolution": 384
+    },
+    {
+      "account_id": "kg-03",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M03",
+      "owner": "rezanory",
+      "resolution": 224
+    },
+    {
+      "account_id": "kg-03",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M03",
+      "owner": "rezanory",
+      "resolution": 320
+    },
+    {
+      "account_id": "kg-03",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M03",
+      "owner": "rezanory",
+      "resolution": 384
+    },
+    {
+      "account_id": "kg-04",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M04",
+      "owner": "reyhanehazad",
+      "resolution": 224
+    },
+    {
+      "account_id": "kg-04",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M04",
+      "owner": "reyhanehazad",
+      "resolution": 320
+    },
+    {
+      "account_id": "kg-04",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M04",
+      "owner": "reyhanehazad",
+      "resolution": 384
+    },
+    {
+      "account_id": "kg-05",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M05",
+      "owner": "trickermark",
+      "resolution": 224
+    },
+    {
+      "account_id": "kg-05",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M05",
+      "owner": "trickermark",
+      "resolution": 320
+    },
+    {
+      "account_id": "kg-05",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M05",
+      "owner": "trickermark",
+      "resolution": 384
+    },
+    {
+      "account_id": "kg-06",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M06",
+      "owner": "msdenis",
+      "resolution": 224
+    },
+    {
+      "account_id": "kg-06",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M06",
+      "owner": "msdenis",
+      "resolution": 320
+    },
+    {
+      "account_id": "kg-06",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M06",
+      "owner": "msdenis",
+      "resolution": 384
+    },
+    {
+      "account_id": "kg-07",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M08",
+      "owner": "nisabulutmark",
+      "resolution": 224
+    },
+    {
+      "account_id": "kg-07",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M08",
+      "owner": "nisabulutmark",
+      "resolution": 320
+    },
+    {
+      "account_id": "kg-07",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M08",
+      "owner": "nisabulutmark",
+      "resolution": 384
+    },
+    {
+      "account_id": "kg-08",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M09",
+      "owner": "azadkk",
+      "resolution": 224
+    },
+    {
+      "account_id": "kg-08",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M09",
+      "owner": "azadkk",
+      "resolution": 320
+    },
+    {
+      "account_id": "kg-08",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M09",
+      "owner": "azadkk",
+      "resolution": 384
+    },
+    {
+      "account_id": "kg-09",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M10",
+      "owner": "mylovevpn1",
+      "resolution": 224
+    },
+    {
+      "account_id": "kg-09",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M10",
+      "owner": "mylovevpn1",
+      "resolution": 320
+    },
+    {
+      "account_id": "kg-09",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M10",
+      "owner": "mylovevpn1",
+      "resolution": 384
+    },
+    {
+      "account_id": "kg-10",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M11",
+      "owner": "computstu1",
+      "resolution": 224
+    },
+    {
+      "account_id": "kg-10",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M11",
+      "owner": "computstu1",
+      "resolution": 320
+    },
+    {
+      "account_id": "kg-10",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M11",
+      "owner": "computstu1",
+      "resolution": 384
+    },
+    {
+      "account_id": "kg-11",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M12",
+      "owner": "jobreza1",
+      "resolution": 224
+    },
+    {
+      "account_id": "kg-11",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M12",
+      "owner": "jobreza1",
+      "resolution": 320
+    },
+    {
+      "account_id": "kg-11",
+      "folds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_id": "M12",
+      "owner": "jobreza1",
+      "resolution": 384
+    }
+  ]
+}

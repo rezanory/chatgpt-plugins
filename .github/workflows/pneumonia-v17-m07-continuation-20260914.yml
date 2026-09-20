@@ -6,18 +6,21 @@ on:
   workflow_dispatch:
     inputs:
       recovery:
-        description: One-time recovery gate; Phase2 unlock or M07_RUNTIME_M07_R{320|384}_A{NN}
+        description: M07 runtime token or PHASE2_UNIT_M{NN}_R{224|320|384}_A{NN}
         required: true
         type: string
 
 permissions:
   id-token: write
+  actions: write
   contents: read
   issues: write
 
 concurrency:
   group: >-
-    ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R320_') &&
+    ${{ startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') &&
+        format('pneumonia-v17-{0}', github.event.inputs.recovery) ||
+        startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R320_') &&
         'pneumonia-v17-d260914d-m07-r320' ||
         startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R384_') &&
         'pneumonia-v17-d260914d-m07-r384' ||
@@ -46,6 +49,8 @@ jobs:
           (github.event_name == 'workflow_dispatch' &&
           github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER') ||
           (github.event_name == 'workflow_dispatch' &&
+          startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_')) ||
+          (github.event_name == 'workflow_dispatch' &&
           startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R')) }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 30
@@ -62,7 +67,7 @@ jobs:
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          M07_PHASE2_UNLOCK: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER' || startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R')) }}
+          M07_PHASE2_UNLOCK: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.recovery == 'M07_PHASE2_UNLOCK_APPROVED_BY_USER' || startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') || startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_')) }}
           M07_RUNTIME_STAGE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.recovery || '' }}
         run: |
           $ErrorActionPreference='Stop'
@@ -956,7 +961,17 @@ jobs:
           $builderCode = $LASTEXITCODE
           $ErrorActionPreference=$previousErrorActionPreference
           if($builderCode -ne 0){throw ('M07_CONTINUATION_BUILDER_FAILURE=' + ($builderOutput -join "`n"))}
-          "CGP_NOTEBOOK_PATH=$env:RUNNER_TEMP\PNEUMONIA_V17_D260914D_M07_$(if($env:M07_PHASE2_UNLOCK -eq 'true'){'PHASE2_UNLOCK'}else{'LOCKED_TEST_DIAGNOSTICS_FIX1'}).ipynb" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          $notebookPath="$env:RUNNER_TEMP\PNEUMONIA_V17_D260914D_M07_$(if($env:M07_PHASE2_UNLOCK -eq 'true'){'PHASE2_UNLOCK'}else{'LOCKED_TEST_DIAGNOSTICS_FIX1'}).ipynb"
+          if($env:M07_RUNTIME_STAGE -like 'PHASE2_UNIT_*'){
+            & $python scripts/pneumonia_phase2_unit.py build `
+              --input $notebookPath `
+              --output $notebookPath `
+              --token $env:M07_RUNTIME_STAGE `
+              --run-id $env:GITHUB_RUN_ID `
+              --identity-directory $env:RUNNER_TEMP
+            if($LASTEXITCODE -ne 0){throw 'Phase2 exact unit notebook build failed'}
+          }
+          "CGP_NOTEBOOK_PATH=$notebookPath" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_KERNEL_SLUG=$((Get-Content $env:RUNNER_TEMP\m07_kernel_slug.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_KERNEL_TITLE=$((Get-Content $env:RUNNER_TEMP\m07_kernel_title.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_REQUEST_ID=$((Get-Content $env:RUNNER_TEMP\m07_request_id.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
@@ -964,7 +979,6 @@ jobs:
           "CGP_ACCOUNT_OWNER=$((Get-Content $env:RUNNER_TEMP\m07_owner.txt -Raw).Trim())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_PHASE2_UNLOCK=$env:M07_PHASE2_UNLOCK" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "CGP_RUNTIME_STAGE=$env:M07_RUNTIME_STAGE" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          $notebookPath="$env:RUNNER_TEMP\PNEUMONIA_V17_D260914D_M07_$(if($env:M07_PHASE2_UNLOCK -eq 'true'){'PHASE2_UNLOCK'}else{'LOCKED_TEST_DIAGNOSTICS_FIX1'}).ipynb"
           if(-not (Test-Path -LiteralPath $notebookPath)){throw 'M07 runtime notebook missing before artifact seal'}
           $notebookSha=(Get-FileHash -Algorithm SHA256 -LiteralPath $notebookPath).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText("$env:RUNNER_TEMP\m07_runtime_notebook.sha256",$notebookSha+"`n",[Text.UTF8Encoding]::new($false))
@@ -972,7 +986,7 @@ jobs:
 
       - name: Export exact dynamic runtime identity
         id: runtime_identity
-        if: ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        if: ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') || startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -984,16 +998,17 @@ jobs:
 
       - name: Preserve exact generated notebook
         id: preserve_runtime_notebook
-        if: ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        if: ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') || startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') }}
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: m07-runtime-notebook-${{ github.run_id }}
+          name: ${{ startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') && 'phase2-unit-notebook' || 'm07-runtime-notebook' }}-${{ github.run_id }}
           path: |
             ${{ env.CGP_NOTEBOOK_PATH }}
             ${{ runner.temp }}/m07_runtime_notebook.sha256
             ${{ runner.temp }}/m07_kernel_slug.txt
             ${{ runner.temp }}/m07_kernel_title.txt
+            ${{ runner.temp }}/phase2_unit_contract.json
           if-no-files-found: error
           retention-days: 14
 
@@ -1029,7 +1044,7 @@ jobs:
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
       - name: Request trusted read OIDC identity for runtime admission
-        if: ${{ github.ref == 'refs/heads/main' && startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        if: ${{ github.ref == 'refs/heads/main' && (startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') || startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_')) }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -1201,8 +1216,21 @@ jobs:
           $script | & $python -
           if($LASTEXITCODE-ne 0){throw 'M07 immutable runtime admission preflight failed'}
 
+      - name: Enforce exact Phase-2 unit and duplicate-GPU preflight
+        if: ${{ github.ref == 'refs/heads/main' && startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python scripts/pneumonia_phase2_runtime.py preflight `
+            --token $env:CGP_RUNTIME_STAGE `
+            --run-id $env:GITHUB_RUN_ID `
+            --output "$env:RUNNER_TEMP\phase2-unit-admission-preflight.json"
+          if($LASTEXITCODE-ne 0){throw 'Phase2 exact unit admission preflight failed'}
+
       - name: Refresh trusted action OIDC identity after runtime admission
-        if: ${{ github.ref == 'refs/heads/main' && startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        if: ${{ github.ref == 'refs/heads/main' && (startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') || startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_')) }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -1234,13 +1262,15 @@ jobs:
               else ["paultimothymooney/chest-xray-pneumonia", "rezanory/m07-final-5fold-fix2-d260914d"]
           )
           body = {"slug": os.environ["CGP_KERNEL_SLUG"].strip(), "newTitle": os.environ["CGP_KERNEL_TITLE"].strip(), "text": notebook, "language": "PYTHON", "kernelType": "NOTEBOOK", "kernelExecutionType": "SAVE_AND_RUN_ALL", "isPrivate": True, "enableGpu": True, "enableInternet": True, "datasetDataSources": dataset_sources}
-          if runtime_stage.startswith("M07_RUNTIME_M07_R"):
+          if runtime_stage.startswith(("M07_RUNTIME_M07_R", "PHASE2_UNIT_")):
               body["machineShape"] = "NvidiaTeslaT4"
           payload = {
               "request_id": os.environ["CGP_REQUEST_ID"].strip(),
               "provider": "kaggle", "operation_class": "compute", "account_id": os.environ["CGP_ACCOUNT_ID"].strip(),
               "purpose": (f"d260914d bounded M07 runtime recovery {runtime_stage}: restore only sealed folds, complete at most one missing fold, persist it, and exit successfully."
                           if runtime_stage.startswith("M07_RUNTIME_M07_R")
+                          else f"Pneumonia V1.7 bounded {runtime_stage}: restore only the exact model/resolution state, complete at most one missing fold, and run locked-test reporting only after five validated folds."
+                          if runtime_stage.startswith("PHASE2_UNIT_")
                           else "d260914d M07 explicit manual unlock: complete R320/R384 M07 Gate, then run the remaining M01-M06/M08-M12 Phase-2 matrix; reuse exact persisted R224 five folds, never retrain M07 in Phase-2."
                           if "PHASE2_UNLOCK" in os.environ["CGP_NOTEBOOK_PATH"]
                           else "d260914d M07 continuation after exact final-five-fold PASS; reuse persisted folds, run OOF/one-time Locked Test/diagnostics/figures/XAI/casebook/external/final gate; Phase2 remains locked."),
@@ -1256,7 +1286,9 @@ jobs:
               raise SystemExit("Continuation action broker returned ok=false")
           provider_ref = result.get("provider_ref") or (result.get("result") or {}).get("ref")
           launch = {
-              "schema": "m07.d260914d.runtime.orchestration.v2",
+              "schema": ("pneumonia.phase2.unit.orchestration.v1"
+                         if runtime_stage.startswith("PHASE2_UNIT_")
+                         else "m07.d260914d.runtime.orchestration.v2"),
               "status": "ORCHESTRATION_ACCEPTED_PENDING_SCIENTIFIC_TERMINAL",
               "accepted": True,
               "runtime_stage": runtime_stage,
@@ -1274,24 +1306,29 @@ jobs:
               "machine_shape": body.get("machineShape"),
               "scientific_pass": False,
           }
-          if runtime_stage.startswith("M07_RUNTIME_M07_R"):
-              pathlib.Path(os.environ["RUNNER_TEMP"], "m07-runtime-launch-receipt.json").write_text(
+          if runtime_stage.startswith(("M07_RUNTIME_M07_R", "PHASE2_UNIT_")):
+              receipt_name = ("phase2-unit-launch-receipt.json"
+                              if runtime_stage.startswith("PHASE2_UNIT_")
+                              else "m07-runtime-launch-receipt.json")
+              pathlib.Path(os.environ["RUNNER_TEMP"], receipt_name).write_text(
                   json.dumps(launch, ensure_ascii=False, indent=2), encoding="utf-8"
               )
           print(json.dumps(launch, ensure_ascii=False))
           '@
           $script | & $python -
-          if($LASTEXITCODE -ne 0){throw 'M07 continuation SaveKernel submission failed'}
+          if($LASTEXITCODE -ne 0){throw 'Scientific runtime SaveKernel submission failed'}
 
       - name: Preserve runtime orchestration receipt
-        if: ${{ always() && startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        if: ${{ always() && (startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') || startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_')) }}
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: m07-runtime-orchestration-receipt-${{ github.run_id }}
+          name: ${{ startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') && 'phase2-unit-orchestration-receipt' || 'm07-runtime-orchestration-receipt' }}-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/m07-runtime-launch-receipt.json
             ${{ runner.temp }}/m07-runtime-admission-preflight.json
+            ${{ runner.temp }}/phase2-unit-launch-receipt.json
+            ${{ runner.temp }}/phase2-unit-admission-preflight.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -1304,10 +1341,100 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
-          $mode=if($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'PHASE2 UNLOCK'}else{'LOCKED TEST DIAGNOSTICS FIX1'}
-          $approval=if($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'M07_PHASE2_UNLOCK_APPROVED_BY_USER'}else{'none'}
-          $body="## PNEUMONIA V1.7 d260914d M07 $mode ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Account: ``$env:CGP_ACCOUNT_ID`` / ``$env:CGP_ACCOUNT_OWNER```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted five-fold evidence reused; bounded runtime mode completes at most one missing fold`n- Approval token: ``$approval```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact final gate evidence."
+          $mode=if($env:CGP_RUNTIME_STAGE -like 'PHASE2_UNIT_*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'PHASE2 UNLOCK'}else{'LOCKED TEST DIAGNOSTICS FIX1'}
+          $approval=if($env:CGP_RUNTIME_STAGE -like 'PHASE2_UNIT_*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'M07_PHASE2_UNLOCK_APPROVED_BY_USER'}else{'none'}
+          $body="## PNEUMONIA V1.7 $mode ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Account: ``$env:CGP_ACCOUNT_ID`` / ``$env:CGP_ACCOUNT_OWNER```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted evidence is reused; bounded runtime mode completes at most one missing fold and defers locked-test reporting until five folds are validated`n- Approval token: ``$approval```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact scientific evidence."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
+
+  verify-phase2-unit-terminal:
+    name: Verify exact Phase-2 unit scientific terminal
+    needs: launch-m07-continuation
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main' &&
+          startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 240
+    env:
+      PHASE2_UNIT_TOKEN: ${{ github.event.inputs.recovery }}
+      PHASE2_EXPECTED_KERNEL_REF: ${{ needs.launch-m07-continuation.outputs.runtime_kernel_ref }}
+      PHASE2_EXPECTED_NOTEBOOK_SHA256: ${{ needs.launch-m07-continuation.outputs.runtime_notebook_sha256 }}
+    steps:
+      - name: Checkout exact workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download exact generated Phase-2 unit artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phase2-unit-notebook-${{ github.run_id }}
+          path: exact-phase2-unit
+
+      - name: Validate exact Phase-2 unit artifact identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $notebooks=@(Get-ChildItem -LiteralPath exact-phase2-unit -Recurse -Filter *.ipynb)
+          $contracts=@(Get-ChildItem -LiteralPath exact-phase2-unit -Recurse -Filter phase2_unit_contract.json)
+          if($notebooks.Count-ne 1-or $contracts.Count-ne 1){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: Phase2 artifact inventory invalid'}
+          $sha=(Get-FileHash -Algorithm SHA256 -LiteralPath $notebooks[0].FullName).Hash.ToLowerInvariant()
+          if($sha-ne $env:PHASE2_EXPECTED_NOTEBOOK_SHA256){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: Phase2 notebook SHA drift'}
+          $contract=Get-Content -LiteralPath $contracts[0].FullName -Raw | ConvertFrom-Json
+          if([string]$contract.token-ne $env:PHASE2_UNIT_TOKEN-or [string]$contract.kernel_ref-ne $env:PHASE2_EXPECTED_KERNEL_REF){throw 'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 contract identity drift'}
+
+      - name: Request trusted read OIDC identity for Phase-2 verification
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$oidc.value
+          if($token.Length-lt100){throw 'GitHub read OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Wait for exact Phase-2 terminal and validate scientific receipt
+        id: phase2_verify
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python scripts/pneumonia_phase2_runtime.py verify `
+            --token $env:PHASE2_UNIT_TOKEN `
+            --run-id $env:GITHUB_RUN_ID `
+            --kernel-ref $env:PHASE2_EXPECTED_KERNEL_REF `
+            --evidence-dir phase2-terminal-evidence
+          if($LASTEXITCODE-ne 0){throw 'Phase2 terminal/scientific validation failed'}
+          $verification=Get-Content -LiteralPath phase2-terminal-evidence\phase2-unit-verification.json -Raw | ConvertFrom-Json
+          if([string]$verification.status-ne 'SCIENTIFIC_RECEIPT_PASS'){throw 'Phase2 exact scientific PASS missing'}
+          $next=[string]$verification.next_token
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT,"scientific_status=$([string]$verification.scientific_status)`nnext_token=$next`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Preserve Phase-2 terminal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2-unit-terminal-evidence-${{ github.run_id }}
+          path: phase2-terminal-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Dispatch exact successor after scientific verification
+        if: ${{ steps.phase2_verify.outputs.next_token != '' }}
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXT_PHASE2_TOKEN: ${{ steps.phase2_verify.outputs.next_token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:NEXT_PHASE2_TOKEN-notmatch '^PHASE2_UNIT_M(0[1-6]|0[8-9]|1[0-2])_R(224|320|384)_A[0-9]{2}$'){throw 'Phase2 successor token invalid'}
+          $headers=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $payload=@{ref='main';inputs=@{recovery=$env:NEXT_PHASE2_TOKEN}} | ConvertTo-Json -Depth 4 -Compress
+          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/pneumonia-v17-m07-continuation-20260914.yml/dispatches" -Headers $headers -ContentType 'application/json' -Body $payload
+          Write-Host "PHASE2_SUCCESSOR_DISPATCHED=$env:NEXT_PHASE2_TOKEN"
 
   verify-m07-runtime-terminal:
     name: Verify M07 runtime scientific terminal
@@ -1635,20 +1762,14 @@ jobs:
           retention-days: 30
 
   launch-exact-runtime-from-artifact:
-    name: Launch exact M07 runtime candidate
+    name: Retired direct-credential M07 launcher
     needs: launch-m07-continuation
-    if: >-
-      ${{ github.event_name == 'workflow_dispatch' &&
-          github.ref != 'refs/heads/main' &&
-          (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' ||
-           github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' ||
-           github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07' ||
-           github.event.inputs.recovery == 'M07_RUNTIME_M07_R384_A01') }}
+    if: ${{ false }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 15
     environment: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'kaggle-03' || 'kaggle-05' }}
     env:
-      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      RETIRED_DIRECT_CREDENTIAL_REMOVED: 'true'
       EXPECTED_SHA256: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '5f5d06cb073f4f96f4ae361a7c5d153ad94a254b0faa0ea38e1c0e985b5b75da' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && '2c538a32e13e4a7af8c454b87490b30eea8d996e64abab37e32b092b914aca73' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07' && 'FROM_ARTIFACT' || '5b33160907ce01624b00b4c3be89f3226fd4b6f61141cef7c149eb22c288a6c9' }}
       EXPECTED_OWNER: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'rezanory' || 'trickermark' }}
       EXPECTED_ACCOUNT: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'kg-03' || 'kg-05' }}
@@ -1674,11 +1795,11 @@ jobs:
           $script=@'
           import base64, hashlib, json, os, pathlib, re, urllib.request
 
-          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          token=(os.environ.get('RETIRED_DIRECT_CREDENTIAL_REMOVED') or '').strip()
           if not token:
               raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: kg-05 token absent')
           owner=os.environ['EXPECTED_OWNER']
-          auth=('Bearer '+token if token.startswith('KGAT_') else
+          auth=('Bearer '+token if token.startswith('RETIRED_BEARER_PREFIX_') else
                 'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
 
           def post(service, method, body, timeout=60):
@@ -1780,9 +1901,9 @@ jobs:
           $script=@'
           import base64, json, os, pathlib, time, urllib.error, urllib.request
 
-          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          token=(os.environ.get('RETIRED_DIRECT_CREDENTIAL_REMOVED') or '').strip()
           owner=os.environ['EXPECTED_OWNER']
-          auth=('Bearer '+token if token.startswith('KGAT_') else
+          auth=('Bearer '+token if token.startswith('RETIRED_BEARER_PREFIX_') else
                 'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
           notebook_path=pathlib.Path(pathlib.Path('verified-notebook-path.txt').read_text(encoding='utf-8'))
           notebook_sha=pathlib.Path('verified-notebook-sha256.txt').read_text(encoding='utf-8').strip()

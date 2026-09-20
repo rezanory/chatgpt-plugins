@@ -232,9 +232,11 @@ async function chooseAccount(env: Env): Promise<{ account: Account; remaining: n
   return { ...candidates[0], quota };
 }
 async function saveKernel(env: Env, account: Account): Promise<Rec> {
-  if (!P0_SCRIPT || !P0_SCRIPT_SHA256 || P0_SCRIPT.length < 1000) throw new Error('generated P0 payload is not ready');
+  const script = String(P0_SCRIPT);
+  const scriptSha256 = String(P0_SCRIPT_SHA256);
+  if (!script || !scriptSha256 || script.length < 1000) throw new Error('generated P0 payload is not ready');
   const value = await kaggleCall(env, account, 'SaveKernel', {
-    slug: targetRef(account), newTitle: TARGET_TITLE, text: P0_SCRIPT,
+    slug: targetRef(account), newTitle: TARGET_TITLE, text: script,
     language: 'python', kernelType: 'script', kernelExecutionType: 'SAVE_AND_RUN_ALL',
     isPrivate: true, enableGpu: true, enableTpu: false, enableInternet: true,
     kernelDataSources: [], datasetDataSources: [RAW_DATASET], competitionDataSources: [], modelDataSources: [],

@@ -1,4 +1,4 @@
-name: v622-self-hosted-kaggle-quota
+name: retired-evidence-v622-self-hosted-kaggle-quota
 
 on:
   workflow_dispatch:

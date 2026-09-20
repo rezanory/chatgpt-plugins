@@ -1,4 +1,4 @@
-name: kaggle-11-readiness-20260913
+name: retired-evidence-kaggle-11-readiness-20260913
 
 on:
   workflow_dispatch:

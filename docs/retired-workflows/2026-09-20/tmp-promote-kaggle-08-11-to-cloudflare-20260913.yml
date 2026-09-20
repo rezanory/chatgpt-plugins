@@ -1,4 +1,4 @@
-name: tmp-promote-kaggle-08-11-to-cloudflare-20260913
+name: retired-evidence-tmp-promote-kaggle-08-11-to-cloudflare-20260913
 
 on:
   workflow_dispatch:
