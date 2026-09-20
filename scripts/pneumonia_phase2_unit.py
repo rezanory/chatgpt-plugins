@@ -22,6 +22,28 @@ SPLIT_FINGERPRINT = (
     "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
 )
 RESOLUTIONS = (224, 320, 384)
+FROZEN_M07_RECIPE_FINGERPRINT = (
+    "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
+)
+FROZEN_M07_RECIPE_RECEIPT_SHA256 = (
+    "81d7165c247d27d867d3e0f82239dcb7f71a360775105c969f422cd69269ae54"
+)
+FROZEN_M07_RECIPE_SOURCE_RUN_ID = "35505225105"
+FROZEN_M07_SHARED_PARAMS = {
+    "batch_size": 12,
+    "head_lr": 0.00013819845844024556,
+    "finetune_lr": 5.4346062237001635e-05,
+    "weight_decay": 0.00018992423414663237,
+    "dropout": 0.2,
+    "patience": 4,
+    "lr_schedule": "cosine",
+    "min_lr": 3e-07,
+    "head_warmup_epochs": 1,
+    "finetune_warmup_epochs": 0,
+    "edge_filters": 16,
+    "edge_max_gate": 0.25,
+    "cbam_reduction": 32,
+}
 MODEL_ASSIGNMENTS = {
     "M01": {"account_id": "master", "owner": "azadka"},
     "M02": {"account_id": "kg-02", "owner": "radlinaradlina"},
@@ -84,6 +106,12 @@ def campaign_manifest() -> dict[str, Any]:
     manifest = {
         "schema": "pneumonia.phase2.campaign.v1",
         "split_fingerprint": SPLIT_FINGERPRINT,
+        "shared_recipe": {
+            "fingerprint": FROZEN_M07_RECIPE_FINGERPRINT,
+            "receipt_sha256": FROZEN_M07_RECIPE_RECEIPT_SHA256,
+            "source_run_id": FROZEN_M07_RECIPE_SOURCE_RUN_ID,
+            "params": FROZEN_M07_SHARED_PARAMS,
+        },
         "models": list(MODEL_ASSIGNMENTS),
         "resolutions": list(RESOLUTIONS),
         "units": units,
@@ -376,6 +404,35 @@ CGP_PHASE2_MAX_NEW_FOLDS = 1
     _set_source(cells[1], config_source + config_append)
     legacy_cell = selected_indexes.index(legacy_persistence_index)
     _set_source(cells[legacy_cell], _patch_legacy_persistence_cell(_source(cells[legacy_cell])))
+
+    # Cell 12 performs Confirmation HPO and must never execute in a distributed
+    # comparator unit.  Inject only the exact recipe already proven by the M07
+    # R384 A12 terminal receipt, so every account has the same scientific input
+    # without repeating HPO or depending on cross-account M07 persistence.
+    frozen_recipe_source = f'''# Exact frozen M07 recipe for Phase-2 comparator units.
+shared_params = {FROZEN_M07_SHARED_PARAMS!r}
+recipe = {{
+    "schema": "m07.final.confirmed.recipe.v1.6",
+    "recipe_fingerprint_sha256": {FROZEN_M07_RECIPE_FINGERPRINT!r},
+    "shared_training_params": dict(shared_params),
+    "source_run_id": {FROZEN_M07_RECIPE_SOURCE_RUN_ID!r},
+    "source_receipt_sha256": {FROZEN_M07_RECIPE_RECEIPT_SHA256!r},
+}}
+EDGE_FILTERS = int(shared_params["edge_filters"])
+EDGE_MAX_GATE = float(shared_params["edge_max_gate"])
+CBAM_REDUCTION = int(shared_params["cbam_reduction"])
+print("PHASE2_UNIT_FROZEN_M07_RECIPE_BOUND", recipe["recipe_fingerprint_sha256"])
+'''
+    cells.insert(
+        11,
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {"cgp_phase2_frozen_recipe": True},
+            "outputs": [],
+            "source": frozen_recipe_source.splitlines(keepends=True),
+        },
+    )
     _set_source(cells[-1], _patch_run_cell(_source(cells[-1])))
 
     terminal_tail = f'''# Exact bounded Phase-2 unit dispatch.
@@ -430,6 +487,27 @@ if phase2_unit_result.get("status") == "COMPLETE":
     leaked = [marker for marker in forbidden_executable_markers if marker in generated_source]
     if leaked:
         raise Phase2ContractError("PHASE2_LEGACY_EXECUTION_LEAK=" + ",".join(leaked))
+    required_frozen_markers = (
+        "PHASE2_UNIT_FROZEN_M07_RECIPE_BOUND",
+        FROZEN_M07_RECIPE_FINGERPRINT,
+        FROZEN_M07_RECIPE_RECEIPT_SHA256,
+        "shared_params =",
+    )
+    missing_frozen = [
+        marker for marker in required_frozen_markers if marker not in generated_source
+    ]
+    if missing_frozen:
+        raise Phase2ContractError(
+            "PHASE2_FROZEN_RECIPE_BINDING_MISSING=" + ",".join(missing_frozen)
+        )
+    forbidden_hpo_markers = (
+        "generate_confirmation_candidates()",
+        "run_or_restore_hpo_candidate_fold(",
+        "confirmation_ranked = sorted(",
+    )
+    leaked_hpo = [marker for marker in forbidden_hpo_markers if marker in generated_source]
+    if leaked_hpo:
+        raise Phase2ContractError("PHASE2_HPO_EXECUTION_LEAK=" + ",".join(leaked_hpo))
     metadata = notebook.setdefault("metadata", {})
     metadata["cgp_phase2_unit"] = contract
     output_path.parent.mkdir(parents=True, exist_ok=True)
