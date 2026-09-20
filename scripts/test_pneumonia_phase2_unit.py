@@ -7,7 +7,6 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import pneumonia_phase2_unit as phase2
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 NOTEBOOK = (
     ROOT
@@ -96,15 +95,17 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertNotIn("CONFIRMATION HPO — DETERMINISTIC", joined)
 
     def test_raw_canonical_notebook_is_rejected_before_hpo_can_run(self):
-        with tempfile.TemporaryDirectory() as temp:
-            with self.assertRaises(phase2.Phase2ContractError):
-                phase2.build_notebook(
-                    NOTEBOOK,
-                    pathlib.Path(temp) / "unit.ipynb",
-                    "PHASE2_UNIT_M01_R224_A01",
-                    "35599900004",
-                    "20260920",
-                )
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            self.assertRaises(phase2.Phase2ContractError),
+        ):
+            phase2.build_notebook(
+                NOTEBOOK,
+                pathlib.Path(temp) / "unit.ipynb",
+                "PHASE2_UNIT_M01_R224_A01",
+                "35599900004",
+                "20260920",
+            )
 
     def test_partial_and_complete_receipts_obey_fold_policy(self):
         contract = phase2.unit_contract(

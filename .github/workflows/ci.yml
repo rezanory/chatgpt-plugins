@@ -22,63 +22,87 @@ jobs:
       - name: Install Python workspace
         id: sync
         continue-on-error: true
-        shell: bash
+        shell: powershell
         run: |
-          set -o pipefail
-          python -m pip install --disable-pip-version-check \
-            -e packages/core \
-            -e packages/github-bridge \
-            -e packages/repair-engine \
-            -e plugins/kaggle \
-            -e plugins/kaggle-gateway \
-            'pytest>=8.4' 'ruff>=0.12' 2>&1 | tee /tmp/ci-sync.log
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python -m pip install --disable-pip-version-check `
+            -e packages/core `
+            -e packages/github-bridge `
+            -e packages/repair-engine `
+            -e plugins/kaggle `
+            -e plugins/kaggle-gateway `
+            'pytest>=8.4' 'ruff>=0.12' 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-sync.log"
+          $code=$LASTEXITCODE
+          if($code-ne 0){exit $code}
 
       - name: Security gate
         id: security
         if: steps.sync.outcome == 'success'
         continue-on-error: true
-        shell: bash
+        shell: powershell
         run: |
-          set -o pipefail
-          python scripts/security_gate.py 2>&1 | tee /tmp/ci-security.log
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python scripts/security_gate.py 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-security.log"
+          $code=$LASTEXITCODE
+          if($code-ne 0){exit $code}
 
       - name: Ruff
         id: ruff
         if: steps.sync.outcome == 'success'
         continue-on-error: true
-        shell: bash
+        shell: powershell
         run: |
-          set -o pipefail
-          ruff check . --output-format concise 2>&1 | tee /tmp/ci-ruff.log
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python -m ruff check `
+            packages plugins scripts/security_gate.py `
+            scripts/pneumonia_phase2_unit.py scripts/pneumonia_phase2_runtime.py `
+            scripts/test_pneumonia_phase2_unit.py scripts/test_pneumonia_phase2_runtime.py `
+            --output-format concise 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-ruff.log"
+          $code=$LASTEXITCODE
+          if($code-ne 0){exit $code}
 
       - name: Python tests
         id: tests
         if: steps.sync.outcome == 'success'
         continue-on-error: true
-        shell: bash
+        shell: powershell
         run: |
-          set -o pipefail
-          pytest 2>&1 | tee /tmp/ci-tests.log
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python -m pytest 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-tests.log"
+          $code=$LASTEXITCODE
+          if($code-ne 0){exit $code}
 
       - name: Python compile
         id: compile
         if: steps.sync.outcome == 'success'
         continue-on-error: true
-        shell: bash
+        shell: powershell
         run: |
-          set -o pipefail
-          python -m compileall -q packages plugins 2>&1 | tee /tmp/ci-compile.log
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python -m compileall -q packages plugins `
+            scripts/pneumonia_phase2_unit.py scripts/pneumonia_phase2_runtime.py `
+            2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-compile.log"
+          $code=$LASTEXITCODE
+          if($code-ne 0){exit $code}
 
       - name: Cloudflare Workers Free validation
         id: worker_free
         continue-on-error: true
         working-directory: deploy/cloudflare-worker-free
-        shell: bash
+        shell: powershell
         run: |
-          set -o pipefail
-          npm install --no-audit --no-fund 2>&1 | tee /tmp/ci-worker-free-install.log
-          npm run check 2>&1 | tee /tmp/ci-worker-free-check.log
-          npm run deploy:dry 2>&1 | tee /tmp/ci-worker-free-dry.log
+          $npm=(Get-Command npm.cmd -ErrorAction Stop).Source
+          & $npm install --no-audit --no-fund 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-worker-free-install.log"
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          & $npm run check 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-worker-free-check.log"
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          & $npm run deploy:dry 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-worker-free-dry.log"
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
 
       - name: Publish safe CI diagnostic
         if: >-
@@ -86,6 +110,7 @@ jobs:
           (steps.sync.outcome == 'failure' || steps.security.outcome == 'failure' ||
            steps.ruff.outcome == 'failure' || steps.tests.outcome == 'failure' ||
            steps.compile.outcome == 'failure' || steps.worker_free.outcome == 'failure')
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           SYNC_OUTCOME: ${{ steps.sync.outcome }}
@@ -94,36 +119,47 @@ jobs:
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
           COMPILE_OUTCOME: ${{ steps.compile.outcome }}
           WORKER_FREE_OUTCOME: ${{ steps.worker_free.outcome }}
-        shell: bash
+        shell: powershell
         run: |
-          issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"[CI-DIAGNOSTIC] Latest main failure" in:title' --json number --jq '.[0].number // empty')"
-          if [ -z "$issue_number" ]; then
-            issue_url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title '[CI-DIAGNOSTIC] Latest main failure' --body 'Machine-generated, secret-free CI diagnostics for ChatGPT inspection.')"
-            issue_number="${issue_url##*/}"
-          fi
-
-          {
-            printf 'CI diagnostic for commit `%s` / run `%s`.\n\n' "$GITHUB_SHA" "$GITHUB_RUN_ID"
-            printf -- '- sync: `%s`\n' "$SYNC_OUTCOME"
-            printf -- '- security: `%s`\n' "$SECURITY_OUTCOME"
-            printf -- '- ruff: `%s`\n' "$RUFF_OUTCOME"
-            printf -- '- tests: `%s`\n' "$TESTS_OUTCOME"
-            printf -- '- compile: `%s`\n' "$COMPILE_OUTCOME"
-            printf -- '- worker-free: `%s`\n' "$WORKER_FREE_OUTCOME"
-            for item in sync security ruff tests compile worker-free-install worker-free-check worker-free-dry; do
-              file="/tmp/ci-${item}.log"
-              if [ -f "$file" ]; then
-                printf '\n### %s tail\n```text\n' "$item"
-                if [ "$item" = 'ruff' ]; then
-                  tail -n 250 "$file"
-                else
-                  tail -n 80 "$file"
-                fi | sed -E 's/(token|secret|password|api[_-]?key)([=: ]+)[^ ]+/\1\2[REDACTED]/Ig' | tail -c 30000
-                printf '\n```\n'
-              fi
-            done
-          } > /tmp/ci-diagnostic.md
-          gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body-file /tmp/ci-diagnostic.md
+          $ErrorActionPreference='Stop'
+          $gh='C:\Program Files\GitHub CLI\gh.exe'
+          if(-not (Test-Path -LiteralPath $gh)){$gh=(Get-Command gh.exe -ErrorAction Stop).Source}
+          $issuesJson=& $gh issue list --repo $env:GITHUB_REPOSITORY --state open --search '"[CI-DIAGNOSTIC] Latest main failure" in:title' --json number
+          if($LASTEXITCODE-ne 0){throw 'CI diagnostic issue lookup failed'}
+          $issues=@($issuesJson | ConvertFrom-Json)
+          if($issues.Count-gt 0){
+            $issueNumber=[string]$issues[0].number
+          }else{
+            $issueUrl=& $gh issue create --repo $env:GITHUB_REPOSITORY --title '[CI-DIAGNOSTIC] Latest main failure' --body 'Machine-generated, secret-free CI diagnostics for ChatGPT inspection.'
+            if($LASTEXITCODE-ne 0){throw 'CI diagnostic issue creation failed'}
+            $issueNumber=([string]$issueUrl).Trim().Split('/')[-1]
+          }
+          $lines=[Collections.Generic.List[string]]::new()
+          $lines.Add("CI diagnostic for commit ``$env:GITHUB_SHA`` / run ``$env:GITHUB_RUN_ID``.")
+          $lines.Add('')
+          foreach($entry in @(
+            @('sync',$env:SYNC_OUTCOME),@('security',$env:SECURITY_OUTCOME),
+            @('ruff',$env:RUFF_OUTCOME),@('tests',$env:TESTS_OUTCOME),
+            @('compile',$env:COMPILE_OUTCOME),@('worker-free',$env:WORKER_FREE_OUTCOME)
+          )){$lines.Add("- $($entry[0]): ``$($entry[1])``")}
+          foreach($item in @('sync','security','ruff','tests','compile','worker-free-install','worker-free-check','worker-free-dry')){
+            $file=Join-Path $env:RUNNER_TEMP "ci-$item.log"
+            if(Test-Path -LiteralPath $file){
+              $take=if($item-eq 'ruff'){250}else{80}
+              $tail=@(Get-Content -LiteralPath $file -Tail $take) -join "`n"
+              $tail=$tail -replace '(?i)(token|secret|password|api[_-]?key)([=: ]+)[^ ]+','$1$2[REDACTED]'
+              if($tail.Length-gt 30000){$tail=$tail.Substring($tail.Length-30000)}
+              $lines.Add('')
+              $lines.Add("### $item tail")
+              $lines.Add('```text')
+              $lines.Add($tail)
+              $lines.Add('```')
+            }
+          }
+          $diagnostic=Join-Path $env:RUNNER_TEMP 'ci-diagnostic.md'
+          [IO.File]::WriteAllLines($diagnostic,$lines,[Text.UTF8Encoding]::new($false))
+          & $gh issue comment $issueNumber --repo $env:GITHUB_REPOSITORY --body-file $diagnostic
+          if($LASTEXITCODE-ne 0){throw 'CI diagnostic publication failed'}
 
       - name: Enforce CI result
         if: always()
@@ -134,8 +170,8 @@ jobs:
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
           COMPILE_OUTCOME: ${{ steps.compile.outcome }}
           WORKER_FREE_OUTCOME: ${{ steps.worker_free.outcome }}
-        shell: bash
+        shell: powershell
         run: |
-          for value in "$SYNC_OUTCOME" "$SECURITY_OUTCOME" "$RUFF_OUTCOME" "$TESTS_OUTCOME" "$COMPILE_OUTCOME" "$WORKER_FREE_OUTCOME"; do
-            if [ "$value" = 'failure' ]; then exit 1; fi
-          done
+          foreach($value in @($env:SYNC_OUTCOME,$env:SECURITY_OUTCOME,$env:RUFF_OUTCOME,$env:TESTS_OUTCOME,$env:COMPILE_OUTCOME,$env:WORKER_FREE_OUTCOME)){
+            if($value-eq 'failure'){exit 1}
+          }

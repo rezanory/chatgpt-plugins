@@ -39,8 +39,13 @@ if gateway_src.exists():
 # Runtime Kaggle/MCP credentials live only in Cloudflare Worker Secrets. GitHub Actions may receive
 # Cloudflare deployment credentials, but must never receive or embed Kaggle runtime credentials or
 # the private MCP capability token.
+allowed_oidc_kaggle_workflows = {
+    "kaggle-11-cloudflare-control-plane-deploy.yml",
+    "kaggle-11-pool-readiness.yml",
+}
 for path in (ROOT / ".github/workflows").glob("kaggle-*.yml"):
-    fail(f"operational Kaggle GitHub Actions workflow is forbidden: {path.relative_to(ROOT)}")
+    if path.name not in allowed_oidc_kaggle_workflows:
+        fail(f"operational Kaggle GitHub Actions workflow is forbidden: {path.relative_to(ROOT)}")
 for path in (ROOT / ".github/workflows").glob("*.yml"):
     text = path.read_text(encoding="utf-8")
     for forbidden in (

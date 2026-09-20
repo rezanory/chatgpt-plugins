@@ -17,7 +17,6 @@ import pathlib
 import re
 from typing import Any
 
-
 SCHEMA = "pneumonia.phase2.unit.v1"
 SPLIT_FINGERPRINT = (
     "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
@@ -99,7 +98,7 @@ def unit_contract(token: str, run_id: str, run_date: str | None = None) -> dict[
     if not run_id.isdigit():
         raise Phase2ContractError("PHASE2_UNIT_RUN_ID_INVALID")
     if run_date is None:
-        run_date = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+        run_date = dt.datetime.now(dt.UTC).strftime("%Y%m%d")
     if re.fullmatch(r"20[0-9]{6}", run_date) is None:
         raise Phase2ContractError("PHASE2_UNIT_RUN_DATE_INVALID")
     slug = (
@@ -224,7 +223,11 @@ def _patch_run_cell(source: str) -> str:
         completed = fold_dir / "COMPLETED.json"
         pred_path = fold_dir / "validation_predictions.csv"
 
-        if completed.exists() or pred_path.exists() or (fold_dir / "final_selected.weights.h5").exists():
+        if (
+            completed.exists()
+            or pred_path.exists()
+            or (fold_dir / "final_selected.weights.h5").exists()
+        ):
             payload, pred = phase2_validate_fold(model_id, resolution, fold, fold_dir)
             phase2_ensure_fold_persisted(model_id, resolution, fold, fold_dir)
             print(f"[{model_id} R{resolution} F{fold}] validated completion and persistence — SKIP")
@@ -337,7 +340,10 @@ CGP_PHASE2_MAX_NEW_FOLDS = 1
     terminal_tail = f'''# Exact bounded Phase-2 unit dispatch.
 if not UNLOCK_REMAINING_MODELS:
     raise RuntimeError("PHASE2_UNIT_NOT_UNLOCKED")
-if PHASE2_UNIT_MODEL_ID != {contract['model_id']!r} or int(PHASE2_UNIT_RESOLUTION) != {contract['resolution']!r}:
+if (
+    PHASE2_UNIT_MODEL_ID != {contract['model_id']!r}
+    or int(PHASE2_UNIT_RESOLUTION) != {contract['resolution']!r}
+):
     raise RuntimeError("PHASE2_UNIT_IDENTITY_DRIFT")
 phase2_unit_result = run_phase2_model_resolution(
     PHASE2_UNIT_MODEL_ID,

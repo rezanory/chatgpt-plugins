@@ -1,4 +1,4 @@
-name: kaggle-whoami-8-11-20260913
+name: retired-evidence-kaggle-whoami-8-11-20260913
 
 on:
   workflow_dispatch:

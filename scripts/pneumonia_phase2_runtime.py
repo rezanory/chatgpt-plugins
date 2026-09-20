@@ -20,7 +20,6 @@ from pneumonia_phase2_unit import (
     validate_terminal_receipt,
 )
 
-
 READ_ENDPOINT = (
     "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/"
     "control-plane/v3/read/kaggle"
@@ -166,7 +165,11 @@ def admission_preflight(token: str, run_id: str) -> dict[str, Any]:
         }
     )
     kernels = [item for item in listed.get("kernels", []) if isinstance(item, dict)]
-    exact = [item for item in kernels if str(item.get("ref", "")).lower() == contract["kernel_ref"].lower()]
+    exact = [
+        item
+        for item in kernels
+        if str(item.get("ref", "")).lower() == contract["kernel_ref"].lower()
+    ]
     if exact:
         raise RuntimeError(
             "BLOCKED_IMMUTABLE_SOURCE_HYGIENE: exact Phase2 kernel candidate already exists"
@@ -294,7 +297,10 @@ def verify_terminal(
         },
         timeout=180,
     )
-    if exact_output.get("account_id") != contract["account_id"] or exact_output.get("kernel_ref") != kernel_ref:
+    if (
+        exact_output.get("account_id") != contract["account_id"]
+        or exact_output.get("kernel_ref") != kernel_ref
+    ):
         raise RuntimeError("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 output identity drift")
     if exact_output.get("signed_urls_returned") is not False:
         raise RuntimeError("BLOCKED_VALIDATION_INFRASTRUCTURE: signed URLs escaped read broker")

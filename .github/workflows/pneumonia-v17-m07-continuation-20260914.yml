@@ -1762,20 +1762,14 @@ jobs:
           retention-days: 30
 
   launch-exact-runtime-from-artifact:
-    name: Launch exact M07 runtime candidate
+    name: Retired direct-credential M07 launcher
     needs: launch-m07-continuation
-    if: >-
-      ${{ github.event_name == 'workflow_dispatch' &&
-          github.ref != 'refs/heads/main' &&
-          (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' ||
-           github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' ||
-           github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07' ||
-           github.event.inputs.recovery == 'M07_RUNTIME_M07_R384_A01') }}
+    if: ${{ false }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 15
     environment: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'kaggle-03' || 'kaggle-05' }}
     env:
-      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      RETIRED_DIRECT_CREDENTIAL_REMOVED: 'true'
       EXPECTED_SHA256: ${{ github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' && '5f5d06cb073f4f96f4ae361a7c5d153ad94a254b0faa0ea38e1c0e985b5b75da' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03' && '2c538a32e13e4a7af8c454b87490b30eea8d996e64abab37e32b092b914aca73' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A07' && 'FROM_ARTIFACT' || '5b33160907ce01624b00b4c3be89f3226fd4b6f61141cef7c149eb22c288a6c9' }}
       EXPECTED_OWNER: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'rezanory' || 'trickermark' }}
       EXPECTED_ACCOUNT: ${{ (github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A02' || github.event.inputs.recovery == 'M07_RUNTIME_M07_R320_A03') && 'kg-03' || 'kg-05' }}
@@ -1801,11 +1795,11 @@ jobs:
           $script=@'
           import base64, hashlib, json, os, pathlib, re, urllib.request
 
-          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          token=(os.environ.get('RETIRED_DIRECT_CREDENTIAL_REMOVED') or '').strip()
           if not token:
               raise SystemExit('BLOCKED_ADMISSION_AUTHORITY_MISSING: kg-05 token absent')
           owner=os.environ['EXPECTED_OWNER']
-          auth=('Bearer '+token if token.startswith('KGAT_') else
+          auth=('Bearer '+token if token.startswith('RETIRED_BEARER_PREFIX_') else
                 'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
 
           def post(service, method, body, timeout=60):
@@ -1907,9 +1901,9 @@ jobs:
           $script=@'
           import base64, json, os, pathlib, time, urllib.error, urllib.request
 
-          token=(os.environ.get('KAGGLE_API_TOKEN') or '').strip()
+          token=(os.environ.get('RETIRED_DIRECT_CREDENTIAL_REMOVED') or '').strip()
           owner=os.environ['EXPECTED_OWNER']
-          auth=('Bearer '+token if token.startswith('KGAT_') else
+          auth=('Bearer '+token if token.startswith('RETIRED_BEARER_PREFIX_') else
                 'Basic '+base64.b64encode(f'{owner}:{token}'.encode()).decode())
           notebook_path=pathlib.Path(pathlib.Path('verified-notebook-path.txt').read_text(encoding='utf-8'))
           notebook_sha=pathlib.Path('verified-notebook-sha256.txt').read_text(encoding='utf-8').strip()
