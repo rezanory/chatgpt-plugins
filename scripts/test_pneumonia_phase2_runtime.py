@@ -8,6 +8,19 @@ import pneumonia_phase2_runtime as runtime
 
 
 class Phase2RuntimeTests(unittest.TestCase):
+    def test_exact_provider_ref_matches_kaggle_savekernel_canonicalization(self):
+        contract = {
+            "owner": "azadka",
+            "model_id": "M01",
+            "resolution": 224,
+            "attempt": 1,
+            "run_id": "35531382748",
+        }
+        self.assertEqual(
+            runtime.expected_provider_kernel_ref(contract),
+            "azadka/pneumonia-v1-7-phase2-m01-r224-a01-35531382748",
+        )
+
     def test_session_state_normalizes_provider_payloads(self):
         cases = (
             ({"status": "RUNNING"}, "RUNNING"),
