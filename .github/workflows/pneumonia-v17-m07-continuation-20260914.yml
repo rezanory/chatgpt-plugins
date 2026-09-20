@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       recovery:
-        description: M07 runtime token or PHASE2_UNIT_M{NN}_R{224|320|384}_A{NN}
+        description: M07 runtime token, PHASE2_UNIT_M{NN}_R{224|320|384}_A{NN}, or allowlisted PHASE2_VERIFY_M{NN}_R224_A01
         required: true
         type: string
 
@@ -18,7 +18,9 @@ permissions:
 
 concurrency:
   group: >-
-    ${{ startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') &&
+    ${{ startsWith(github.event.inputs.recovery, 'PHASE2_VERIFY_') &&
+        format('pneumonia-v17-{0}', github.event.inputs.recovery) ||
+        startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') &&
         format('pneumonia-v17-{0}', github.event.inputs.recovery) ||
         startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R320_') &&
         'pneumonia-v17-d260914d-m07-r320' ||
@@ -1345,6 +1347,154 @@ jobs:
           $approval=if($env:CGP_RUNTIME_STAGE -like 'PHASE2_UNIT_*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_RUNTIME_STAGE -like 'M07_RUNTIME_M07_R*'){$env:CGP_RUNTIME_STAGE}elseif($env:CGP_PHASE2_UNLOCK -eq 'true'){'M07_PHASE2_UNLOCK_APPROVED_BY_USER'}else{'none'}
           $body="## PNEUMONIA V1.7 $mode ATTEMPT`n- GitHub run: ``$env:GITHUB_RUN_ID```n- Account: ``$env:CGP_ACCOUNT_ID`` / ``$env:CGP_ACCOUNT_OWNER```n- Kernel: ``$env:CGP_KERNEL_SLUG```n- Predecessor: ``rezanory/m07-final-5fold-fix2-20260914`` exact COMPLETE + artifact PASS`n- Scientific guard: exact persisted evidence is reused; bounded runtime mode completes at most one missing fold and defers locked-test reporting until five folds are validated`n- Approval token: ``$approval```n- This is an orchestration receipt only; PASS requires Kaggle completion and exact scientific evidence."
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json; charset=utf-8' -Body (@{body=$body}|ConvertTo-Json -Compress) | Out-Null
+
+  recover-phase2-unit-terminal:
+    name: Recover exact initial Phase-2 unit scientific terminal
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main' &&
+          startsWith(github.event.inputs.recovery, 'PHASE2_VERIFY_') }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 240
+    env:
+      PHASE2_RECOVERY_MARKER: ${{ github.event.inputs.recovery }}
+      PHASE2_INITIAL_LAUNCH_SHA: 2558d91f21c0ca1db5740d7c48d7cad4090f5dee
+    steps:
+      - name: Checkout exact recovery revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Resolve allowlisted immutable Phase-2 launch identity
+        id: recovery_identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $map=@{
+            'PHASE2_VERIFY_M01_R224_A01'=@{token='PHASE2_UNIT_M01_R224_A01';run_id='35531382748'}
+            'PHASE2_VERIFY_M02_R224_A01'=@{token='PHASE2_UNIT_M02_R224_A01';run_id='35531386401'}
+            'PHASE2_VERIFY_M03_R224_A01'=@{token='PHASE2_UNIT_M03_R224_A01';run_id='35531394688'}
+            'PHASE2_VERIFY_M04_R224_A01'=@{token='PHASE2_UNIT_M04_R224_A01';run_id='35531397274'}
+            'PHASE2_VERIFY_M05_R224_A01'=@{token='PHASE2_UNIT_M05_R224_A01';run_id='35531402776'}
+            'PHASE2_VERIFY_M06_R224_A01'=@{token='PHASE2_UNIT_M06_R224_A01';run_id='35531405681'}
+            'PHASE2_VERIFY_M08_R224_A01'=@{token='PHASE2_UNIT_M08_R224_A01';run_id='35531409770'}
+            'PHASE2_VERIFY_M09_R224_A01'=@{token='PHASE2_UNIT_M09_R224_A01';run_id='35531415284'}
+            'PHASE2_VERIFY_M10_R224_A01'=@{token='PHASE2_UNIT_M10_R224_A01';run_id='35531419407'}
+            'PHASE2_VERIFY_M11_R224_A01'=@{token='PHASE2_UNIT_M11_R224_A01';run_id='35531422030'}
+            'PHASE2_VERIFY_M12_R224_A01'=@{token='PHASE2_UNIT_M12_R224_A01';run_id='35531424115'}
+          }
+          $identity=$map[$env:PHASE2_RECOVERY_MARKER]
+          if($null-eq $identity){throw 'BLOCKED_ADMISSION_AUTHORITY_MISSING: Phase2 recovery marker is not allowlisted'}
+          [IO.File]::AppendAllText(
+            $env:GITHUB_OUTPUT,
+            "source_token=$($identity.token)`nsource_run_id=$($identity.run_id)`n",
+            [Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Reconcile exact source run and launch job
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ steps.recovery_identity.outputs.source_run_id }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $headers=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $run=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID" -Headers $headers
+          if([string]$run.id-ne $env:SOURCE_RUN_ID-or [string]$run.head_sha-ne $env:PHASE2_INITIAL_LAUNCH_SHA){throw 'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 source run SHA drift'}
+          if([string]$run.event-ne 'workflow_dispatch'-or [string]$run.path-ne '.github/workflows/pneumonia-v17-m07-continuation-20260914.yml'){throw 'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 source workflow drift'}
+          $jobs=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID/jobs?per_page=100" -Headers $headers
+          $launch=@($jobs.jobs|Where-Object{$_.name-eq 'launch-m07-continuation'})
+          if($launch.Count-ne 1-or [string]$launch[0].conclusion-ne 'success'){throw 'BLOCKED_PREDECESSOR_EXACT_GREEN_MISSING: Phase2 launch job is not exact green'}
+          $artifacts=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID/artifacts?per_page=100" -Headers $headers
+          $expected="phase2-unit-notebook-$env:SOURCE_RUN_ID"
+          $matches=@($artifacts.artifacts|Where-Object{$_.name-eq $expected-and -not $_.expired})
+          if($matches.Count-ne 1){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: exact Phase2 source artifact unavailable'}
+
+      - name: Download exact original Phase-2 unit artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phase2-unit-notebook-${{ steps.recovery_identity.outputs.source_run_id }}
+          path: exact-phase2-unit
+          run-id: ${{ steps.recovery_identity.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate recovered Phase-2 artifact identity
+        id: recovered_contract
+        shell: powershell
+        env:
+          SOURCE_TOKEN: ${{ steps.recovery_identity.outputs.source_token }}
+          SOURCE_RUN_ID: ${{ steps.recovery_identity.outputs.source_run_id }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $notebooks=@(Get-ChildItem -LiteralPath exact-phase2-unit -Recurse -Filter *.ipynb)
+          $contracts=@(Get-ChildItem -LiteralPath exact-phase2-unit -Recurse -Filter phase2_unit_contract.json)
+          if($notebooks.Count-ne 1-or $contracts.Count-ne 1){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: recovered Phase2 artifact inventory invalid'}
+          $contract=Get-Content -LiteralPath $contracts[0].FullName -Raw|ConvertFrom-Json
+          $sha=(Get-FileHash -Algorithm SHA256 -LiteralPath $notebooks[0].FullName).Hash.ToLowerInvariant()
+          if([string]$contract.token-ne $env:SOURCE_TOKEN-or [string]$contract.run_id-ne $env:SOURCE_RUN_ID){throw 'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: recovered Phase2 contract identity drift'}
+          if($sha-ne [string]$contract.notebook_sha256){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: recovered Phase2 notebook SHA drift'}
+          if([string]$contract.kernel_ref-notmatch '^[a-z0-9_-]+/p17-p2-m(0[1-6]|0[8-9]|1[0-2])-r224-a01-20260920-[0-9]+$'){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: recovered Phase2 kernel ref invalid'}
+          [IO.File]::AppendAllText(
+            $env:GITHUB_OUTPUT,
+            "kernel_ref=$([string]$contract.kernel_ref)`nnotebook_sha256=$sha`n",
+            [Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Request trusted read OIDC identity for recovered Phase-2 verification
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL-or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$oidc.value
+          if($token.Length-lt100){throw 'GitHub read OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Verify exact recovered Phase-2 terminal and scientific receipt
+        id: phase2_recover
+        shell: powershell
+        env:
+          SOURCE_TOKEN: ${{ steps.recovery_identity.outputs.source_token }}
+          SOURCE_RUN_ID: ${{ steps.recovery_identity.outputs.source_run_id }}
+          SOURCE_KERNEL_REF: ${{ steps.recovered_contract.outputs.kernel_ref }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          & $python scripts/pneumonia_phase2_runtime.py verify `
+            --token $env:SOURCE_TOKEN `
+            --run-id $env:SOURCE_RUN_ID `
+            --kernel-ref $env:SOURCE_KERNEL_REF `
+            --evidence-dir phase2-terminal-evidence
+          if($LASTEXITCODE-ne 0){throw 'Recovered Phase2 terminal/scientific validation failed'}
+          $verification=Get-Content -LiteralPath phase2-terminal-evidence\phase2-unit-verification.json -Raw|ConvertFrom-Json
+          if([string]$verification.status-ne 'SCIENTIFIC_RECEIPT_PASS'){throw 'Recovered Phase2 exact scientific PASS missing'}
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT,"next_token=$([string]$verification.next_token)`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Preserve recovered Phase-2 terminal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2-unit-recovered-terminal-evidence-${{ steps.recovery_identity.outputs.source_run_id }}-${{ github.run_id }}
+          path: phase2-terminal-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Dispatch exact successor after recovered scientific verification
+        if: ${{ steps.phase2_recover.outputs.next_token != '' }}
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXT_PHASE2_TOKEN: ${{ steps.phase2_recover.outputs.next_token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:NEXT_PHASE2_TOKEN-notmatch '^PHASE2_UNIT_M(0[1-6]|0[8-9]|1[0-2])_R(224|320|384)_A[0-9]{2}$'){throw 'Phase2 successor token invalid'}
+          $headers=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $payload=@{ref='main';inputs=@{recovery=$env:NEXT_PHASE2_TOKEN}}|ConvertTo-Json -Depth 4 -Compress
+          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/pneumonia-v17-m07-continuation-20260914.yml/dispatches" -Headers $headers -ContentType 'application/json' -Body $payload
+          Write-Host "PHASE2_SUCCESSOR_DISPATCHED=$env:NEXT_PHASE2_TOKEN"
 
   verify-phase2-unit-terminal:
     name: Verify exact Phase-2 unit scientific terminal
