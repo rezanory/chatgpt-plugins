@@ -134,16 +134,139 @@ def _status(broker: OidcReadBroker, contract: dict[str, Any], kernel_ref: str) -
     owner, slug = kernel_ref.split("/", 1)
     if owner.lower() != contract["owner"].lower():
         raise RuntimeError("BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: Phase2 owner drift")
-    return broker.read(
+    try:
+        return broker.read(
+            {
+                "action": "raw_read",
+                "account_id": contract["account_id"],
+                "service": "kernels.KernelsApiService",
+                "method": "GetKernelSessionStatus",
+                "body": {"userName": owner, "kernelSlug": slug},
+            },
+            timeout=60,
+        )
+    except RuntimeError as error:
+        # Kaggle currently returns HTTP 403 for GetKernelSessionStatus on some
+        # freshly submitted private kernels even though the same account can
+        # authenticate, list the exact kernel, and later read its outputs.  Do
+        # not turn that provider-specific status failure into a compute replay.
+        # Reconcile the immutable ref through ListKernels, then use a bounded
+        # exact receipt probe as the terminal signal.
+        if "Kaggle API HTTP 403" not in str(error):
+            raise
+        return _status_from_exact_listing(broker, contract, kernel_ref, owner, slug)
+
+
+def _listed_kernel_matches(item: dict[str, Any], owner: str, slug: str) -> bool:
+    expected = f"{owner}/{slug}".lower()
+    if str(item.get("ref") or "").lower() == expected:
+        return True
+    item_owner = str(
+        item.get("ownerRef")
+        or item.get("ownerUser")
+        or item.get("owner")
+        or item.get("userName")
+        or ""
+    ).lower()
+    item_slug = str(item.get("kernelSlug") or item.get("slug") or "").lower()
+    return item_owner == owner.lower() and item_slug == slug.lower()
+
+
+def _listed_kernel_state(item: dict[str, Any]) -> str:
+    for key in (
+        "status",
+        "state",
+        "runStatus",
+        "run_status",
+        "currentState",
+        "current_state",
+        "kernelSessionStatus",
+        "kernel_session_status",
+    ):
+        if key in item:
+            state = session_state({key: item[key]})
+            if state != "UNKNOWN":
+                return state
+    if item.get("isRunning") is True or item.get("is_running") is True:
+        return "RUNNING"
+    return "UNKNOWN"
+
+
+def _status_from_exact_listing(
+    broker: OidcReadBroker,
+    contract: dict[str, Any],
+    kernel_ref: str,
+    owner: str,
+    slug: str,
+) -> dict[str, Any]:
+    listed = broker.read(
         {
             "action": "raw_read",
             "account_id": contract["account_id"],
             "service": "kernels.KernelsApiService",
-            "method": "GetKernelSessionStatus",
-            "body": {"userName": owner, "kernelSlug": slug},
+            "method": "ListKernels",
+            "body": {
+                "group": "PROFILE",
+                "user": owner,
+                "search": slug,
+                "sortBy": "DATE_RUN",
+                "page": 1,
+                "pageSize": 100,
+            },
         },
         timeout=60,
     )
+    kernels = [item for item in listed.get("kernels", []) if isinstance(item, dict)]
+    exact = [item for item in kernels if _listed_kernel_matches(item, owner, slug)]
+    if len(exact) != 1:
+        raise RuntimeError(
+            "BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: Phase2 status fallback "
+            f"expected one exact listed kernel, observed {len(exact)}"
+        )
+    listed_state = _listed_kernel_state(exact[0])
+    if listed_state != "UNKNOWN":
+        return {
+            "state": listed_state,
+            "kernel_ref": kernel_ref,
+            "status_transport": "LIST_KERNELS_EXACT_FALLBACK",
+        }
+
+    file_name = "PHASE2_UNIT_TERMINAL_RECEIPT.json"
+    try:
+        output = broker.read(
+            {
+                "action": "output_json_files",
+                "account_id": contract["account_id"],
+                "kernel_ref": kernel_ref,
+                "file_names": [file_name],
+                "max_bytes_per_file": 262144,
+            },
+            timeout=180,
+        )
+    except RuntimeError as output_error:
+        if "Kaggle API HTTP 403" not in str(output_error):
+            raise
+        return {
+            "state": "RUNNING",
+            "kernel_ref": kernel_ref,
+            "status_transport": "LIST_KERNELS_EXACT_OUTPUT_PENDING",
+        }
+    files = output.get("files")
+    receipt_present = isinstance(files, list) and any(
+        isinstance(item, dict)
+        and pathlib.PurePosixPath(str(item.get("source_file_name") or "")).name == file_name
+        and isinstance(item.get("json"), dict)
+        for item in files
+    )
+    return {
+        "state": "COMPLETE" if receipt_present else "RUNNING",
+        "kernel_ref": kernel_ref,
+        "status_transport": (
+            "EXACT_TERMINAL_RECEIPT_FALLBACK"
+            if receipt_present
+            else "LIST_KERNELS_EXACT_OUTPUT_NOT_TERMINAL"
+        ),
+    }
 
 
 def admission_preflight(token: str, run_id: str) -> dict[str, Any]:
