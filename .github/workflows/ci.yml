@@ -35,7 +35,8 @@ jobs:
             "CI_PYTHON=$python`n",
             [Text.UTF8Encoding]::new($false)
           )
-          & $python -m pip install --disable-pip-version-check 'hatchling>=1.27' `
+          & $python -m pip install --disable-pip-version-check `
+            'hatchling>=1.27' 'editables>=0.5' `
             2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-sync.log"
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
           & $python -m pip install --disable-pip-version-check --no-build-isolation `
