@@ -16,6 +16,8 @@ permissions:
 jobs:
   test:
     runs-on: [self-hosted, windows, x64, v622]
+    env:
+      CI_PYTHON: '${{ runner.temp }}\ci-venv\Scripts\python.exe'
     steps:
       - uses: actions/checkout@v4
 
@@ -24,15 +26,22 @@ jobs:
         continue-on-error: true
         shell: powershell
         run: |
-          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
-          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
-          & $python -m pip install --disable-pip-version-check `
+          $bootstrap=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $bootstrap){$bootstrap=(Get-Command python -ErrorAction Stop).Source}
+          & $bootstrap -m venv "$env:RUNNER_TEMP\ci-venv"
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          $python=$env:CI_PYTHON
+          if(-not (Test-Path -LiteralPath $python)){throw 'isolated CI Python was not created'}
+          & $python -m pip install --disable-pip-version-check 'hatchling>=1.27' `
+            2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-sync.log"
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          & $python -m pip install --disable-pip-version-check --no-build-isolation `
             -e packages/core `
             -e packages/github-bridge `
             -e packages/repair-engine `
             -e plugins/kaggle `
             -e plugins/kaggle-gateway `
-            'pytest>=8.4' 'ruff>=0.12' 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-sync.log"
+            'pytest>=8.4' 'ruff>=0.12' 2>&1 | Tee-Object -Append -FilePath "$env:RUNNER_TEMP\ci-sync.log"
           $code=$LASTEXITCODE
           if($code-ne 0){exit $code}
 
@@ -42,8 +51,8 @@ jobs:
         continue-on-error: true
         shell: powershell
         run: |
-          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
-          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $python=$env:CI_PYTHON
+          if(-not (Test-Path -LiteralPath $python)){throw 'isolated CI Python missing'}
           & $python scripts/security_gate.py 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-security.log"
           $code=$LASTEXITCODE
           if($code-ne 0){exit $code}
@@ -54,8 +63,8 @@ jobs:
         continue-on-error: true
         shell: powershell
         run: |
-          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
-          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $python=$env:CI_PYTHON
+          if(-not (Test-Path -LiteralPath $python)){throw 'isolated CI Python missing'}
           & $python -m ruff check `
             packages plugins scripts/security_gate.py `
             scripts/pneumonia_phase2_unit.py scripts/pneumonia_phase2_runtime.py `
@@ -70,8 +79,8 @@ jobs:
         continue-on-error: true
         shell: powershell
         run: |
-          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
-          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $python=$env:CI_PYTHON
+          if(-not (Test-Path -LiteralPath $python)){throw 'isolated CI Python missing'}
           & $python -m pytest 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-tests.log"
           $code=$LASTEXITCODE
           if($code-ne 0){exit $code}
@@ -82,8 +91,8 @@ jobs:
         continue-on-error: true
         shell: powershell
         run: |
-          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
-          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $python=$env:CI_PYTHON
+          if(-not (Test-Path -LiteralPath $python)){throw 'isolated CI Python missing'}
           & $python -m compileall -q packages plugins `
             scripts/pneumonia_phase2_unit.py scripts/pneumonia_phase2_runtime.py `
             2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-compile.log"
