@@ -288,6 +288,41 @@ def _patch_run_cell(source: str) -> str:
     return patched
 
 
+def _patch_legacy_persistence_cell(source: str) -> str:
+    """Keep shared helpers but remove the executable M07 persistence gate.
+
+    Phase-2 units own a per-model/per-resolution state dataset through the
+    phase2 persistence helpers.  Running the legacy M07 gate first targets the
+    immutable rezanory M07 dataset from a different account and fails before
+    the unit can restore or train its own fold.
+    """
+    start_markers = (
+        "RESTORE_SUMMARY = _try_restore_persisted_state_compat()\n",
+        "RESTORE_SUMMARY = _try_restore_persisted_state()\n",
+    )
+    end_marker = 'print("✅ PERSISTENCE GATE PASSED")'
+    matched_starts = [marker for marker in start_markers if source.count(marker) == 1]
+    if len(matched_starts) != 1 or source.count(end_marker) != 1:
+        raise Phase2ContractError("PHASE2_LEGACY_PERSISTENCE_GATE_BOUNDARY_INVALID")
+    start_marker = matched_starts[0]
+    start = source.index(start_marker)
+    end = source.index(end_marker, start) + len(end_marker)
+    replacement = '''# Phase-2 unit: do not restore or mutate the legacy M07 persistence dataset.
+PERSIST_RESTORE_VERIFIED = False
+RESTORE_SUMMARY = {
+    "folds": 0,
+    "light_state": 0,
+    "restore_status": "SKIPPED_FOR_EXACT_PHASE2_UNIT",
+}
+print("PHASE2_UNIT_LEGACY_M07_PERSISTENCE_SKIPPED")'''
+    patched = source[:start] + replacement + source[end:]
+    if any(marker in patched for marker in start_markers) or (
+        "M07 run-safe persistence healthcheck before training" in patched
+    ):
+        raise Phase2ContractError("PHASE2_LEGACY_PERSISTENCE_GATE_STILL_EXECUTABLE")
+    return patched
+
+
 def build_notebook(
     input_path: pathlib.Path,
     output_path: pathlib.Path,
@@ -309,12 +344,16 @@ def build_notebook(
             )
         return matches[0]
 
+    legacy_persistence_index = find_unique("PERSISTENCE GATE — MUST PASS BEFORE TRAINING")
     registry_index = find_unique("PHASE-2 CANONICAL MODEL REGISTRY")
     persistence_index = find_unique("def phase2_restore(")
     run_index = find_unique("def run_phase2_model_resolution(")
     if not registry_index < persistence_index < run_index:
         raise Phase2ContractError("PHASE2_SOURCE_DEFINITION_ORDER_INVALID")
-    selected_indexes = [*range(0, 13), registry_index, persistence_index, run_index]
+    # Cells 11 and 12 are the M07 runtime smoke test and M07 continuation
+    # precheck.  They are executable, expensive, and unrelated to the exact
+    # non-M07 Phase-2 unit, so they must not enter the generated notebook.
+    selected_indexes = [*range(0, 11), registry_index, persistence_index, run_index]
     cells = [copy.deepcopy(source_cells[index]) for index in selected_indexes]
     for cell in cells:
         if cell.get("cell_type") == "code":
@@ -335,6 +374,8 @@ UNLOCK_REMAINING_MODELS = True
 CGP_PHASE2_MAX_NEW_FOLDS = 1
 '''
     _set_source(cells[1], config_source + config_append)
+    legacy_cell = selected_indexes.index(legacy_persistence_index)
+    _set_source(cells[legacy_cell], _patch_legacy_persistence_cell(_source(cells[legacy_cell])))
     _set_source(cells[-1], _patch_run_cell(_source(cells[-1])))
 
     terminal_tail = f'''# Exact bounded Phase-2 unit dispatch.
@@ -379,6 +420,16 @@ if phase2_unit_result.get("status") == "COMPLETE":
         }
     )
     notebook["cells"] = cells
+    generated_source = "\n".join(_source(cell) for cell in cells)
+    forbidden_executable_markers = (
+        "RESTORE_SUMMARY = _try_restore_persisted_state_compat()",
+        "RESTORE_SUMMARY = _try_restore_persisted_state()",
+        "M07_CONTINUATION_PRECHECK_PASS",
+        "M07 RUNTIME PRE-FLIGHT PASS",
+    )
+    leaked = [marker for marker in forbidden_executable_markers if marker in generated_source]
+    if leaked:
+        raise Phase2ContractError("PHASE2_LEGACY_EXECUTION_LEAK=" + ",".join(leaked))
     metadata = notebook.setdefault("metadata", {})
     metadata["cgp_phase2_unit"] = contract
     output_path.parent.mkdir(parents=True, exist_ok=True)
