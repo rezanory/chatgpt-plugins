@@ -49,6 +49,9 @@ jobs:
           startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R')) }}
     runs-on: [self-hosted, windows, x64, v622]
     timeout-minutes: 30
+    outputs:
+      runtime_kernel_ref: ${{ steps.runtime_identity.outputs.kernel_ref }}
+      runtime_notebook_sha256: ${{ steps.runtime_identity.outputs.notebook_sha256 }}
     steps:
       - name: Checkout exact workflow revision
         uses: actions/checkout@v4
@@ -967,8 +970,22 @@ jobs:
           [IO.File]::WriteAllText("$env:RUNNER_TEMP\m07_runtime_notebook.sha256",$notebookSha+"`n",[Text.UTF8Encoding]::new($false))
           "CGP_NOTEBOOK_SHA256=$notebookSha" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Preserve exact generated notebook
+      - name: Export exact dynamic runtime identity
+        id: runtime_identity
         if: ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $kernelRef=(Get-Content "$env:RUNNER_TEMP\m07_kernel_slug.txt" -Raw).Trim()
+          $notebookSha=(Get-Content "$env:RUNNER_TEMP\m07_runtime_notebook.sha256" -Raw).Trim()
+          if(-not $kernelRef -or $kernelRef -notmatch '^[^/]+/[^/]+$'){throw 'M07 runtime kernel ref missing before immutable identity export'}
+          if($notebookSha -notmatch '^[0-9a-f]{64}$'){throw 'M07 runtime notebook SHA missing before immutable identity export'}
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT,"kernel_ref=$kernelRef`nnotebook_sha256=$notebookSha`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Preserve exact generated notebook
+        id: preserve_runtime_notebook
+        if: ${{ startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: m07-runtime-notebook-${{ github.run_id }}
@@ -1268,6 +1285,7 @@ jobs:
 
       - name: Preserve runtime orchestration receipt
         if: ${{ always() && startsWith(github.event.inputs.recovery, 'M07_RUNTIME_M07_R') }}
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: m07-runtime-orchestration-receipt-${{ github.run_id }}
@@ -1302,6 +1320,8 @@ jobs:
     timeout-minutes: 240
     env:
       M07_RUNTIME_STAGE: ${{ github.event.inputs.recovery }}
+      M07_EXPECTED_KERNEL_REF: ${{ needs.launch-m07-continuation.outputs.runtime_kernel_ref }}
+      M07_EXPECTED_NOTEBOOK_SHA256: ${{ needs.launch-m07-continuation.outputs.runtime_notebook_sha256 }}
     steps:
       - name: Checkout exact workflow revision
         uses: actions/checkout@v4
@@ -1309,6 +1329,7 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Download exact generated runtime artifact
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: m07-runtime-notebook-${{ github.run_id }}
@@ -1346,9 +1367,19 @@ jobs:
           owner=expected['owner']
           account_id=expected['account_id']
           slug_files=list(pathlib.Path('exact-runtime').rglob('m07_kernel_slug.txt'))
-          if len(slug_files)!=1:
-              raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: slug_sidecars={len(slug_files)}')
-          kernel_ref=slug_files[0].read_text(encoding='utf-8-sig').strip()
+          exported_kernel_ref=os.environ.get('M07_EXPECTED_KERNEL_REF','').strip()
+          if exported_kernel_ref:
+              kernel_ref=exported_kernel_ref
+              if slug_files:
+                  if len(slug_files)!=1:
+                      raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: slug_sidecars={len(slug_files)}')
+                  artifact_kernel_ref=slug_files[0].read_text(encoding='utf-8-sig').strip()
+                  if artifact_kernel_ref!=kernel_ref:
+                      raise SystemExit('BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: artifact/exported kernel ref drift')
+          elif len(slug_files)==1:
+              kernel_ref=slug_files[0].read_text(encoding='utf-8-sig').strip()
+          else:
+              raise SystemExit(f'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: exported_kernel_ref_missing slug_sidecars={len(slug_files)}')
           kernel_owner,kernel_slug=kernel_ref.split('/',1)
           if kernel_owner.lower()!=owner.lower():
               raise SystemExit('BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: runtime owner drift')
@@ -1558,6 +1589,7 @@ jobs:
 
       - name: Preserve runtime terminal evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: m07-runtime-terminal-evidence-${{ github.run_id }}
