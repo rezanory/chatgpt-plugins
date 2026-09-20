@@ -109,6 +109,11 @@ jobs:
         working-directory: deploy/cloudflare-worker-free
         shell: powershell
         run: |
+          # Windows PowerShell 5 turns native stderr (including harmless npm
+          # warnings) into terminating ErrorRecord objects when the runner
+          # wrapper sets ErrorActionPreference=Stop. Native exit codes below
+          # remain the authoritative pass/fail signal.
+          $ErrorActionPreference='Continue'
           $npm=(Get-Command npm.cmd -ErrorAction Stop).Source
           & $npm install --no-audit --no-fund 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-worker-free-install.log"
           if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
@@ -137,7 +142,10 @@ jobs:
           $ErrorActionPreference='Stop'
           $gh='C:\Program Files\GitHub CLI\gh.exe'
           if(-not (Test-Path -LiteralPath $gh)){$gh=(Get-Command gh.exe -ErrorAction Stop).Source}
-          $issuesJson=& $gh issue list --repo $env:GITHUB_REPOSITORY --state open --search '"[CI-DIAGNOSTIC] Latest main failure" in:title' --json number
+          # Pass the search as a variable so Windows native argument parsing
+          # preserves it as one value rather than splitting on spaces.
+          $issueSearch='[CI-DIAGNOSTIC] Latest main failure in:title'
+          $issuesJson=& $gh issue list --repo $env:GITHUB_REPOSITORY --state open --search $issueSearch --json number
           if($LASTEXITCODE-ne 0){throw 'CI diagnostic issue lookup failed'}
           $issues=@($issuesJson | ConvertFrom-Json)
           if($issues.Count-gt 0){
