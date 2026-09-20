@@ -56,7 +56,7 @@ jobs:
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
           if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
           $script=@'
-          import concurrent.futures, json, os, urllib.request
+          import concurrent.futures, json, os, urllib.error, urllib.request
           base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
           token=os.environ['CGP_OIDC_TOKEN']
           accounts=[
@@ -84,23 +84,37 @@ jobs:
             if used is None or total is None: return {'shape':sorted(obj.keys())}
             return {'used_hours':round(used/3600,3),'remaining_hours':round(max(0,total-used)/3600,3),'total_hours':round(total/3600,3)}
           def call(pool_id,cp_id,owner):
-            payload={'provider':'kaggle','action':'raw_read','account_id':cp_id,
-                     'service':'kernels.KernelsApiService','method':'GetAcceleratorQuotaStatistics','body':{}}
-            req=urllib.request.Request(base+'/control-plane/v3/read/kaggle',data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={
-              'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json',
-              'User-Agent':'kaggle-11-pool-readiness/2.0'})
-            with urllib.request.urlopen(req,timeout=30) as r: out=json.load(r)
-            if not out.get('ok'): raise RuntimeError(f'{pool_id}: broker ok=false: {out.get("error","")}')
-            result=out.get('result') or {}
-            return {'account_id':pool_id,'owner_slug':owner,'route':'cloudflare-oidc','status':'OK',
-                    'gpu':quota(result.get('gpuQuota') or result.get('gpu_quota')),
-                    'tpu':quota(result.get('tpuQuota') or result.get('tpu_quota')),
-                    'refresh_at':result.get('quotaRefreshTime') or result.get('quota_refresh_time')}
+            row={'account_id':pool_id,'owner_slug':owner,'route':'cloudflare-oidc'}
+            try:
+              payload={'provider':'kaggle','action':'raw_read','account_id':cp_id,
+                       'service':'kernels.KernelsApiService','method':'GetAcceleratorQuotaStatistics','body':{}}
+              req=urllib.request.Request(base+'/control-plane/v3/read/kaggle',data=json.dumps(payload,separators=(',',':')).encode(),method='POST',headers={
+                'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json',
+                'User-Agent':'kaggle-11-pool-readiness/2.1'})
+              with urllib.request.urlopen(req,timeout=30) as r: out=json.load(r)
+              if not out.get('ok'):
+                row.update(status='BROKER_ERROR',error_type='BROKER_NOT_OK')
+                return row
+              result=out.get('result') or {}
+              row.update(status='OK',
+                         gpu=quota(result.get('gpuQuota') or result.get('gpu_quota')),
+                         tpu=quota(result.get('tpuQuota') or result.get('tpu_quota')),
+                         refresh_at=result.get('quotaRefreshTime') or result.get('quota_refresh_time'))
+              return row
+            except urllib.error.HTTPError as exc:
+              row.update(status='HTTP_ERROR',http_status=int(exc.code),error_type='HTTPError')
+              return row
+            except Exception as exc:
+              row.update(status='ERROR',error_type=type(exc).__name__)
+              return row
           with concurrent.futures.ThreadPoolExecutor(max_workers=11) as ex:
             rows=list(ex.map(lambda x: call(*x),accounts))
           rows.sort(key=lambda x:x['account_id'])
           for row in rows: print('KAGGLE_POOL_RESULT='+json.dumps(row,sort_keys=True))
-          if len(rows)!=11 or any(r['status']!='OK' for r in rows): raise SystemExit('Cloudflare pool incomplete')
+          failed=[row for row in rows if row.get('status')!='OK']
+          if len(rows)!=11 or failed:
+            summary=','.join(f"{row['account_id']}:{row.get('status')}:{row.get('http_status','')}" for row in failed)
+            raise SystemExit('Cloudflare pool incomplete: '+summary)
           print('KAGGLE_11_POOL_READY=11/11')
           '@
           $script | & $python -
