@@ -28,6 +28,10 @@ TERMINAL_STATES = {"COMPLETE", "ERROR", "CANCEL"}
 ACTIVE_STATES = {"RUNNING", "QUEUED", "PENDING", "INITIALIZING"}
 
 
+class BrokerTransientError(RuntimeError):
+    """A bounded transport failure whose operation outcome remains unknown."""
+
+
 def _walk_strings(value: Any):
     if isinstance(value, dict):
         for item in value.values():
@@ -65,12 +69,34 @@ class OidcReadBroker:
         target = request_url + separator + "audience=" + urllib.parse.quote(
             "cgp-control-plane-v3", safe=""
         )
-        request = urllib.request.Request(
-            target,
-            headers={"Authorization": "Bearer " + request_token, "Accept": "application/json"},
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8", "replace") or "{}")
+        last_error: Exception | None = None
+        payload: dict[str, Any] | None = None
+        for attempt in range(1, 5):
+            request = urllib.request.Request(
+                target,
+                headers={
+                    "Authorization": "Bearer " + request_token,
+                    "Accept": "application/json",
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    payload = json.loads(
+                        response.read().decode("utf-8", "replace") or "{}"
+                    )
+                break
+            except urllib.error.HTTPError as error:
+                if error.code not in {408, 429} and not 500 <= error.code <= 599:
+                    raise
+                last_error = error
+            except (urllib.error.URLError, TimeoutError, OSError) as error:
+                last_error = error
+            if attempt < 4:
+                time.sleep(min(2 ** (attempt - 1), 4))
+        if payload is None:
+            raise BrokerTransientError(
+                "Phase2 OIDC refresh transient retry exhausted"
+            ) from last_error
         token = str(payload.get("value") or "").strip()
         if len(token) < 100:
             raise RuntimeError("Phase2 OIDC refresh returned no token")
@@ -110,7 +136,9 @@ class OidcReadBroker:
                 if attempt == 4:
                     break
                 time.sleep(min(2 ** (attempt - 1), 4))
-            raise RuntimeError("Phase2 read broker transient retry exhausted") from last_error
+            raise BrokerTransientError(
+                "Phase2 read broker transient retry exhausted"
+            ) from last_error
 
         try:
             envelope = request_once(self.token)
@@ -374,13 +402,21 @@ def verify_terminal(
     terminal_state = "UNKNOWN"
     started = time.time()
     for poll in range(max_polls):
-        payload = _status(broker, contract, provider_kernel_ref)
-        state = session_state(payload)
+        transport_error = None
+        try:
+            payload = _status(broker, contract, provider_kernel_ref)
+            state = session_state(payload)
+        except BrokerTransientError as error:
+            payload = None
+            state = "UNKNOWN"
+            transport_error = str(error)
         observation = {
             "poll": poll,
             "elapsed_seconds": round(time.time() - started, 1),
             "state": state,
         }
+        if transport_error is not None:
+            observation["transport_error"] = transport_error
         history.append(observation)
         print("PHASE2_UNIT_STATUS", json.dumps(observation, sort_keys=True), flush=True)
         if state in TERMINAL_STATES:
@@ -398,6 +434,7 @@ def verify_terminal(
         "terminal_state": terminal_state,
         "session_status": terminal_payload,
         "poll_count": len(history),
+        "history": history,
         "elapsed_seconds": round(time.time() - started, 1),
         "scientific_receipt_validated": False,
         "github_run_id": run_id,

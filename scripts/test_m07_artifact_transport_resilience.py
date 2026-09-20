@@ -52,6 +52,26 @@ def test_phase2_recovery_verifies_existing_runs_without_launching_compute():
         token = f"PHASE2_UNIT_{model_id}_R224_A01"
         assert block.count(marker) == 1
         assert f"token='{token}';run_id='{run_id}'" in block
+    expected_a03 = {
+        "M01": "35539262689",
+        "M02": "35539265230",
+        "M03": "35539268161",
+        "M04": "35539270533",
+        "M05": "35539272554",
+        "M06": "35539274778",
+        "M08": "35539277136",
+        "M09": "35539279566",
+        "M10": "35539282287",
+        "M11": "35539284809",
+        "M12": "35539287827",
+    }
+    for model_id, run_id in expected_a03.items():
+        marker = f"PHASE2_VERIFY_{model_id}_R224_A03"
+        token = f"PHASE2_UNIT_{model_id}_R224_A03"
+        assert block.count(marker) == 1
+        assert f"token='{token}';run_id='{run_id}';source_sha='a52431acca1d3ae55f17c045f649d01a8b8a71c8'" in block
+    assert "source_sha=$sourceSha" in block
+    assert "SOURCE_SHA: ${{ steps.recovery_identity.outputs.source_sha }}" in block
 
 
 def test_phase2_launch_exports_exact_provider_kernel_ref_to_verifier():

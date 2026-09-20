@@ -103,6 +103,13 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertIn(phase2.FROZEN_M07_RECIPE_RECEIPT_SHA256, joined)
             self.assertIn("'batch_size': 12", joined)
             self.assertIn("'edge_filters': 16", joined)
+            self.assertIn("import matplotlib.pyplot as plt", joined)
+            self.assertIn("from kagglehub.http_resolver import DatasetHttpResolver", joined)
+            self.assertIn("_phase2_http_dataset_download", joined)
+            self.assertNotIn(
+                "kagglehub.dataset_download(phase2_handle(model_id, resolution)",
+                joined,
+            )
             self.assertEqual(joined.count("PHASE2_UNIT_NEW_FOLD_BOUND_EXCEEDED"), 1)
             self.assertIn("run_phase2_model_resolution(\n    PHASE2_UNIT_MODEL_ID", joined)
             self.assertNotIn("RESTORE_SUMMARY = _try_restore_persisted_state_compat()", joined)

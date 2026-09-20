@@ -1,6 +1,9 @@
 import pathlib
+import os
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -8,6 +11,38 @@ import pneumonia_phase2_runtime as runtime
 
 
 class Phase2RuntimeTests(unittest.TestCase):
+    def test_oidc_refresh_retries_transient_transport(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return ('{"value":"' + ("r" * 120) + '"}').encode()
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CGP_READ_OIDC_TOKEN": "i" * 120,
+                "ACTIONS_ID_TOKEN_REQUEST_URL": "https://oidc.example/token",
+                "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token-long-enough",
+            },
+            clear=False,
+        ), mock.patch.object(
+            runtime.urllib.request,
+            "urlopen",
+            side_effect=[
+                runtime.urllib.error.URLError("one"),
+                runtime.urllib.error.URLError("two"),
+                Response(),
+            ],
+        ) as urlopen, mock.patch.object(runtime.time, "sleep"):
+            broker = runtime.OidcReadBroker()
+            self.assertEqual(broker.refresh(), "r" * 120)
+            self.assertEqual(urlopen.call_count, 3)
+
     def test_exact_provider_ref_matches_kaggle_savekernel_canonicalization(self):
         contract = {
             "owner": "azadka",
@@ -136,6 +171,44 @@ class Phase2RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(result["state"], "COMPLETE")
         self.assertEqual(result["status_transport"], "EXACT_TERMINAL_RECEIPT_FALLBACK")
+
+    def test_terminal_verifier_survives_one_broker_transport_incident(self):
+        class Broker:
+            def read(self, payload, timeout=90):
+                raise RuntimeError("live log unavailable")
+
+        token = "PHASE2_UNIT_M01_R224_A03"
+        run_id = "35539262689"
+        kernel_ref = "azadka/p17-p2-m01-r224-a03-20260920-35539262689"
+        provider_ref = "azadka/pneumonia-v1-7-phase2-m01-r224-a03-35539262689"
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
+            runtime, "OidcReadBroker", return_value=Broker()
+        ), mock.patch.object(
+            runtime,
+            "_status",
+            side_effect=[
+                runtime.BrokerTransientError("temporary broker timeout"),
+                {"status": "ERROR"},
+            ],
+        ), mock.patch.object(runtime.time, "sleep"):
+            with self.assertRaisesRegex(
+                RuntimeError, "PHASE2_UNIT_SCIENTIFIC_TERMINAL_ERROR"
+            ):
+                runtime.verify_terminal(
+                    token,
+                    run_id,
+                    kernel_ref,
+                    provider_ref,
+                    pathlib.Path(temp),
+                    max_polls=2,
+                    interval_seconds=0,
+                )
+            evidence = pathlib.Path(temp, "phase2-unit-verification.json")
+            payload = __import__("json").loads(evidence.read_text(encoding="utf-8"))
+            self.assertEqual(payload["terminal_state"], "ERROR")
+            self.assertEqual(payload["poll_count"], 2)
+            self.assertEqual(payload["history"][0]["state"], "UNKNOWN")
+            self.assertIn("temporary broker timeout", payload["history"][0]["transport_error"])
 
 
 if __name__ == "__main__":

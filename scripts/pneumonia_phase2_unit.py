@@ -351,6 +351,46 @@ print("PHASE2_UNIT_LEGACY_M07_PERSISTENCE_SKIPPED")'''
     return patched
 
 
+def _patch_phase2_persistence_cell(source: str) -> str:
+    """Force Phase-2 state restores through KaggleHub's HTTP resolver.
+
+    Kaggle notebooks route ``kagglehub.dataset_download`` through the
+    non-interactive mount resolver.  That resolver cannot attach a state
+    dataset created by an earlier immutable attempt and reports code 9 even
+    though the authenticated account owns the dataset.  The HTTP resolver uses
+    the same KaggleHub credentials but downloads the exact dataset directly,
+    preserving the existing HTTP-404 first-run gate.
+    """
+    restore_marker = "def phase2_restore(model_id, resolution):"
+    download_call = (
+        "        kagglehub.dataset_download(phase2_handle(model_id, resolution), "
+        "output_dir=str(temp), force_download=True)"
+    )
+    if source.count(restore_marker) != 1 or source.count(download_call) != 1:
+        raise Phase2ContractError("PHASE2_HTTP_RESTORE_PATCH_BOUNDARY_INVALID")
+    helper = '''def _phase2_http_dataset_download(handle, output_dir):
+    from kagglehub.handle import parse_dataset_handle
+    from kagglehub.http_resolver import DatasetHttpResolver
+
+    resolved_path, _ = DatasetHttpResolver()(
+        parse_dataset_handle(handle),
+        output_dir=str(output_dir),
+        force_download=True,
+    )
+    if Path(resolved_path).resolve() != Path(output_dir).resolve():
+        raise RuntimeError("PHASE2_HTTP_RESTORE_OUTPUT_PATH_DRIFT")
+    return resolved_path
+
+'''
+    source = source.replace(restore_marker, helper + restore_marker, 1)
+    source = source.replace(
+        download_call,
+        "        _phase2_http_dataset_download(phase2_handle(model_id, resolution), temp)",
+        1,
+    )
+    return source
+
+
 def build_notebook(
     input_path: pathlib.Path,
     output_path: pathlib.Path,
@@ -410,6 +450,8 @@ CGP_PHASE2_MAX_NEW_FOLDS = 1
     # R384 A12 terminal receipt, so every account has the same scientific input
     # without repeating HPO or depending on cross-account M07 persistence.
     frozen_recipe_source = f'''# Exact frozen M07 recipe for Phase-2 comparator units.
+import matplotlib.pyplot as plt
+
 shared_params = {FROZEN_M07_SHARED_PARAMS!r}
 recipe = {{
     "schema": "m07.final.confirmed.recipe.v1.6",
@@ -432,6 +474,11 @@ print("PHASE2_UNIT_FROZEN_M07_RECIPE_BOUND", recipe["recipe_fingerprint_sha256"]
             "outputs": [],
             "source": frozen_recipe_source.splitlines(keepends=True),
         },
+    )
+    persistence_cell = selected_indexes.index(persistence_index) + 1
+    _set_source(
+        cells[persistence_cell],
+        _patch_phase2_persistence_cell(_source(cells[persistence_cell])),
     )
     _set_source(cells[-1], _patch_run_cell(_source(cells[-1])))
 
@@ -492,6 +539,9 @@ if phase2_unit_result.get("status") == "COMPLETE":
         FROZEN_M07_RECIPE_FINGERPRINT,
         FROZEN_M07_RECIPE_RECEIPT_SHA256,
         "shared_params =",
+        "import matplotlib.pyplot as plt",
+        "DatasetHttpResolver",
+        "_phase2_http_dataset_download",
     )
     missing_frozen = [
         marker for marker in required_frozen_markers if marker not in generated_source
