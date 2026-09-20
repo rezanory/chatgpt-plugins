@@ -59,6 +59,7 @@ jobs:
     outputs:
       runtime_kernel_ref: ${{ steps.runtime_identity.outputs.kernel_ref }}
       runtime_notebook_sha256: ${{ steps.runtime_identity.outputs.notebook_sha256 }}
+      runtime_provider_kernel_ref: ${{ steps.runtime_submit.outputs.provider_kernel_ref }}
     steps:
       - name: Checkout exact workflow revision
         uses: actions/checkout@v4
@@ -1245,6 +1246,7 @@ jobs:
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
       - name: Submit M07 continuation or approved Phase-2 kernel
+        id: runtime_submit
         if: ${{ github.ref == 'refs/heads/main' }}
         shell: powershell
         run: |
@@ -1315,6 +1317,21 @@ jobs:
               pathlib.Path(os.environ["RUNNER_TEMP"], receipt_name).write_text(
                   json.dumps(launch, ensure_ascii=False, indent=2), encoding="utf-8"
               )
+          if runtime_stage.startswith("PHASE2_UNIT_"):
+              provider_path = str(provider_ref or "").strip().strip("/").split("/")
+              if len(provider_path) != 3 or provider_path[0].lower() != "code":
+                  raise SystemExit("Phase2 SaveKernel provider_ref missing or invalid")
+              provider_kernel_ref = f"{provider_path[1]}/{provider_path[2]}"
+              expected_provider_ref = (
+                  f"{os.environ['CGP_ACCOUNT_OWNER'].strip()}/"
+                  f"pneumonia-v1-7-phase2-{runtime_stage[12:15].lower()}-"
+                  f"r{runtime_stage[17:20]}-a{runtime_stage[22:24]}-"
+                  f"{os.environ.get('GITHUB_RUN_ID', '')}"
+              )
+              if provider_kernel_ref.lower() != expected_provider_ref.lower():
+                  raise SystemExit("Phase2 SaveKernel provider_ref identity drift")
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                  output.write(f"provider_kernel_ref={provider_kernel_ref}\n")
           print(json.dumps(launch, ensure_ascii=False))
           '@
           $script | & $python -
@@ -1409,12 +1426,23 @@ jobs:
           $expected="phase2-unit-notebook-$env:SOURCE_RUN_ID"
           $matches=@($artifacts.artifacts|Where-Object{$_.name-eq $expected-and -not $_.expired})
           if($matches.Count-ne 1){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: exact Phase2 source artifact unavailable'}
+          $expectedReceipt="phase2-unit-orchestration-receipt-$env:SOURCE_RUN_ID"
+          $receiptMatches=@($artifacts.artifacts|Where-Object{$_.name-eq $expectedReceipt-and -not $_.expired})
+          if($receiptMatches.Count-ne 1){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: exact Phase2 launch receipt artifact unavailable'}
 
       - name: Download exact original Phase-2 unit artifact
         uses: actions/download-artifact@v4
         with:
           name: phase2-unit-notebook-${{ steps.recovery_identity.outputs.source_run_id }}
           path: exact-phase2-unit
+          run-id: ${{ steps.recovery_identity.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download exact original Phase-2 launch receipt artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phase2-unit-orchestration-receipt-${{ steps.recovery_identity.outputs.source_run_id }}
+          path: exact-phase2-orchestration
           run-id: ${{ steps.recovery_identity.outputs.source_run_id }}
           github-token: ${{ github.token }}
 
@@ -1428,15 +1456,26 @@ jobs:
           $ErrorActionPreference='Stop'
           $notebooks=@(Get-ChildItem -LiteralPath exact-phase2-unit -Recurse -Filter *.ipynb)
           $contracts=@(Get-ChildItem -LiteralPath exact-phase2-unit -Recurse -Filter phase2_unit_contract.json)
-          if($notebooks.Count-ne 1-or $contracts.Count-ne 1){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: recovered Phase2 artifact inventory invalid'}
+          $launchReceipts=@(Get-ChildItem -LiteralPath exact-phase2-orchestration -Recurse -Filter phase2-unit-launch-receipt.json)
+          if($notebooks.Count-ne 1-or $contracts.Count-ne 1-or $launchReceipts.Count-ne 1){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: recovered Phase2 artifact inventory invalid'}
           $contract=Get-Content -LiteralPath $contracts[0].FullName -Raw|ConvertFrom-Json
+          $launch=Get-Content -LiteralPath $launchReceipts[0].FullName -Raw|ConvertFrom-Json
           $sha=(Get-FileHash -Algorithm SHA256 -LiteralPath $notebooks[0].FullName).Hash.ToLowerInvariant()
           if([string]$contract.token-ne $env:SOURCE_TOKEN-or [string]$contract.run_id-ne $env:SOURCE_RUN_ID){throw 'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: recovered Phase2 contract identity drift'}
           if($sha-ne [string]$contract.notebook_sha256){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: recovered Phase2 notebook SHA drift'}
           if([string]$contract.kernel_ref-notmatch '^[a-z0-9_-]+/p17-p2-m(0[1-6]|0[8-9]|1[0-2])-r224-a01-20260920-[0-9]+$'){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: recovered Phase2 kernel ref invalid'}
+          if([string]$launch.schema-ne 'pneumonia.phase2.unit.orchestration.v1'-or [string]$launch.status-ne 'ORCHESTRATION_ACCEPTED_PENDING_SCIENTIFIC_TERMINAL'-or $launch.accepted-ne $true){throw 'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: recovered Phase2 launch receipt status invalid'}
+          if([string]$launch.runtime_stage-ne $env:SOURCE_TOKEN-or [string]$launch.github_run_id-ne $env:SOURCE_RUN_ID-or [string]$launch.broker_run_id-ne $env:SOURCE_RUN_ID){throw 'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: recovered Phase2 launch run identity drift'}
+          if([string]$launch.source_sha-ne $env:PHASE2_INITIAL_LAUNCH_SHA-or [string]$launch.broker_sha-ne $env:PHASE2_INITIAL_LAUNCH_SHA){throw 'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: recovered Phase2 launch SHA drift'}
+          if([string]$launch.kernel_ref-ne [string]$contract.kernel_ref-or [string]$launch.notebook_sha256-ne $sha-or [string]$launch.account_id-ne [string]$contract.account_id-or [string]$launch.owner-ne [string]$contract.owner){throw 'BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: recovered Phase2 launch/contract drift'}
+          $providerParts=([string]$launch.provider_ref).Trim('/').Split('/')
+          if($providerParts.Count-ne 3-or $providerParts[0]-ne 'code'){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: recovered Phase2 provider ref invalid'}
+          $providerKernelRef="$($providerParts[1])/$($providerParts[2])"
+          $expectedProviderKernelRef="$([string]$contract.owner)/pneumonia-v1-7-phase2-$(([string]$contract.model_id).ToLowerInvariant())-r$([int]$contract.resolution)-a$(([int]$contract.attempt).ToString('00'))-$env:SOURCE_RUN_ID"
+          if($providerKernelRef-ne $expectedProviderKernelRef){throw 'BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: recovered Phase2 provider kernel ref drift'}
           [IO.File]::AppendAllText(
             $env:GITHUB_OUTPUT,
-            "kernel_ref=$([string]$contract.kernel_ref)`nnotebook_sha256=$sha`n",
+            "kernel_ref=$([string]$contract.kernel_ref)`nprovider_kernel_ref=$providerKernelRef`nnotebook_sha256=$sha`n",
             [Text.UTF8Encoding]::new($false)
           )
 
@@ -1459,6 +1498,7 @@ jobs:
           SOURCE_TOKEN: ${{ steps.recovery_identity.outputs.source_token }}
           SOURCE_RUN_ID: ${{ steps.recovery_identity.outputs.source_run_id }}
           SOURCE_KERNEL_REF: ${{ steps.recovered_contract.outputs.kernel_ref }}
+          SOURCE_PROVIDER_KERNEL_REF: ${{ steps.recovered_contract.outputs.provider_kernel_ref }}
         run: |
           $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
@@ -1467,6 +1507,7 @@ jobs:
             --token $env:SOURCE_TOKEN `
             --run-id $env:SOURCE_RUN_ID `
             --kernel-ref $env:SOURCE_KERNEL_REF `
+            --provider-kernel-ref $env:SOURCE_PROVIDER_KERNEL_REF `
             --evidence-dir phase2-terminal-evidence
           if($LASTEXITCODE-ne 0){throw 'Recovered Phase2 terminal/scientific validation failed'}
           $verification=Get-Content -LiteralPath phase2-terminal-evidence\phase2-unit-verification.json -Raw|ConvertFrom-Json
@@ -1508,6 +1549,7 @@ jobs:
     env:
       PHASE2_UNIT_TOKEN: ${{ github.event.inputs.recovery }}
       PHASE2_EXPECTED_KERNEL_REF: ${{ needs.launch-m07-continuation.outputs.runtime_kernel_ref }}
+      PHASE2_PROVIDER_KERNEL_REF: ${{ needs.launch-m07-continuation.outputs.runtime_provider_kernel_ref }}
       PHASE2_EXPECTED_NOTEBOOK_SHA256: ${{ needs.launch-m07-continuation.outputs.runtime_notebook_sha256 }}
     steps:
       - name: Checkout exact workflow revision
@@ -1556,6 +1598,7 @@ jobs:
             --token $env:PHASE2_UNIT_TOKEN `
             --run-id $env:GITHUB_RUN_ID `
             --kernel-ref $env:PHASE2_EXPECTED_KERNEL_REF `
+            --provider-kernel-ref $env:PHASE2_PROVIDER_KERNEL_REF `
             --evidence-dir phase2-terminal-evidence
           if($LASTEXITCODE-ne 0){throw 'Phase2 terminal/scientific validation failed'}
           $verification=Get-Content -LiteralPath phase2-terminal-evidence\phase2-unit-verification.json -Raw | ConvertFrom-Json

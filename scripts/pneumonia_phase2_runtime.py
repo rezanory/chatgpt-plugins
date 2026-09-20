@@ -192,6 +192,21 @@ def _listed_kernel_state(item: dict[str, Any]) -> str:
     return "UNKNOWN"
 
 
+def expected_provider_kernel_ref(contract: dict[str, Any]) -> str:
+    """Return the exact Kaggle ref produced from the submitted display title.
+
+    Kaggle's SaveKernel response can canonicalize the requested ``slug`` from
+    ``newTitle``.  Keep the scientific contract ref immutable, but bind the
+    transport to this one deterministic provider alias when it is returned by
+    the accepted launch receipt.
+    """
+    return (
+        f"{contract['owner']}/pneumonia-v1-7-phase2-"
+        f"{str(contract['model_id']).lower()}-r{int(contract['resolution'])}-"
+        f"a{int(contract['attempt']):02d}-{contract['run_id']}"
+    )
+
+
 def _status_from_exact_listing(
     broker: OidcReadBroker,
     contract: dict[str, Any],
@@ -335,6 +350,7 @@ def verify_terminal(
     token: str,
     run_id: str,
     kernel_ref: str,
+    provider_kernel_ref: str | None,
     evidence_dir: pathlib.Path,
     max_polls: int,
     interval_seconds: int,
@@ -345,6 +361,12 @@ def verify_terminal(
     contract = unit_contract(token, run_id, date_match.group(1))
     if kernel_ref != contract["kernel_ref"]:
         raise RuntimeError("BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: Phase2 kernel ref drift")
+    provider_kernel_ref = provider_kernel_ref or kernel_ref
+    allowed_provider_refs = {kernel_ref, expected_provider_kernel_ref(contract)}
+    if provider_kernel_ref not in allowed_provider_refs:
+        raise RuntimeError(
+            "BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: Phase2 provider kernel ref drift"
+        )
     broker = OidcReadBroker()
     evidence_dir.mkdir(parents=True, exist_ok=True)
     history: list[dict[str, Any]] = []
@@ -352,7 +374,7 @@ def verify_terminal(
     terminal_state = "UNKNOWN"
     started = time.time()
     for poll in range(max_polls):
-        payload = _status(broker, contract, kernel_ref)
+        payload = _status(broker, contract, provider_kernel_ref)
         state = session_state(payload)
         observation = {
             "poll": poll,
@@ -371,6 +393,7 @@ def verify_terminal(
         "schema": "pneumonia.phase2.unit.verification.v1",
         "token": token,
         "kernel_ref": kernel_ref,
+        "provider_kernel_ref": provider_kernel_ref,
         "account_id": contract["account_id"],
         "terminal_state": terminal_state,
         "session_status": terminal_payload,
@@ -393,7 +416,7 @@ def verify_terminal(
                 {
                     "action": "live_log",
                     "account_id": contract["account_id"],
-                    "kernel_ref": kernel_ref,
+                    "kernel_ref": provider_kernel_ref,
                     "max_chars": 40000,
                 },
                 timeout=120,
@@ -414,7 +437,7 @@ def verify_terminal(
         {
             "action": "output_json_files",
             "account_id": contract["account_id"],
-            "kernel_ref": kernel_ref,
+            "kernel_ref": provider_kernel_ref,
             "file_names": [file_name],
             "max_bytes_per_file": 262144,
         },
@@ -422,7 +445,7 @@ def verify_terminal(
     )
     if (
         exact_output.get("account_id") != contract["account_id"]
-        or exact_output.get("kernel_ref") != kernel_ref
+        or exact_output.get("kernel_ref") != provider_kernel_ref
     ):
         raise RuntimeError("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 output identity drift")
     if exact_output.get("signed_urls_returned") is not False:
@@ -466,6 +489,7 @@ def main(argv: list[str] | None = None) -> int:
     verify_parser.add_argument("--token", required=True)
     verify_parser.add_argument("--run-id", required=True)
     verify_parser.add_argument("--kernel-ref", required=True)
+    verify_parser.add_argument("--provider-kernel-ref")
     verify_parser.add_argument("--evidence-dir", required=True, type=pathlib.Path)
     verify_parser.add_argument("--max-polls", type=int, default=631)
     verify_parser.add_argument("--interval-seconds", type=int, default=20)
@@ -480,6 +504,7 @@ def main(argv: list[str] | None = None) -> int:
             args.token,
             args.run_id,
             args.kernel_ref,
+            args.provider_kernel_ref,
             args.evidence_dir,
             args.max_polls,
             args.interval_seconds,

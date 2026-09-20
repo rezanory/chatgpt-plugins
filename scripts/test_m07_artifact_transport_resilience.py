@@ -42,7 +42,9 @@ def test_phase2_recovery_verifies_existing_runs_without_launching_compute():
     }
     assert "startsWith(github.event.inputs.recovery, 'PHASE2_VERIFY_')" in block
     assert "actions/download-artifact@v4" in block
+    assert "phase2-unit-orchestration-receipt-${{ steps.recovery_identity.outputs.source_run_id }}" in block
     assert "scripts/pneumonia_phase2_runtime.py verify" in block
+    assert "--provider-kernel-ref $env:SOURCE_PROVIDER_KERNEL_REF" in block
     assert "SaveKernel" not in block
     assert "PHASE2_INITIAL_LAUNCH_SHA: 2558d91f21c0ca1db5740d7c48d7cad4090f5dee" in block
     for model_id, run_id in expected.items():
@@ -50,3 +52,12 @@ def test_phase2_recovery_verifies_existing_runs_without_launching_compute():
         token = f"PHASE2_UNIT_{model_id}_R224_A01"
         assert block.count(marker) == 1
         assert f"token='{token}';run_id='{run_id}'" in block
+
+
+def test_phase2_launch_exports_exact_provider_kernel_ref_to_verifier():
+    text = W.read_text(encoding="utf-8")
+    assert "runtime_provider_kernel_ref: ${{ steps.runtime_submit.outputs.provider_kernel_ref }}" in text
+    assert "id: runtime_submit" in text
+    assert 'output.write(f"provider_kernel_ref={provider_kernel_ref}\\n")' in text
+    assert "PHASE2_PROVIDER_KERNEL_REF: ${{ needs.launch-m07-continuation.outputs.runtime_provider_kernel_ref }}" in text
+    assert "--provider-kernel-ref $env:PHASE2_PROVIDER_KERNEL_REF" in text
