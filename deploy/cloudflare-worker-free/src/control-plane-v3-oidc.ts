@@ -5,8 +5,11 @@ const ACTION_AUDIENCE = "cgp-control-plane-v3-action";
 const TRUSTED_REPOSITORY = "rezanory/chatgpt-plugins";
 const TRUSTED_REPOSITORY_ID = "1337215097";
 const TRUSTED_OWNER_ID = "62356000";
-const TRUSTED_ACTOR_ID = "62356000";
+const TRUSTED_HUMAN_ACTOR_ID = "62356000";
+const GITHUB_ACTIONS_BOT_ACTOR_ID = "41898282";
 const TRUSTED_REF = "refs/heads/main";
+const PHASE2_WORKFLOW_REF =
+  "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/main";
 const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   [
     "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main",
@@ -98,6 +101,21 @@ function audienceMatches(value: unknown, expected: string): boolean {
   return Array.isArray(value) && value.some((item) => item === expected);
 }
 
+function actorMatches(
+  actorId: string,
+  workflowRef: string,
+  ref: string,
+  eventName: string,
+): boolean {
+  if (actorId === TRUSTED_HUMAN_ACTOR_ID) return true;
+  return (
+    actorId === GITHUB_ACTIONS_BOT_ACTOR_ID &&
+    workflowRef === PHASE2_WORKFLOW_REF &&
+    ref === TRUSTED_REF &&
+    eventName === "workflow_dispatch"
+  );
+}
+
 async function signingKey(kid: string): Promise<CryptoKey> {
   const response = await fetch(GITHUB_OIDC_JWKS, {
     headers: { Accept: "application/json", "User-Agent": "chatgpt-control-plane-v3-oidc/1.1" },
@@ -169,7 +187,10 @@ async function verifyBrokerOidc(
   if (repository !== TRUSTED_REPOSITORY || repositoryId !== TRUSTED_REPOSITORY_ID) {
     throw new Error("GitHub OIDC repository identity mismatch");
   }
-  if (ownerId !== TRUSTED_OWNER_ID || actorId !== TRUSTED_ACTOR_ID) {
+  if (ownerId !== TRUSTED_OWNER_ID) {
+    throw new Error("GitHub OIDC owner identity mismatch");
+  }
+  if (!actorMatches(actorId, workflowRef, ref, eventName)) {
     throw new Error("GitHub OIDC owner/actor identity mismatch");
   }
   const allowedEvents = allowedWorkflows.get(workflowRef);
