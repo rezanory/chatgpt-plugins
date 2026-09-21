@@ -1,0 +1,97 @@
+name: Runner Fleet Inventory 2026-09-21
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/runner-fleet-inventory-20260921.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 10
+    steps:
+      - name: Inventory local self-hosted runner registrations
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $roots = @()
+          foreach ($base in @('C:\actions-runners','C:\actions-runners-extra')) {
+            if (Test-Path -LiteralPath $base -PathType Container) {
+              $roots += Get-ChildItem -LiteralPath $base -Directory -Force -ErrorAction SilentlyContinue
+            }
+          }
+          $roots += Get-ChildItem -LiteralPath 'C:\' -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'actions-runner-*' -or $_.Name -like 'actions-runners-*' }
+
+          $roots = @($roots | Sort-Object FullName -Unique)
+          $rows = @()
+
+          foreach ($dir in $roots) {
+            $cfgPath = Join-Path $dir.FullName '.runner'
+            if (-not (Test-Path -LiteralPath $cfgPath -PathType Leaf)) { continue }
+
+            $cfg = $null
+            try { $cfg = Get-Content -LiteralPath $cfgPath -Raw | ConvertFrom-Json } catch {}
+
+            $serviceName = $null
+            $serviceState = 'none'
+            $serviceStartMode = $null
+            $serviceAccount = $null
+            $servicePath = $null
+            $serviceFile = Join-Path $dir.FullName '.service'
+            if (Test-Path -LiteralPath $serviceFile -PathType Leaf) {
+              $serviceName = (Get-Content -LiteralPath $serviceFile -Raw).Trim()
+              try {
+                $svc = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+                if ($svc) {
+                  $serviceState = [string]$svc.State
+                  $serviceStartMode = [string]$svc.StartMode
+                  $serviceAccount = [string]$svc.StartName
+                  $servicePath = [string]$svc.PathName
+                } else {
+                  $serviceState = 'missing'
+                }
+              } catch {
+                $serviceState = 'probe-error'
+              }
+            }
+
+            $listenerCount = 0
+            try {
+              $escapedRoot = [regex]::Escape($dir.FullName)
+              $listenerCount = @(
+                Get-CimInstance Win32_Process -Filter "Name='Runner.Listener.exe'" -ErrorAction SilentlyContinue |
+                  Where-Object { [string]$_.ExecutablePath -match "^$escapedRoot" }
+              ).Count
+            } catch {}
+
+            $runnerVersion = $null
+            $listenerExe = Join-Path $dir.FullName 'bin\Runner.Listener.exe'
+            if (Test-Path -LiteralPath $listenerExe -PathType Leaf) {
+              try { $runnerVersion = (Get-Item -LiteralPath $listenerExe).VersionInfo.ProductVersion } catch {}
+            }
+
+            $rows += [pscustomobject]@{
+              root = $dir.FullName
+              agentId = $cfg.agentId
+              agentName = $cfg.agentName
+              gitHubUrl = $cfg.gitHubUrl
+              workFolder = $cfg.workFolder
+              serviceName = $serviceName
+              serviceState = $serviceState
+              serviceStartMode = $serviceStartMode
+              serviceAccount = $serviceAccount
+              listenerCount = $listenerCount
+              runnerVersion = $runnerVersion
+            }
+          }
+
+          Write-Host 'RUNNER_FLEET_INVENTORY_BEGIN'
+          $rows | Sort-Object gitHubUrl,agentName | ConvertTo-Json -Depth 5
+          Write-Host 'RUNNER_FLEET_INVENTORY_END'
+          Write-Host ("RUNNER_FLEET_COUNT=" + $rows.Count)
