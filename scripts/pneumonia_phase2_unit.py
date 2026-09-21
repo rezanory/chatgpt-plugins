@@ -760,10 +760,35 @@ print("PHASE2_UNIT_FROZEN_M07_RECIPE_BOUND", recipe["recipe_fingerprint_sha256"]
         },
     )
     persistence_cell = selected_indexes.index(persistence_index) + 1
-    _set_source(
-        cells[persistence_cell],
-        _patch_phase2_persistence_cell(_source(cells[persistence_cell])),
+    figure_helper = """def save_confusion_figure(matrix, title, path):
+    matrix = np.asarray(matrix, dtype=float)
+    if matrix.shape != (2, 2) or not np.isfinite(matrix).all():
+        raise ValueError("PHASE2_CONFUSION_MATRIX_INVALID")
+    fig, ax = plt.subplots(figsize=(6, 5))
+    image = ax.imshow(matrix, cmap="Blues")
+    ax.set(
+        xticks=[0, 1],
+        yticks=[0, 1],
+        xlabel="Predicted label",
+        ylabel="True label",
+        title=title,
     )
+    for row in range(2):
+        for col in range(2):
+            ax.text(
+                col,
+                row,
+                f"{int(matrix[row, col])}",
+                ha="center",
+                va="center",
+            )
+    fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+"""
+    persistence_source = _patch_phase2_persistence_cell(_source(cells[persistence_cell]))
+    _set_source(cells[persistence_cell], figure_helper + "\n" + persistence_source)
     _set_source(cells[-1], _patch_run_cell(_source(cells[-1])))
 
     terminal_tail = f"""# Exact bounded Phase-2 unit dispatch.
