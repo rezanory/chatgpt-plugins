@@ -387,7 +387,12 @@ def _phase2_owner_inventory_contains(handle):
     owner, slug = str(handle).split("/", 1)
     client = build_kaggle_client()
     authenticated_owner = str(getattr(client, "username", "") or "").strip()
-    if authenticated_owner.lower() != owner.lower():
+    # Kaggle personal-access-token authentication can authorize DATASET_SELECTION_GROUP_MY
+    # without exposing a username on the SDK client.  In that mode the owner is already
+    # bound by the exact provider launch receipt and the MY inventory itself.  Reject only
+    # a positively identified, conflicting username; do not turn an absent optional SDK
+    # attribute into identity drift.
+    if authenticated_owner and authenticated_owner.lower() != owner.lower():
         raise RuntimeError("PHASE2_KAGGLE_DATASET_OWNER_IDENTITY_DRIFT")
 
     request = ApiListDatasetsRequest()

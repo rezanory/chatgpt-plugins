@@ -112,6 +112,85 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertEqual(captured.exception.status_code, 404)
             self.assertIsInstance(captured.exception.__cause__, Forbidden)
 
+    def test_http_403_token_only_client_uses_exact_my_inventory(self):
+        namespace = _phase2_restore_helper_namespace()
+
+        class Forbidden(RuntimeError):
+            def __init__(self):
+                self.response = types.SimpleNamespace(status_code=403)
+
+        resolver = mock.Mock(side_effect=Forbidden())
+        dataset_api = types.SimpleNamespace(
+            list_datasets=lambda request: types.SimpleNamespace(
+                datasets=[], next_page_token=""
+            )
+        )
+        client = types.SimpleNamespace(
+            username=None,
+            datasets=types.SimpleNamespace(dataset_api_client=dataset_api),
+        )
+        with tempfile.TemporaryDirectory() as temp, mock.patch(
+            "kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver
+        ), mock.patch("kagglehub.clients.build_kaggle_client", return_value=client):
+            with self.assertRaises(
+                namespace["_Phase2ConfirmedRemoteAbsence"]
+            ) as captured:
+                namespace["_phase2_http_dataset_download"](
+                    "azadka/pneumonia-m01-r224-state-v1-7", temp
+                )
+            self.assertEqual(captured.exception.status_code, 404)
+
+    def test_http_403_token_only_client_preserves_existing_dataset_failure(self):
+        namespace = _phase2_restore_helper_namespace()
+
+        class Forbidden(RuntimeError):
+            def __init__(self):
+                self.response = types.SimpleNamespace(status_code=403)
+
+        handle = "azadka/pneumonia-m01-r224-state-v1-7"
+        resolver = mock.Mock(side_effect=Forbidden())
+        dataset_api = types.SimpleNamespace(
+            list_datasets=lambda request: types.SimpleNamespace(
+                datasets=[types.SimpleNamespace(ref=handle)], next_page_token=""
+            )
+        )
+        client = types.SimpleNamespace(
+            username=None,
+            datasets=types.SimpleNamespace(dataset_api_client=dataset_api),
+        )
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch(
+                "kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver
+            ),
+            mock.patch("kagglehub.clients.build_kaggle_client", return_value=client),
+            self.assertRaises(Forbidden),
+        ):
+            namespace["_phase2_http_dataset_download"](handle, temp)
+
+    def test_http_403_rejects_positive_owner_identity_drift(self):
+        namespace = _phase2_restore_helper_namespace()
+
+        class Forbidden(RuntimeError):
+            def __init__(self):
+                self.response = types.SimpleNamespace(status_code=403)
+
+        resolver = mock.Mock(side_effect=Forbidden())
+        client = types.SimpleNamespace(username="wrong-owner")
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch(
+                "kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver
+            ),
+            mock.patch("kagglehub.clients.build_kaggle_client", return_value=client),
+            self.assertRaisesRegex(
+                RuntimeError, "PHASE2_KAGGLE_DATASET_OWNER_IDENTITY_DRIFT"
+            ),
+        ):
+            namespace["_phase2_http_dataset_download"](
+                "azadka/pneumonia-m01-r224-state-v1-7", temp
+            )
+
     def test_manifest_has_exact_nonoverlapping_33_units(self):
         manifest = phase2.campaign_manifest()
         units = manifest["units"]
