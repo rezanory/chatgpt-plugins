@@ -70,6 +70,20 @@ def test_phase2_recovery_verifies_existing_runs_without_launching_compute():
         token = f"PHASE2_UNIT_{model_id}_R224_A03"
         assert block.count(marker) == 1
         assert f"token='{token}';run_id='{run_id}';source_sha='a52431acca1d3ae55f17c045f649d01a8b8a71c8'" in block
+    expected_a09 = {
+        "M01": "35565651205",
+        "M04": "35565652015",
+    }
+    for model_id, run_id in expected_a09.items():
+        marker = f"PHASE2_VERIFY_{model_id}_R224_A09"
+        token = f"PHASE2_UNIT_{model_id}_R224_A09"
+        assert block.count(marker) == 1
+        expected_identity = (
+            f"token='{token}';run_id='{run_id}';"
+            "source_sha='eb17d2d6964864bba89b0d32fa17332dd3c30b78'"
+        )
+        assert expected_identity in block
+    assert "-20[0-9]{6}-[0-9]+$" in block
     assert "source_sha=$sourceSha" in block
     assert "SOURCE_SHA: ${{ steps.recovery_identity.outputs.source_sha }}" in block
 
