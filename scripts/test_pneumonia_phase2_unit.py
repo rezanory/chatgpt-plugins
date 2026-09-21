@@ -1,8 +1,11 @@
 import json
 import pathlib
+import re
 import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import pneumonia_phase2_unit as phase2
@@ -22,7 +25,93 @@ MANIFEST = (
 )
 
 
+def _phase2_restore_helper_namespace():
+    source = "\n".join(
+        [
+            "def phase2_restore(model_id, resolution):",
+            "    try:",
+            "        kagglehub.dataset_download(phase2_handle(model_id, resolution), "
+            "output_dir=str(temp), force_download=True)",
+            "    except Exception:",
+            "        raise",
+            "",
+        ]
+    )
+    patched = phase2._patch_phase2_persistence_cell(source)
+    helper = patched.split("def phase2_restore", 1)[0]
+    namespace = {"Path": pathlib.Path, "json": json, "re": re}
+    exec(helper, namespace)
+    return namespace
+
+
 class Phase2UnitTests(unittest.TestCase):
+    def test_http_restore_downloads_manifest_and_hash_bound_archives_individually(self):
+        namespace = _phase2_restore_helper_namespace()
+
+        class Resolver:
+            def __init__(self):
+                self.paths = []
+
+            def __call__(self, handle, path, *, output_dir, force_download):
+                self.paths.append(path)
+                target = pathlib.Path(output_dir) / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if path == "CAMPAIGN_STATE.json":
+                    target.write_text(
+                        json.dumps(
+                            {"artifact_sha256": {"FOLD_1_RECOVERY.zip": "a" * 64}}
+                        ),
+                        encoding="utf-8",
+                    )
+                else:
+                    target.write_bytes(b"sealed-archive")
+                return str(target), 7
+
+        resolver = Resolver()
+        with tempfile.TemporaryDirectory() as temp, mock.patch(
+            "kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver
+        ):
+            result = namespace["_phase2_http_dataset_download"](
+                "azadka/pneumonia-m01-r224-state-v1-7", temp
+            )
+            self.assertEqual(pathlib.Path(result), pathlib.Path(temp).resolve())
+            self.assertEqual(
+                resolver.paths, ["CAMPAIGN_STATE.json", "FOLD_1_RECOVERY.zip"]
+            )
+            self.assertEqual(
+                (pathlib.Path(temp) / "FOLD_1_RECOVERY.zip").read_bytes(),
+                b"sealed-archive",
+            )
+
+    def test_http_403_is_absence_only_after_exact_owner_inventory(self):
+        namespace = _phase2_restore_helper_namespace()
+
+        class Forbidden(RuntimeError):
+            def __init__(self):
+                self.response = types.SimpleNamespace(status_code=403)
+
+        resolver = mock.Mock(side_effect=Forbidden())
+        dataset_api = types.SimpleNamespace(
+            list_datasets=lambda request: types.SimpleNamespace(
+                datasets=[], next_page_token=""
+            )
+        )
+        client = types.SimpleNamespace(
+            username="azadka",
+            datasets=types.SimpleNamespace(dataset_api_client=dataset_api),
+        )
+        with tempfile.TemporaryDirectory() as temp, mock.patch(
+            "kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver
+        ), mock.patch("kagglehub.clients.build_kaggle_client", return_value=client):
+            with self.assertRaises(
+                namespace["_Phase2ConfirmedRemoteAbsence"]
+            ) as captured:
+                namespace["_phase2_http_dataset_download"](
+                    "azadka/pneumonia-m01-r224-state-v1-7", temp
+                )
+            self.assertEqual(captured.exception.status_code, 404)
+            self.assertIsInstance(captured.exception.__cause__, Forbidden)
+
     def test_manifest_has_exact_nonoverlapping_33_units(self):
         manifest = phase2.campaign_manifest()
         units = manifest["units"]
@@ -105,11 +194,21 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertIn("'edge_filters': 16", joined)
             self.assertIn("import matplotlib.pyplot as plt", joined)
             self.assertIn("from kagglehub.http_resolver import DatasetHttpResolver", joined)
+            self.assertIn("ApiListDatasetsRequest", joined)
+            self.assertIn("DatasetSelectionGroup.DATASET_SELECTION_GROUP_MY", joined)
+            self.assertIn("PHASE2_KAGGLE_DATASET_OWNER_IDENTITY_DRIFT", joined)
+            self.assertIn("PHASE2_REMOTE_STATE_CONFIRMED_ABSENT_BY_OWNER_INVENTORY", joined)
+            self.assertIn('path="CAMPAIGN_STATE.json"', joined)
+            self.assertIn("versioned = parsed.with_version(version)", joined)
+            self.assertIn("path=artifact_name", joined)
             self.assertIn("_phase2_http_dataset_download", joined)
             self.assertNotIn(
                 "kagglehub.dataset_download(phase2_handle(model_id, resolution)",
                 joined,
             )
+            for cell in notebook["cells"]:
+                if cell.get("cell_type") == "code":
+                    compile("".join(cell.get("source", [])), "<phase2-unit>", "exec")
             self.assertEqual(joined.count("PHASE2_UNIT_NEW_FOLD_BOUND_EXCEEDED"), 1)
             self.assertIn("run_phase2_model_resolution(\n    PHASE2_UNIT_MODEL_ID", joined)
             self.assertNotIn("RESTORE_SUMMARY = _try_restore_persisted_state_compat()", joined)
