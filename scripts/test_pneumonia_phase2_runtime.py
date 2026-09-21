@@ -57,6 +57,43 @@ class Phase2RuntimeTests(unittest.TestCase):
             )
         self.assertEqual(result["readiness_poll_count"], 2)
 
+    def test_state_snapshot_classifies_real_legacy_expanded_shape(self):
+        token = "PHASE2_UNIT_M02_R224_A09"
+        contract = runtime.unit_contract(token, "35599900009", "20260921")
+        marker = self._state_marker()
+
+        class Broker:
+            def read(self, payload, timeout=90):
+                if payload.get("method") == "ListDatasets":
+                    return {
+                        "datasets": [
+                            {
+                                "ref": contract["state_dataset_handle"],
+                                "currentVersionNumber": 3,
+                            }
+                        ]
+                    }
+                if payload.get("action") == "dataset_json_files":
+                    return {
+                        "dataset_ref": contract["state_dataset_handle"],
+                        "dataset_version_number": 3,
+                        "signed_urls_returned": False,
+                        "files": [{"sha256": "d" * 64, "json": marker}],
+                    }
+                if payload.get("method") == "ListDatasetFiles":
+                    return {
+                        "datasetFiles": [
+                            {"name": "CAMPAIGN_STATE.json"},
+                            {"name": "FOLD_1_RECOVERY/FOLDS/fold_1/COMPLETED.json"},
+                        ]
+                    }
+                raise AssertionError(payload)
+
+        snapshot = runtime._state_snapshot(Broker(), contract)
+        self.assertEqual(snapshot["completed_folds"], [1])
+        self.assertEqual(snapshot["topology"], "LEGACY_KAGGLE_EXPANDED_ZIP")
+        self.assertEqual(snapshot["dataset_version_number"], 3)
+
     def test_preflight_rejects_existing_canonicalized_provider_candidate(self):
         token = "PHASE2_UNIT_M01_R224_A09"
         run_id = "35599900009"

@@ -368,8 +368,9 @@ def _patch_phase2_persistence_cell(source: str) -> str:
     dataset created by an earlier immutable attempt and reports code 9 even
     though the authenticated account owns the dataset.  A whole-dataset HTTP
     download also expands the persisted ``*.zip`` fold artifacts, destroying
-    the sealed archive inventory.  Download the manifest and each hash-bound
-    archive separately so their names and bytes remain intact.
+    the sealed archive inventory.  Read the exact version inventory, migrate
+    already-expanded legacy files after inner-receipt validation, and persist
+    all future archives as non-auto-expanded ``*.cgpzip`` files.
 
     Kaggle's GetDataset endpoint returns HTTP 403, rather than 404, for a
     missing private dataset.  Such a response is admitted as first-run absence
