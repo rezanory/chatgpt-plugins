@@ -786,6 +786,60 @@ print("PHASE2_UNIT_FROZEN_M07_RECIPE_BOUND", recipe["recipe_fingerprint_sha256"]
     fig.tight_layout()
     fig.savefig(path, dpi=180)
     plt.close(fig)
+
+def save_roc_figure(y_true, score, title, path):
+    y_true = np.asarray(y_true, dtype=int)
+    score = np.asarray(score, dtype=float)
+    fpr, tpr, _ = roc_curve(y_true, score)
+    auc = roc_auc_score(y_true, score)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(fpr, tpr, label=f"AUROC={auc:.4f}")
+    ax.plot([0, 1], [0, 1], linestyle="--")
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title(title)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+def save_pr_figure(y_true, score, title, path):
+    y_true = np.asarray(y_true, dtype=int)
+    score = np.asarray(score, dtype=float)
+    precision, recall, _ = precision_recall_curve(y_true, score)
+    ap = average_precision_score(y_true, score)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(recall, precision, label=f"AP={ap:.4f}")
+    ax.set_xlabel("Recall — PNEUMONIA")
+    ax.set_ylabel("Precision — PNEUMONIA")
+    ax.set_title(title)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+def save_dual_probability_figure(
+    y_true,
+    probability,
+    title,
+    path,
+    low=DUAL_THRESHOLD_LOW,
+    high=DUAL_THRESHOLD_HIGH,
+):
+    y_true = np.asarray(y_true, dtype=int)
+    probability = np.asarray(probability, dtype=float)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(probability[y_true == 0], bins=25, alpha=0.55, label="True NORMAL")
+    ax.hist(probability[y_true == 1], bins=25, alpha=0.55, label="True PNEUMONIA")
+    ax.axvline(low, linestyle="--", label=f"Low={low:.2f}")
+    ax.axvline(high, linestyle="--", label=f"High={high:.2f}")
+    ax.set_xlabel("P(PNEUMONIA)")
+    ax.set_ylabel("Count")
+    ax.set_title(title)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
 """
     persistence_source = _patch_phase2_persistence_cell(_source(cells[persistence_cell]))
     _set_source(cells[persistence_cell], figure_helper + "\n" + persistence_source)
