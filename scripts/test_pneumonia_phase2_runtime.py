@@ -61,6 +61,7 @@ class Phase2RuntimeTests(unittest.TestCase):
         token = "PHASE2_UNIT_M02_R224_A09"
         contract = runtime.unit_contract(token, "35599900009", "20260921")
         marker = self._state_marker()
+        marker["artifact_sha256"] = {"FOLD_1_RECOVERY.zip": "b" * 64}
 
         class Broker:
             def read(self, payload, timeout=90):
