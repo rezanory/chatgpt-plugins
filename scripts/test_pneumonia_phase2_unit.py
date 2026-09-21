@@ -309,6 +309,8 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertIn("'batch_size': 12", joined)
             self.assertIn("'edge_filters': 16", joined)
             self.assertIn("import matplotlib.pyplot as plt", joined)
+            self.assertIn("def logit_np(x):", joined)
+            self.assertIn("return np.log(x / (1.0 - x))", joined)
             self.assertIn("from kagglehub.http_resolver import DatasetHttpResolver", joined)
             self.assertIn("ApiListDatasetsRequest", joined)
             self.assertIn("DatasetSelectionGroup.DATASET_SELECTION_GROUP_MY", joined)

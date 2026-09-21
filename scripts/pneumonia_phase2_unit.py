@@ -736,6 +736,12 @@ CGP_PHASE2_EXPECTED_RESTORED_FOLDS = {contract["expected_restored_folds"]!r}
     frozen_recipe_source = f"""# Exact frozen M07 recipe for Phase-2 comparator units.
 import matplotlib.pyplot as plt
 
+
+def logit_np(x):
+    x = np.clip(np.asarray(x, dtype=float), 1e-7, 1.0 - 1e-7)
+    return np.log(x / (1.0 - x))
+
+
 shared_params = {FROZEN_M07_SHARED_PARAMS!r}
 recipe = {{
     "schema": "m07.final.confirmed.recipe.v1.6",
