@@ -352,14 +352,21 @@ print("PHASE2_UNIT_LEGACY_M07_PERSISTENCE_SKIPPED")'''
 
 
 def _patch_phase2_persistence_cell(source: str) -> str:
-    """Force Phase-2 state restores through KaggleHub's HTTP resolver.
+    """Force Phase-2 state restores through exact KaggleHub HTTP file reads.
 
     Kaggle notebooks route ``kagglehub.dataset_download`` through the
     non-interactive mount resolver.  That resolver cannot attach a state
     dataset created by an earlier immutable attempt and reports code 9 even
-    though the authenticated account owns the dataset.  The HTTP resolver uses
-    the same KaggleHub credentials but downloads the exact dataset directly,
-    preserving the existing HTTP-404 first-run gate.
+    though the authenticated account owns the dataset.  A whole-dataset HTTP
+    download also expands the persisted ``*.zip`` fold artifacts, destroying
+    the sealed archive inventory.  Download the manifest and each hash-bound
+    archive separately so their names and bytes remain intact.
+
+    Kaggle's GetDataset endpoint returns HTTP 403, rather than 404, for a
+    missing private dataset.  Such a response is admitted as first-run absence
+    only after an authenticated, owner-bound ``ListDatasets(MY)`` inventory
+    proves that the exact handle is absent.  An existing handle, an identity
+    mismatch, or an inventory failure remains fail-closed.
     """
     restore_marker = "def phase2_restore(model_id, resolution):"
     download_call = (
@@ -368,18 +375,97 @@ def _patch_phase2_persistence_cell(source: str) -> str:
     )
     if source.count(restore_marker) != 1 or source.count(download_call) != 1:
         raise Phase2ContractError("PHASE2_HTTP_RESTORE_PATCH_BOUNDARY_INVALID")
-    helper = '''def _phase2_http_dataset_download(handle, output_dir):
+    helper = '''class _Phase2ConfirmedRemoteAbsence(RuntimeError):
+    status_code = 404
+
+
+def _phase2_owner_inventory_contains(handle):
+    from kagglehub.clients import build_kaggle_client
+    from kagglesdk.datasets.types.dataset_api_service import ApiListDatasetsRequest
+    from kagglesdk.datasets.types.dataset_enums import DatasetSelectionGroup
+
+    owner, slug = str(handle).split("/", 1)
+    client = build_kaggle_client()
+    authenticated_owner = str(getattr(client, "username", "") or "").strip()
+    if authenticated_owner.lower() != owner.lower():
+        raise RuntimeError("PHASE2_KAGGLE_DATASET_OWNER_IDENTITY_DRIFT")
+
+    request = ApiListDatasetsRequest()
+    request.group = DatasetSelectionGroup.DATASET_SELECTION_GROUP_MY
+    request.search = slug
+    request.page_size = 100
+    page_tokens = set()
+    for _ in range(10):
+        response = client.datasets.dataset_api_client.list_datasets(request)
+        refs = {
+            str(getattr(item, "ref", "") or "").strip().lower()
+            for item in (getattr(response, "datasets", None) or [])
+        }
+        if str(handle).lower() in refs:
+            return True
+        next_page_token = str(getattr(response, "next_page_token", "") or "").strip()
+        if not next_page_token:
+            return False
+        if next_page_token in page_tokens:
+            raise RuntimeError("PHASE2_KAGGLE_DATASET_INVENTORY_PAGINATION_LOOP")
+        page_tokens.add(next_page_token)
+        request.page_token = next_page_token
+    raise RuntimeError("PHASE2_KAGGLE_DATASET_INVENTORY_PAGE_BOUND_EXCEEDED")
+
+
+def _phase2_http_dataset_download(handle, output_dir):
     from kagglehub.handle import parse_dataset_handle
     from kagglehub.http_resolver import DatasetHttpResolver
 
-    resolved_path, _ = DatasetHttpResolver()(
-        parse_dataset_handle(handle),
-        output_dir=str(output_dir),
-        force_download=True,
-    )
-    if Path(resolved_path).resolve() != Path(output_dir).resolve():
-        raise RuntimeError("PHASE2_HTTP_RESTORE_OUTPUT_PATH_DRIFT")
-    return resolved_path
+    parsed = parse_dataset_handle(handle)
+    resolver = DatasetHttpResolver()
+    try:
+        marker_path, version = resolver(
+            parsed,
+            path="CAMPAIGN_STATE.json",
+            output_dir=str(output_dir),
+            force_download=True,
+        )
+    except Exception as exc:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", getattr(exc, "status_code", None))
+        if status == 403 and not _phase2_owner_inventory_contains(handle):
+            raise _Phase2ConfirmedRemoteAbsence(
+                "PHASE2_REMOTE_STATE_CONFIRMED_ABSENT_BY_OWNER_INVENTORY"
+            ) from exc
+        raise
+
+    marker = Path(output_dir) / "CAMPAIGN_STATE.json"
+    if Path(marker_path).resolve() != marker.resolve() or not marker.is_file():
+        raise RuntimeError("PHASE2_HTTP_RESTORE_MARKER_PATH_DRIFT")
+    if type(version) is not int or version < 1:
+        raise RuntimeError("PHASE2_HTTP_RESTORE_VERSION_INVALID")
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    artifact_names = payload.get("artifact_sha256")
+    if not isinstance(artifact_names, dict) or not artifact_names:
+        raise RuntimeError("PHASE2_HTTP_RESTORE_ARTIFACT_MANIFEST_INVALID")
+    if any(
+        not re.fullmatch(r"(?:FOLD_[1-5]_RECOVERY|FINAL_EVIDENCE)\\.zip", str(name))
+        for name in artifact_names
+    ):
+        raise RuntimeError("PHASE2_HTTP_RESTORE_ARTIFACT_NAME_INVALID")
+
+    versioned = parsed.with_version(version)
+    for artifact_name in sorted(artifact_names):
+        artifact_path, artifact_version = resolver(
+            versioned,
+            path=artifact_name,
+            output_dir=str(output_dir),
+            force_download=True,
+        )
+        expected_path = Path(output_dir) / artifact_name
+        if (
+            Path(artifact_path).resolve() != expected_path.resolve()
+            or not expected_path.is_file()
+            or artifact_version != version
+        ):
+            raise RuntimeError("PHASE2_HTTP_RESTORE_ARTIFACT_PATH_DRIFT")
+    return str(Path(output_dir).resolve())
 
 '''
     source = source.replace(restore_marker, helper + restore_marker, 1)
