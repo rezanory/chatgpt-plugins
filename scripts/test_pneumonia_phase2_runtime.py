@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import sys
@@ -11,6 +12,115 @@ import pneumonia_phase2_runtime as runtime
 
 
 class Phase2RuntimeTests(unittest.TestCase):
+    def _state_marker(self, model_id="M02", resolution=224):
+        return {
+            "schema": "phase2.state.v2",
+            "status": "COMPLETE",
+            "model_id": model_id,
+            "resolution": resolution,
+            "run_contract": {
+                "schema": "pneumonia.experiment.v1.7",
+                "stage": "phase2_campaign",
+                "model_id": model_id,
+                "resolution": resolution,
+                "split_fingerprint": runtime.SPLIT_FINGERPRINT,
+                "extra": {"recipe_fingerprint": runtime.FROZEN_M07_RECIPE_FINGERPRINT},
+            },
+            "run_fingerprint": "a" * 64,
+            "artifact_sha256": {"FOLD_1_RECOVERY.cgpzip": "b" * 64},
+            "receipt_sha256": "c" * 64,
+        }
+
+    def test_state_marker_requires_exact_scientific_lineage(self):
+        contract = runtime.unit_contract("PHASE2_UNIT_M02_R224_A09", "35599900009", "20260921")
+        marker = self._state_marker()
+        self.assertEqual(runtime._state_marker_folds(marker, contract), [1])
+        drift = json.loads(json.dumps(marker))
+        drift["run_contract"]["extra"]["recipe_fingerprint"] = "0" * 64
+        with self.assertRaisesRegex(RuntimeError, "state contract drift"):
+            runtime._state_marker_folds(drift, contract)
+
+    def test_state_readiness_requires_sealed_cgpzip_topology(self):
+        snapshots = [
+            {
+                "completed_folds": [1],
+                "topology": "LEGACY_KAGGLE_EXPANDED_ZIP",
+            },
+            {"completed_folds": [1], "topology": "SEALED_CGPZIP"},
+        ]
+        with (
+            mock.patch.object(runtime, "_state_snapshot", side_effect=snapshots),
+            mock.patch.object(runtime.time, "sleep"),
+        ):
+            result = runtime._wait_for_state_ready(
+                mock.Mock(), {}, [1], max_polls=2, interval_seconds=0
+            )
+        self.assertEqual(result["readiness_poll_count"], 2)
+
+    def test_state_snapshot_classifies_real_legacy_expanded_shape(self):
+        token = "PHASE2_UNIT_M02_R224_A09"
+        contract = runtime.unit_contract(token, "35599900009", "20260921")
+        marker = self._state_marker()
+        marker["artifact_sha256"] = {"FOLD_1_RECOVERY.zip": "b" * 64}
+
+        class Broker:
+            def read(self, payload, timeout=90):
+                if payload.get("method") == "ListDatasets":
+                    return {
+                        "datasets": [
+                            {
+                                "ref": contract["state_dataset_handle"],
+                                "currentVersionNumber": 3,
+                            }
+                        ]
+                    }
+                if payload.get("action") == "dataset_json_files":
+                    return {
+                        "dataset_ref": contract["state_dataset_handle"],
+                        "dataset_version_number": 3,
+                        "signed_urls_returned": False,
+                        "files": [{"sha256": "d" * 64, "json": marker}],
+                    }
+                if payload.get("method") == "ListDatasetFiles":
+                    return {
+                        "datasetFiles": [
+                            {"name": "CAMPAIGN_STATE.json"},
+                            {"name": "FOLD_1_RECOVERY/FOLDS/fold_1/COMPLETED.json"},
+                        ]
+                    }
+                raise AssertionError(payload)
+
+        snapshot = runtime._state_snapshot(Broker(), contract)
+        self.assertEqual(snapshot["completed_folds"], [1])
+        self.assertEqual(snapshot["topology"], "LEGACY_KAGGLE_EXPANDED_ZIP")
+        self.assertEqual(snapshot["dataset_version_number"], 3)
+
+    def test_preflight_rejects_existing_canonicalized_provider_candidate(self):
+        token = "PHASE2_UNIT_M01_R224_A09"
+        run_id = "35599900009"
+        contract = runtime.unit_contract(token, run_id)
+        provider_ref = runtime.expected_provider_kernel_ref(contract)
+
+        class Broker:
+            def read(self, payload, timeout=90):
+                if payload.get("method") == "ListKernels":
+                    return {"kernels": [{"ref": provider_ref, "status": "COMPLETE"}]}
+                raise AssertionError(payload)
+
+        with (
+            mock.patch.object(runtime, "OidcReadBroker", return_value=Broker()),
+            mock.patch.object(
+                runtime,
+                "_state_snapshot",
+                return_value={
+                    "completed_folds": [1],
+                    "topology": "LEGACY_KAGGLE_EXPANDED_ZIP",
+                },
+            ),
+            self.assertRaisesRegex(RuntimeError, "exact Phase2 kernel candidate already exists"),
+        ):
+            runtime.admission_preflight(token, run_id)
+
     def test_oidc_refresh_retries_transient_transport(self):
         class Response:
             def __enter__(self):
@@ -22,23 +132,27 @@ class Phase2RuntimeTests(unittest.TestCase):
             def read(self):
                 return ('{"value":"' + ("r" * 120) + '"}').encode()
 
-        with mock.patch.dict(
-            os.environ,
-            {
-                "CGP_READ_OIDC_TOKEN": "i" * 120,
-                "ACTIONS_ID_TOKEN_REQUEST_URL": "https://oidc.example/token",
-                "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token-long-enough",
-            },
-            clear=False,
-        ), mock.patch.object(
-            runtime.urllib.request,
-            "urlopen",
-            side_effect=[
-                runtime.urllib.error.URLError("one"),
-                runtime.urllib.error.URLError("two"),
-                Response(),
-            ],
-        ) as urlopen, mock.patch.object(runtime.time, "sleep"):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "CGP_READ_OIDC_TOKEN": "i" * 120,
+                    "ACTIONS_ID_TOKEN_REQUEST_URL": "https://oidc.example/token",
+                    "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token-long-enough",
+                },
+                clear=False,
+            ),
+            mock.patch.object(
+                runtime.urllib.request,
+                "urlopen",
+                side_effect=[
+                    runtime.urllib.error.URLError("one"),
+                    runtime.urllib.error.URLError("two"),
+                    Response(),
+                ],
+            ) as urlopen,
+            mock.patch.object(runtime.time, "sleep"),
+        ):
             broker = runtime.OidcReadBroker()
             self.assertEqual(broker.refresh(), "r" * 120)
             self.assertEqual(urlopen.call_count, 3)
@@ -181,19 +295,20 @@ class Phase2RuntimeTests(unittest.TestCase):
         run_id = "35539262689"
         kernel_ref = "azadka/p17-p2-m01-r224-a03-20260920-35539262689"
         provider_ref = "azadka/pneumonia-v1-7-phase2-m01-r224-a03-35539262689"
-        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
-            runtime, "OidcReadBroker", return_value=Broker()
-        ), mock.patch.object(
-            runtime,
-            "_status",
-            side_effect=[
-                runtime.BrokerTransientError("temporary broker timeout"),
-                {"status": "ERROR"},
-            ],
-        ), mock.patch.object(runtime.time, "sleep"):
-            with self.assertRaisesRegex(
-                RuntimeError, "PHASE2_UNIT_SCIENTIFIC_TERMINAL_ERROR"
-            ):
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch.object(runtime, "OidcReadBroker", return_value=Broker()),
+            mock.patch.object(
+                runtime,
+                "_status",
+                side_effect=[
+                    runtime.BrokerTransientError("temporary broker timeout"),
+                    {"status": "ERROR"},
+                ],
+            ),
+            mock.patch.object(runtime.time, "sleep"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "PHASE2_UNIT_SCIENTIFIC_TERMINAL_ERROR"):
                 runtime.verify_terminal(
                     token,
                     run_id,

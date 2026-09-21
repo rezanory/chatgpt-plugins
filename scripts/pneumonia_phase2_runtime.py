@@ -15,6 +15,8 @@ import urllib.request
 from typing import Any
 
 from pneumonia_phase2_unit import (
+    FROZEN_M07_RECIPE_FINGERPRINT,
+    SPLIT_FINGERPRINT,
     next_token,
     unit_contract,
     validate_terminal_receipt,
@@ -66,8 +68,11 @@ class OidcReadBroker:
         if not request_url or len(request_token) < 20:
             raise RuntimeError("Phase2 OIDC refresh context unavailable")
         separator = "&" if "?" in request_url else "?"
-        target = request_url + separator + "audience=" + urllib.parse.quote(
-            "cgp-control-plane-v3", safe=""
+        target = (
+            request_url
+            + separator
+            + "audience="
+            + urllib.parse.quote("cgp-control-plane-v3", safe="")
         )
         last_error: Exception | None = None
         payload: dict[str, Any] | None = None
@@ -81,9 +86,7 @@ class OidcReadBroker:
             )
             try:
                 with urllib.request.urlopen(request, timeout=30) as response:
-                    payload = json.loads(
-                        response.read().decode("utf-8", "replace") or "{}"
-                    )
+                    payload = json.loads(response.read().decode("utf-8", "replace") or "{}")
                 break
             except urllib.error.HTTPError as error:
                 if error.code not in {408, 429} and not 500 <= error.code <= 599:
@@ -124,9 +127,7 @@ class OidcReadBroker:
             for attempt in range(1, 5):
                 try:
                     with urllib.request.urlopen(request, timeout=timeout) as response:
-                        return json.loads(
-                            response.read().decode("utf-8", "replace") or "{}"
-                        )
+                        return json.loads(response.read().decode("utf-8", "replace") or "{}")
                 except urllib.error.HTTPError as error:
                     if error.code not in {408, 429} and not 500 <= error.code <= 599:
                         raise
@@ -235,6 +236,217 @@ def expected_provider_kernel_ref(contract: dict[str, Any]) -> str:
     )
 
 
+def _state_marker_folds(marker: dict[str, Any], contract: dict[str, Any]) -> list[int]:
+    if marker.get("schema") != "phase2.state.v2" or marker.get("status") != "COMPLETE":
+        raise RuntimeError(
+            "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state marker status drift"
+        )
+    if marker.get("model_id") != contract["model_id"] or int(marker.get("resolution", -1)) != int(
+        contract["resolution"]
+    ):
+        raise RuntimeError(
+            "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state marker identity drift"
+        )
+    run_contract = marker.get("run_contract")
+    if not isinstance(run_contract, dict):
+        raise RuntimeError("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state contract missing")
+    if (
+        run_contract.get("schema") != "pneumonia.experiment.v1.7"
+        or run_contract.get("stage") != "phase2_campaign"
+        or run_contract.get("model_id") != contract["model_id"]
+        or int(run_contract.get("resolution", -1)) != int(contract["resolution"])
+        or run_contract.get("split_fingerprint") != SPLIT_FINGERPRINT
+        or not isinstance(run_contract.get("extra"), dict)
+        or run_contract["extra"].get("recipe_fingerprint") != FROZEN_M07_RECIPE_FINGERPRINT
+    ):
+        raise RuntimeError("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state contract drift")
+    # The read gateway returns parsed JSON, and its JSON round-trip can change
+    # the byte representation of floating-point values.  Therefore the raw
+    # notebook seal cannot be recomputed from this transport object.  Require
+    # both embedded seals to remain exact SHA-256 values here; the generated
+    # notebook revalidates them from the downloaded raw marker before restore.
+    if re.fullmatch(r"[0-9a-f]{64}", str(marker.get("run_fingerprint") or "")) is None:
+        raise RuntimeError(
+            "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state contract seal invalid"
+        )
+    if re.fullmatch(r"[0-9a-f]{64}", str(marker.get("receipt_sha256") or "")) is None:
+        raise RuntimeError(
+            "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state marker seal invalid"
+        )
+    artifacts = marker.get("artifact_sha256")
+    if not isinstance(artifacts, dict) or not artifacts:
+        raise RuntimeError(
+            "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state artifacts missing"
+        )
+    folds: list[int] = []
+    for name, digest in artifacts.items():
+        match = re.fullmatch(r"FOLD_([1-5])_RECOVERY\.(?:zip|cgpzip)", str(name))
+        if match is None:
+            if str(name) != "FINAL_EVIDENCE.cgpzip":
+                raise RuntimeError(
+                    "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state artifact name invalid"
+                )
+        else:
+            folds.append(int(match.group(1)))
+        if re.fullmatch(r"[0-9a-f]{64}", str(digest)) is None:
+            raise RuntimeError(
+                "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state artifact hash invalid"
+            )
+    folds = sorted(set(folds))
+    if folds != list(range(1, len(folds) + 1)):
+        raise RuntimeError(
+            "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state fold prefix invalid"
+        )
+    return folds
+
+
+def _state_snapshot(broker: OidcReadBroker, contract: dict[str, Any]) -> dict[str, Any]:
+    listed = broker.read(
+        {
+            "action": "raw_read",
+            "account_id": contract["account_id"],
+            "service": "datasets.DatasetApiService",
+            "method": "ListDatasets",
+            "body": {
+                "group": "MY",
+                "search": contract["state_dataset_handle"].split("/", 1)[1],
+                "page": 1,
+                "pageSize": 100,
+            },
+        },
+        timeout=60,
+    )
+    datasets = [item for item in listed.get("datasets", []) if isinstance(item, dict)]
+    exact = [
+        item
+        for item in datasets
+        if str(item.get("ref") or "").lower() == contract["state_dataset_handle"].lower()
+    ]
+    if not exact:
+        return {
+            "dataset_ref": contract["state_dataset_handle"],
+            "dataset_version_number": None,
+            "completed_folds": [],
+            "topology": "ABSENT",
+        }
+    if len(exact) != 1:
+        raise RuntimeError(
+            "BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: exact Phase2 state dataset count invalid"
+        )
+    version = exact[0].get("currentVersionNumber", exact[0].get("current_version_number"))
+    if type(version) is not int or version < 1:
+        raise RuntimeError("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state version invalid")
+    marker_result = broker.read(
+        {
+            "action": "dataset_json_files",
+            "account_id": contract["account_id"],
+            "dataset_ref": contract["state_dataset_handle"],
+            "dataset_version_number": version,
+            "file_names": ["CAMPAIGN_STATE.json"],
+            "max_bytes_per_file": 262144,
+        },
+        timeout=120,
+    )
+    if (
+        marker_result.get("dataset_ref") != contract["state_dataset_handle"]
+        or marker_result.get("dataset_version_number") != version
+        or marker_result.get("signed_urls_returned") is not False
+    ):
+        raise RuntimeError(
+            "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state marker transport drift"
+        )
+    files = marker_result.get("files")
+    if not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], dict):
+        raise RuntimeError("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state marker missing")
+    marker = files[0].get("json")
+    if not isinstance(marker, dict):
+        raise RuntimeError(
+            "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state marker JSON missing"
+        )
+    marker_file_sha256 = str(files[0].get("sha256") or "")
+    if re.fullmatch(r"[0-9a-f]{64}", marker_file_sha256) is None:
+        raise RuntimeError(
+            "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state marker file seal missing"
+        )
+    folds = _state_marker_folds(marker, contract)
+    listing = broker.read(
+        {
+            "action": "raw_read",
+            "account_id": contract["account_id"],
+            "service": "datasets.DatasetApiService",
+            "method": "ListDatasetFiles",
+            "body": {
+                "ownerSlug": contract["owner"],
+                "datasetSlug": contract["state_dataset_handle"].split("/", 1)[1],
+                "datasetVersionNumber": version,
+                "pageSize": 100,
+            },
+        },
+        timeout=60,
+    )
+    raw_files = listing.get("datasetFiles", listing.get("files"))
+    if not isinstance(raw_files, list):
+        raise RuntimeError("BLOCKED_VALIDATION_INFRASTRUCTURE: Phase2 state file inventory missing")
+    names = {
+        str(item.get("name") or item.get("ref") or item.get("fileName") or "")
+        for item in raw_files
+        if isinstance(item, dict)
+    }
+    artifacts = set(marker["artifact_sha256"])
+    if artifacts.issubset(names):
+        topology = (
+            "SEALED_CGPZIP"
+            if all(name.endswith(".cgpzip") for name in artifacts)
+            else "SEALED_LEGACY_ZIP"
+        )
+    elif all(
+        name.endswith(".zip")
+        and any(listed_name.startswith(name[:-4] + "/") for listed_name in names)
+        for name in artifacts
+    ):
+        topology = "LEGACY_KAGGLE_EXPANDED_ZIP"
+    else:
+        raise RuntimeError(
+            "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 state file topology invalid"
+        )
+    return {
+        "dataset_ref": contract["state_dataset_handle"],
+        "dataset_version_number": version,
+        "completed_folds": folds,
+        "topology": topology,
+        "marker_file_sha256": marker_file_sha256,
+    }
+
+
+def _wait_for_state_ready(
+    broker: OidcReadBroker,
+    contract: dict[str, Any],
+    completed_folds: list[int],
+    max_polls: int = 60,
+    interval_seconds: int = 15,
+) -> dict[str, Any]:
+    last_error = ""
+    last_snapshot: dict[str, Any] | None = None
+    for poll in range(max_polls):
+        try:
+            last_snapshot = _state_snapshot(broker, contract)
+            if (
+                last_snapshot.get("completed_folds") == completed_folds
+                and last_snapshot.get("topology") == "SEALED_CGPZIP"
+            ):
+                return {**last_snapshot, "readiness_poll_count": poll + 1}
+            last_error = "state version has not exposed the exact sealed fold lineage"
+        except (BrokerTransientError, RuntimeError) as error:
+            last_error = str(error)
+        if poll + 1 < max_polls:
+            time.sleep(interval_seconds)
+    raise RuntimeError(
+        "BLOCKED_VALIDATION_INFRASTRUCTURE: Phase2 persisted state not ready for successor; "
+        + last_error
+        + ("; last_snapshot=" + json.dumps(last_snapshot, sort_keys=True) if last_snapshot else "")
+    )
+
+
 def _status_from_exact_listing(
     broker: OidcReadBroker,
     contract: dict[str, Any],
@@ -315,6 +527,7 @@ def _status_from_exact_listing(
 def admission_preflight(token: str, run_id: str) -> dict[str, Any]:
     contract = unit_contract(token, run_id)
     broker = OidcReadBroker()
+    state_before = _state_snapshot(broker, contract)
     listed = broker.read(
         {
             "action": "raw_read",
@@ -331,24 +544,29 @@ def admission_preflight(token: str, run_id: str) -> dict[str, Any]:
         }
     )
     kernels = [item for item in listed.get("kernels", []) if isinstance(item, dict)]
-    exact = [
-        item
-        for item in kernels
-        if str(item.get("ref", "")).lower() == contract["kernel_ref"].lower()
-    ]
+    immutable_refs = {
+        contract["kernel_ref"].lower(),
+        expected_provider_kernel_ref(contract).lower(),
+    }
+    exact = [item for item in kernels if str(item.get("ref", "")).lower() in immutable_refs]
     if exact:
         raise RuntimeError(
             "BLOCKED_IMMUTABLE_SOURCE_HYGIENE: exact Phase2 kernel candidate already exists"
         )
-    prefix = (
-        f"{contract['owner']}/p17-p2-{contract['model_id'].lower()}-"
-        f"r{contract['resolution']}-"
-    ).lower()
+    prefixes = (
+        (
+            f"{contract['owner']}/p17-p2-{contract['model_id'].lower()}-r{contract['resolution']}-"
+        ).lower(),
+        (
+            f"{contract['owner']}/pneumonia-v1-7-phase2-"
+            f"{contract['model_id'].lower()}-r{contract['resolution']}-"
+        ).lower(),
+    )
     related = sorted(
         {
             str(item.get("ref") or "")
             for item in kernels
-            if str(item.get("ref") or "").lower().startswith(prefix)
+            if str(item.get("ref") or "").lower().startswith(prefixes)
         }
     )
     active: list[dict[str, Any]] = []
@@ -371,6 +589,8 @@ def admission_preflight(token: str, run_id: str) -> dict[str, Any]:
         "owner": contract["owner"],
         "related_terminal_candidates": related,
         "active_duplicates": [],
+        "state_before": state_before,
+        "expected_restored_folds": state_before["completed_folds"],
     }
 
 
@@ -382,11 +602,17 @@ def verify_terminal(
     evidence_dir: pathlib.Path,
     max_polls: int,
     interval_seconds: int,
+    expected_restored_folds: list[int] | None = None,
 ) -> dict[str, Any]:
     date_match = re.search(r"-a[0-9]{2}-(20[0-9]{6})-" + re.escape(str(run_id)) + r"$", kernel_ref)
     if date_match is None:
         raise RuntimeError("BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: Phase2 kernel date/run drift")
-    contract = unit_contract(token, run_id, date_match.group(1))
+    contract = unit_contract(
+        token,
+        run_id,
+        date_match.group(1),
+        expected_restored_folds,
+    )
     if kernel_ref != contract["kernel_ref"]:
         raise RuntimeError("BLOCKED_EXACT_OBJECT_IDENTITY_MISMATCH: Phase2 kernel ref drift")
     provider_kernel_ref = provider_kernel_ref or kernel_ref
@@ -460,9 +686,7 @@ def verify_terminal(
             )
             log_tail = str(live.get("log_tail") or "")[-40000:]
             if log_tail:
-                (evidence_dir / "phase2-error-log-tail.txt").write_text(
-                    log_tail, encoding="utf-8"
-                )
+                (evidence_dir / "phase2-error-log-tail.txt").write_text(log_tail, encoding="utf-8")
         except Exception as error:  # evidence capture must not hide the terminal state
             log_error = f"{type(error).__name__}: {error}"
         terminal_envelope["log_capture_error"] = log_error
@@ -491,14 +715,20 @@ def verify_terminal(
     if not isinstance(files, list) or len(files) != 1:
         raise RuntimeError("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 receipt missing")
     item = files[0]
-    if not isinstance(item, dict) or pathlib.PurePosixPath(
-        str(item.get("source_file_name") or "")
-    ).name != file_name:
+    if (
+        not isinstance(item, dict)
+        or pathlib.PurePosixPath(str(item.get("source_file_name") or "")).name != file_name
+    ):
         raise RuntimeError("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 receipt basename drift")
     receipt = item.get("json")
     if not isinstance(receipt, dict):
         raise RuntimeError("BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: Phase2 receipt JSON missing")
     validate_terminal_receipt(receipt, contract)
+    state_ready = _wait_for_state_ready(
+        broker,
+        contract,
+        list(receipt["completed_folds"]),
+    )
     successor = next_token(token, str(receipt["status"]))
     (evidence_dir / file_name).write_text(json.dumps(receipt, indent=2), encoding="utf-8")
     terminal_envelope.update(
@@ -506,6 +736,7 @@ def verify_terminal(
             "scientific_receipt_validated": True,
             "scientific_status": receipt["status"],
             "scientific_receipt": receipt,
+            "persisted_state_ready": state_ready,
             "next_token": successor,
             "status": "SCIENTIFIC_RECEIPT_PASS",
         }
@@ -530,6 +761,7 @@ def main(argv: list[str] | None = None) -> int:
     verify_parser.add_argument("--evidence-dir", required=True, type=pathlib.Path)
     verify_parser.add_argument("--max-polls", type=int, default=631)
     verify_parser.add_argument("--interval-seconds", type=int, default=20)
+    verify_parser.add_argument("--expected-restored-folds-json", default="[]")
     args = parser.parse_args(argv)
     if args.command == "preflight":
         result = admission_preflight(args.token, args.run_id)
@@ -537,6 +769,14 @@ def main(argv: list[str] | None = None) -> int:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(result, indent=2), encoding="utf-8")
     else:
+        try:
+            expected_restored_folds = json.loads(args.expected_restored_folds_json)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("PHASE2_EXPECTED_RESTORED_FOLDS_JSON_INVALID") from error
+        if not isinstance(expected_restored_folds, list) or any(
+            type(item) is not int for item in expected_restored_folds
+        ):
+            raise RuntimeError("PHASE2_EXPECTED_RESTORED_FOLDS_JSON_INVALID")
         result = verify_terminal(
             args.token,
             args.run_id,
@@ -545,6 +785,7 @@ def main(argv: list[str] | None = None) -> int:
             args.evidence_dir,
             args.max_polls,
             args.interval_seconds,
+            expected_restored_folds,
         )
     print(json.dumps(result, sort_keys=True))
     return 0

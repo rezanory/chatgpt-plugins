@@ -47,6 +47,7 @@ def _phase2_restore_helper_namespace():
 class Phase2UnitTests(unittest.TestCase):
     def test_http_restore_downloads_manifest_and_hash_bound_archives_individually(self):
         namespace = _phase2_restore_helper_namespace()
+        artifact_name = "FOLD_1_RECOVERY.cgpzip"
 
         class Resolver:
             def __init__(self):
@@ -58,9 +59,7 @@ class Phase2UnitTests(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if path == "CAMPAIGN_STATE.json":
                     target.write_text(
-                        json.dumps(
-                            {"artifact_sha256": {"FOLD_1_RECOVERY.zip": "a" * 64}}
-                        ),
+                        json.dumps({"artifact_sha256": {artifact_name: "a" * 64}}),
                         encoding="utf-8",
                     )
                 else:
@@ -68,20 +67,70 @@ class Phase2UnitTests(unittest.TestCase):
                 return str(target), 7
 
         resolver = Resolver()
-        with tempfile.TemporaryDirectory() as temp, mock.patch(
-            "kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver
+        dataset_api = types.SimpleNamespace(
+            list_dataset_files=lambda request: types.SimpleNamespace(
+                dataset_files=[types.SimpleNamespace(name=artifact_name)],
+                next_page_token="",
+            )
+        )
+        client = types.SimpleNamespace(
+            datasets=types.SimpleNamespace(dataset_api_client=dataset_api)
+        )
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch("kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver),
+            mock.patch("kagglehub.clients.build_kaggle_client", return_value=client),
         ):
             result = namespace["_phase2_http_dataset_download"](
                 "azadka/pneumonia-m01-r224-state-v1-7", temp
             )
             self.assertEqual(pathlib.Path(result), pathlib.Path(temp).resolve())
+            self.assertEqual(resolver.paths, ["CAMPAIGN_STATE.json", artifact_name])
             self.assertEqual(
-                resolver.paths, ["CAMPAIGN_STATE.json", "FOLD_1_RECOVERY.zip"]
-            )
-            self.assertEqual(
-                (pathlib.Path(temp) / "FOLD_1_RECOVERY.zip").read_bytes(),
+                (pathlib.Path(temp) / artifact_name).read_bytes(),
                 b"sealed-archive",
             )
+
+    def test_http_restore_recovers_legacy_kaggle_expanded_zip_topology(self):
+        namespace = _phase2_restore_helper_namespace()
+        legacy_name = "FOLD_1_RECOVERY.zip"
+        expanded_name = "FOLD_1_RECOVERY/FOLDS/fold_1/COMPLETED.json"
+
+        class Resolver:
+            def __init__(self):
+                self.paths = []
+
+            def __call__(self, handle, path, *, output_dir, force_download):
+                self.paths.append(path)
+                target = pathlib.Path(output_dir).joinpath(*pathlib.PurePosixPath(path).parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if path == "CAMPAIGN_STATE.json":
+                    target.write_text(
+                        json.dumps({"artifact_sha256": {legacy_name: "a" * 64}}),
+                        encoding="utf-8",
+                    )
+                else:
+                    target.write_text('{"status":"COMPLETE"}', encoding="utf-8")
+                return str(target), 4
+
+        resolver = Resolver()
+        dataset_api = types.SimpleNamespace(
+            list_dataset_files=lambda request: types.SimpleNamespace(
+                dataset_files=[types.SimpleNamespace(name=expanded_name)],
+                next_page_token="",
+            )
+        )
+        client = types.SimpleNamespace(
+            datasets=types.SimpleNamespace(dataset_api_client=dataset_api)
+        )
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch("kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver),
+            mock.patch("kagglehub.clients.build_kaggle_client", return_value=client),
+        ):
+            namespace["_phase2_http_dataset_download"]("azadka/pneumonia-m01-r224-state-v1-7", temp)
+            self.assertEqual(resolver.paths, ["CAMPAIGN_STATE.json", expanded_name])
+            self.assertTrue(pathlib.Path(temp, *expanded_name.split("/")).is_file())
 
     def test_http_403_is_absence_only_after_exact_owner_inventory(self):
         namespace = _phase2_restore_helper_namespace()
@@ -92,20 +141,18 @@ class Phase2UnitTests(unittest.TestCase):
 
         resolver = mock.Mock(side_effect=Forbidden())
         dataset_api = types.SimpleNamespace(
-            list_datasets=lambda request: types.SimpleNamespace(
-                datasets=[], next_page_token=""
-            )
+            list_datasets=lambda request: types.SimpleNamespace(datasets=[], next_page_token="")
         )
         client = types.SimpleNamespace(
             username="azadka",
             datasets=types.SimpleNamespace(dataset_api_client=dataset_api),
         )
-        with tempfile.TemporaryDirectory() as temp, mock.patch(
-            "kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver
-        ), mock.patch("kagglehub.clients.build_kaggle_client", return_value=client):
-            with self.assertRaises(
-                namespace["_Phase2ConfirmedRemoteAbsence"]
-            ) as captured:
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch("kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver),
+            mock.patch("kagglehub.clients.build_kaggle_client", return_value=client),
+        ):
+            with self.assertRaises(namespace["_Phase2ConfirmedRemoteAbsence"]) as captured:
                 namespace["_phase2_http_dataset_download"](
                     "azadka/pneumonia-m01-r224-state-v1-7", temp
                 )
@@ -121,20 +168,18 @@ class Phase2UnitTests(unittest.TestCase):
 
         resolver = mock.Mock(side_effect=Forbidden())
         dataset_api = types.SimpleNamespace(
-            list_datasets=lambda request: types.SimpleNamespace(
-                datasets=[], next_page_token=""
-            )
+            list_datasets=lambda request: types.SimpleNamespace(datasets=[], next_page_token="")
         )
         client = types.SimpleNamespace(
             username=None,
             datasets=types.SimpleNamespace(dataset_api_client=dataset_api),
         )
-        with tempfile.TemporaryDirectory() as temp, mock.patch(
-            "kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver
-        ), mock.patch("kagglehub.clients.build_kaggle_client", return_value=client):
-            with self.assertRaises(
-                namespace["_Phase2ConfirmedRemoteAbsence"]
-            ) as captured:
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch("kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver),
+            mock.patch("kagglehub.clients.build_kaggle_client", return_value=client),
+        ):
+            with self.assertRaises(namespace["_Phase2ConfirmedRemoteAbsence"]) as captured:
                 namespace["_phase2_http_dataset_download"](
                     "azadka/pneumonia-m01-r224-state-v1-7", temp
                 )
@@ -160,9 +205,7 @@ class Phase2UnitTests(unittest.TestCase):
         )
         with (
             tempfile.TemporaryDirectory() as temp,
-            mock.patch(
-                "kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver
-            ),
+            mock.patch("kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver),
             mock.patch("kagglehub.clients.build_kaggle_client", return_value=client),
             self.assertRaises(Forbidden),
         ):
@@ -179,17 +222,11 @@ class Phase2UnitTests(unittest.TestCase):
         client = types.SimpleNamespace(username="wrong-owner")
         with (
             tempfile.TemporaryDirectory() as temp,
-            mock.patch(
-                "kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver
-            ),
+            mock.patch("kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver),
             mock.patch("kagglehub.clients.build_kaggle_client", return_value=client),
-            self.assertRaisesRegex(
-                RuntimeError, "PHASE2_KAGGLE_DATASET_OWNER_IDENTITY_DRIFT"
-            ),
+            self.assertRaisesRegex(RuntimeError, "PHASE2_KAGGLE_DATASET_OWNER_IDENTITY_DRIFT"),
         ):
-            namespace["_phase2_http_dataset_download"](
-                "azadka/pneumonia-m01-r224-state-v1-7", temp
-            )
+            namespace["_phase2_http_dataset_download"]("azadka/pneumonia-m01-r224-state-v1-7", temp)
 
     def test_manifest_has_exact_nonoverlapping_33_units(self):
         manifest = phase2.campaign_manifest()
@@ -221,9 +258,7 @@ class Phase2UnitTests(unittest.TestCase):
         self.assertEqual(len(set(owners)), 11)
 
     def test_token_contract_is_exact(self):
-        contract = phase2.unit_contract(
-            "PHASE2_UNIT_M08_R384_A07", "35599900001", "20260920"
-        )
+        contract = phase2.unit_contract("PHASE2_UNIT_M08_R384_A07", "35599900001", "20260920")
         self.assertEqual(contract["account_id"], "kg-07")
         self.assertEqual(contract["owner"], "nisabulutmark")
         self.assertEqual(contract["model_id"], "M08")
@@ -259,12 +294,14 @@ class Phase2UnitTests(unittest.TestCase):
                 "PHASE2_UNIT_M01_R224_A01",
                 "35599900002",
                 "20260920",
+                [1],
             )
             notebook = json.loads(output.read_text(encoding="utf-8"))
             joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
             self.assertEqual(result["output_cell_count"], 16)
             self.assertIn("PHASE2_UNIT_MODEL_ID = 'M01'", joined)
             self.assertIn("CGP_PHASE2_MAX_NEW_FOLDS = 1", joined)
+            self.assertIn("CGP_PHASE2_EXPECTED_RESTORED_FOLDS = [1]", joined)
             self.assertIn("PHASE2_UNIT_LEGACY_M07_PERSISTENCE_SKIPPED", joined)
             self.assertIn("PHASE2_UNIT_FROZEN_M07_RECIPE_BOUND", joined)
             self.assertIn(phase2.FROZEN_M07_RECIPE_FINGERPRINT, joined)
@@ -279,7 +316,8 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertIn("PHASE2_REMOTE_STATE_CONFIRMED_ABSENT_BY_OWNER_INVENTORY", joined)
             self.assertIn('path="CAMPAIGN_STATE.json"', joined)
             self.assertIn("versioned = parsed.with_version(version)", joined)
-            self.assertIn("path=artifact_name", joined)
+            self.assertIn("path=str(safe_name)", joined)
+            self.assertIn("FOLD_{int(fold)}_RECOVERY.cgpzip", joined)
             self.assertIn("_phase2_http_dataset_download", joined)
             self.assertNotIn(
                 "kagglehub.dataset_download(phase2_handle(model_id, resolution)",
@@ -316,7 +354,10 @@ class Phase2UnitTests(unittest.TestCase):
 
     def test_partial_and_complete_receipts_obey_fold_policy(self):
         contract = phase2.unit_contract(
-            "PHASE2_UNIT_M12_R320_A05", "35599900003", "20260920"
+            "PHASE2_UNIT_M12_R320_A05",
+            "35599900003",
+            "20260920",
+            [1, 2],
         )
         partial = {
             "schema": "pneumonia.phase2.unit.terminal.v1",
@@ -325,20 +366,41 @@ class Phase2UnitTests(unittest.TestCase):
             "model_id": "M12",
             "resolution": 320,
             "completed_folds": [1, 2, 3],
+            "completed_fold": 3,
+            "restored_folds": [1, 2],
             "new_folds_completed": 1,
             "five_fold_ready": False,
             "locked_test_started": False,
         }
         self.assertIs(phase2.validate_terminal_receipt(partial, contract), partial)
+        complete_contract = phase2.unit_contract(
+            "PHASE2_UNIT_M12_R320_A05",
+            "35599900003",
+            "20260920",
+            [1, 2, 3, 4],
+        )
         complete = {
             **partial,
             "status": "COMPLETE",
             "scientific_pass": True,
             "completed_folds": [1, 2, 3, 4, 5],
+            "completed_fold": 5,
+            "restored_folds": [1, 2, 3, 4],
             "five_fold_ready": True,
             "locked_test_started": True,
         }
-        self.assertIs(phase2.validate_terminal_receipt(complete, contract), complete)
+        self.assertIs(phase2.validate_terminal_receipt(complete, complete_contract), complete)
+        duplicate_fold_one = {
+            **partial,
+            "completed_folds": [1],
+            "completed_fold": 1,
+            "restored_folds": [],
+        }
+        with self.assertRaisesRegex(
+            phase2.Phase2ContractError,
+            "PHASE2_TERMINAL_RESTORED_FOLD_LINEAGE_MISMATCH",
+        ):
+            phase2.validate_terminal_receipt(duplicate_fold_one, contract)
         bad = {**partial, "new_folds_completed": 2}
         with self.assertRaises(phase2.Phase2ContractError):
             phase2.validate_terminal_receipt(bad, contract)
@@ -356,9 +418,7 @@ class Phase2UnitTests(unittest.TestCase):
             phase2.next_token("PHASE2_UNIT_M03_R320_A05", "COMPLETE"),
             "PHASE2_UNIT_M03_R384_A01",
         )
-        self.assertIsNone(
-            phase2.next_token("PHASE2_UNIT_M03_R384_A05", "COMPLETE")
-        )
+        self.assertIsNone(phase2.next_token("PHASE2_UNIT_M03_R384_A05", "COMPLETE"))
 
 
 if __name__ == "__main__":
