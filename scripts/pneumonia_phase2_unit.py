@@ -931,6 +931,35 @@ def save_dual_probability_figure(
     fig.savefig(path, dpi=180)
     plt.close(fig)
 
+def decision_curve_table(
+    y,
+    probability,
+    thresholds=None,
+):
+    y = np.asarray(y, dtype=int)
+    p = np.asarray(probability, dtype=float)
+    if y.shape != p.shape or y.size == 0 or not np.isfinite(p).all():
+        raise ValueError("PHASE2_DECISION_CURVE_INPUT_INVALID")
+    if thresholds is None:
+        thresholds = np.linspace(0.05, 0.95, 19)
+    prevalence = float(np.mean(y))
+    rows = []
+    for threshold in thresholds:
+        pred = (p >= threshold).astype(int)
+        tn, fp, fn, tp = confusion_matrix(y, pred, labels=[0, 1]).ravel()
+        odds = threshold / (1.0 - threshold)
+        nb_model = tp / len(y) - fp / len(y) * odds
+        nb_all = prevalence - (1.0 - prevalence) * odds
+        rows.append(
+            {
+                "threshold": float(threshold),
+                "net_benefit_model": float(nb_model),
+                "net_benefit_treat_all": float(nb_all),
+                "net_benefit_treat_none": 0.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
 def risk_coverage_table(
     y,
     pred,
