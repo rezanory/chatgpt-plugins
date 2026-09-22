@@ -311,6 +311,8 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertIn("import matplotlib.pyplot as plt", joined)
             self.assertIn("def logit_np(x):", joined)
             self.assertIn("return np.log(x / (1.0 - x))", joined)
+            self.assertIn("def save_reliability_plot(", joined)
+            self.assertIn("PHASE2_RELIABILITY_INPUT_INVALID", joined)
             self.assertIn("from kagglehub.http_resolver import DatasetHttpResolver", joined)
             self.assertIn("ApiListDatasetsRequest", joined)
             self.assertIn("DatasetSelectionGroup.DATASET_SELECTION_GROUP_MY", joined)
