@@ -824,7 +824,14 @@ def save_pr_figure(y_true, score, title, path):
     fig.savefig(path, dpi=180)
     plt.close(fig)
 
-def save_reliability_plot(y_true, probability, title, path, bins=10):
+def save_reliability_plot(
+    y_true,
+    probability,
+    title,
+    path,
+    calibration_path=None,
+    bins=10,
+):
     y_true = np.asarray(y_true, dtype=float).reshape(-1)
     probability = np.asarray(probability, dtype=float).reshape(-1)
     if (
@@ -836,17 +843,40 @@ def save_reliability_plot(y_true, probability, title, path, bins=10):
         or ((probability < 0) | (probability > 1)).any()
     ):
         raise ValueError("PHASE2_RELIABILITY_INPUT_INVALID")
-    edges = np.linspace(0.0, 1.0, int(bins) + 1)
+    bins = int(bins)
+    if bins < 1:
+        raise ValueError("PHASE2_RELIABILITY_BINS_INVALID")
+    edges = np.linspace(0.0, 1.0, bins + 1)
     mean_probability = []
     fraction_positive = []
-    for index in range(int(bins)):
+    calibration_rows = []
+    ece = 0.0
+    sample_count = int(probability.size)
+    for index in range(bins):
         lower, upper = edges[index], edges[index + 1]
         in_bin = (probability >= lower) & (
-            (probability <= upper) if index == int(bins) - 1 else (probability < upper)
+            (probability <= upper) if index == bins - 1 else (probability < upper)
         )
+        count = int(in_bin.sum())
         if in_bin.any():
-            mean_probability.append(float(probability[in_bin].mean()))
-            fraction_positive.append(float(y_true[in_bin].mean()))
+            mean_value = float(probability[in_bin].mean())
+            fraction_value = float(y_true[in_bin].mean())
+            mean_probability.append(mean_value)
+            fraction_positive.append(fraction_value)
+            ece += (count / sample_count) * abs(mean_value - fraction_value)
+        else:
+            mean_value = None
+            fraction_value = None
+        calibration_rows.append(
+            (
+                index,
+                float(lower),
+                float(upper),
+                count,
+                mean_value,
+                fraction_value,
+            )
+        )
     fig, ax = plt.subplots(figsize=(6, 5))
     ax.plot([0, 1], [0, 1], linestyle="--", label="Perfect calibration")
     if mean_probability:
@@ -862,6 +892,21 @@ def save_reliability_plot(y_true, probability, title, path, bins=10):
     fig.tight_layout()
     fig.savefig(path, dpi=180)
     plt.close(fig)
+    if calibration_path is not None:
+        calibration_path = Path(calibration_path)
+        calibration_path.parent.mkdir(parents=True, exist_ok=True)
+        rows = [
+            "bin,lower,upper,count,mean_probability,fraction_positive",
+            *(
+                ",".join(
+                    "" if value is None else str(value)
+                    for value in row
+                )
+                for row in calibration_rows
+            ),
+        ]
+        calibration_path.write_text("\\n".join(rows) + "\\n", encoding="utf-8")
+    return float(ece)
 
 def save_dual_probability_figure(
     y_true,
