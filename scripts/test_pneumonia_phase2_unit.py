@@ -322,6 +322,15 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertIn("def decision_curve_table(", joined)
             self.assertIn('"net_benefit_model"', joined)
             self.assertIn("PHASE2_DECISION_CURVE_INPUT_INVALID", joined)
+            self.assertIn("def normalize_map(values):", joined)
+            self.assertIn("def gradcam_map(model, image, target_class):", joined)
+            self.assertIn("def integrated_gradients_map(", joined)
+            self.assertIn("def xai_method_metadata(method):", joined)
+            self.assertIn(
+                "def compute_xai_map(model, image, target_class, method, artifact_prefix=None):",
+                joined,
+            )
+            self.assertIn("Unsupported XAI method", joined)
             self.assertIn("from kagglehub.http_resolver import DatasetHttpResolver", joined)
             self.assertIn("ApiListDatasetsRequest", joined)
             self.assertIn("DatasetSelectionGroup.DATASET_SELECTION_GROUP_MY", joined)

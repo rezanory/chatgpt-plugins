@@ -931,6 +931,228 @@ def save_dual_probability_figure(
     fig.savefig(path, dpi=180)
     plt.close(fig)
 
+def json_safe(obj):
+    if isinstance(obj, dict):
+        return {str(key): json_safe(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(value) for value in obj]
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
+def normalize_map(values):
+    array = np.array(values, dtype=np.float32, copy=True)
+    array = np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)
+    array -= array.min()
+    maximum = array.max()
+    if maximum > 1e-8:
+        array /= maximum
+    return array
+
+def load_model_input(path):
+    image, _ = decode_resize(tf.constant(str(path)), tf.constant(0.0, dtype=tf.float32))
+    return image.numpy().astype(np.float32)
+
+def target_score(probability, target_class):
+    probability = tf.reshape(tf.cast(probability, tf.float32), [-1])
+    return probability if int(target_class) == 1 else 1.0 - probability
+
+def build_grad_model(model):
+    feature_layer = model.get_layer("aez_spatial_features")
+    return tf.keras.Model(inputs=model.inputs, outputs=[feature_layer.output, model.output])
+
+def gradcam_map(model, image, target_class):
+    grad_model = build_grad_model(model)
+    tensor = tf.convert_to_tensor(image[None, ...], dtype=tf.float32)
+    with tf.GradientTape() as tape:
+        features, predictions = grad_model(tensor, training=False)
+        score = target_score(predictions, target_class)[0]
+    gradients = tape.gradient(score, features)
+    weights = tf.reduce_mean(gradients, axis=(1, 2), keepdims=True)
+    saliency = tf.reduce_sum(weights * features, axis=-1)[0]
+    saliency = tf.nn.relu(saliency)
+    saliency = tf.image.resize(saliency[..., None], image.shape[:2], method="bilinear")[..., 0]
+    return normalize_map(saliency.numpy())
+
+def gradcampp_map(model, image, target_class):
+    # Descriptive first-gradient-power approximation, not exact Grad-CAM++.
+    grad_model = build_grad_model(model)
+    tensor = tf.convert_to_tensor(image[None, ...], dtype=tf.float32)
+    with tf.GradientTape() as tape:
+        features, predictions = grad_model(tensor, training=False)
+        score = target_score(predictions, target_class)[0]
+    gradients = tf.cast(tape.gradient(score, features), tf.float32)
+    features = tf.cast(features, tf.float32)
+    grad2 = tf.square(gradients)
+    grad3 = grad2 * gradients
+    denominator = 2.0 * grad2 + tf.reduce_sum(features * grad3, axis=(1, 2), keepdims=True)
+    denominator = tf.where(tf.abs(denominator) > 1e-8, denominator, tf.ones_like(denominator))
+    weights = tf.reduce_sum(
+        (grad2 / denominator) * tf.nn.relu(gradients), axis=(1, 2), keepdims=True
+    )
+    saliency = tf.nn.relu(tf.reduce_sum(weights * features, axis=-1)[0])
+    saliency = tf.image.resize(saliency[..., None], image.shape[:2], method="bilinear")[..., 0]
+    return normalize_map(saliency.numpy())
+
+def summarize_signed_attribution(signed_attribution, input_score, baseline_score):
+    signed = np.asarray(signed_attribution, dtype=np.float32)
+    if signed.ndim != 3 or not np.isfinite(signed).all():
+        raise ValueError("Expected finite H x W x C signed attributions")
+    input_score = float(input_score)
+    baseline_score = float(baseline_score)
+    if not np.isfinite([input_score, baseline_score]).all():
+        raise ValueError("Non-finite attribution endpoint scores")
+    score_delta = input_score - baseline_score
+    attribution_sum = float(np.sum(signed, dtype=np.float64))
+    residual = score_delta - attribution_sum
+    return normalize_map(np.sum(np.abs(signed), axis=-1)), {
+        "input_target_score": input_score,
+        "baseline_target_score": baseline_score,
+        "target_score_delta": score_delta,
+        "signed_attribution_sum": attribution_sum,
+        "completeness_residual": residual,
+        "relative_completeness_residual": abs(residual) / max(abs(score_delta), 1e-8),
+        "visualization": "per-image normalized absolute attribution magnitude",
+        "visualization_preserves_sign": False,
+        "completeness_interpretation": "Diagnostic only; no completeness pass is asserted.",
+    }
+
+def integrated_gradients_map(model, image, target_class, steps=32, return_details=False):
+    if int(steps) != steps or int(steps) < 1:
+        raise ValueError("Integrated Gradients steps must be a positive integer")
+    steps = int(steps)
+    image_tensor = tf.convert_to_tensor(image, dtype=tf.float32)
+    baseline_value = tf.reduce_mean(image_tensor)
+    baseline = tf.ones_like(image_tensor) * baseline_value
+    alphas = tf.linspace(0.0, 1.0, steps + 1)
+    interpolated = baseline[None, ...] + alphas[:, None, None, None] * (
+        image_tensor - baseline
+    )[None, ...]
+    gradients = []
+    for start in range(0, steps + 1, 8):
+        batch = interpolated[start:start + 8]
+        with tf.GradientTape() as tape:
+            tape.watch(batch)
+            scores = target_score(model(batch, training=False), target_class)
+        gradient = tape.gradient(scores, batch)
+        if gradient is None:
+            raise ValueError("Integrated Gradients target is disconnected from input")
+        gradients.append(gradient)
+    average_gradients = tf.reduce_mean(
+        (tf.concat(gradients, axis=0)[:-1] + tf.concat(gradients, axis=0)[1:]) / 2.0,
+        axis=0,
+    )
+    signed = ((image_tensor - baseline) * average_gradients).numpy()
+    endpoint_scores = target_score(
+        model(tf.stack([baseline, image_tensor]), training=False), target_class
+    ).numpy()
+    saliency, details = summarize_signed_attribution(
+        signed, endpoint_scores[1], endpoint_scores[0]
+    )
+    details.update({
+        "integration_steps": steps,
+        "baseline": "constant image equal to the input image mean",
+        "baseline_value": float(baseline_value.numpy()),
+        "target_class": int(target_class),
+    })
+    if return_details:
+        return saliency, signed, details
+    return saliency
+
+def occlusion_map(
+    model, image, target_class,
+    patch=XAI_OCCLUSION_PATCH, stride=XAI_OCCLUSION_STRIDE,
+):
+    height, width = image.shape[:2]
+    baseline_value = float(np.mean(image))
+    original_probability = float(model.predict(image[None, ...], verbose=0).reshape(-1)[0])
+    original_score = original_probability if int(target_class) == 1 else 1.0 - original_probability
+    variants, locations = [], []
+    for y1 in range(0, height, stride):
+        for x1 in range(0, width, stride):
+            y2, x2 = min(y1 + patch, height), min(x1 + patch, width)
+            variant = image.copy()
+            variant[y1:y2, x1:x2, :] = baseline_value
+            variants.append(variant)
+            locations.append((y1, y2, x1, x2))
+    predictions = model.predict(
+        np.asarray(variants, dtype=np.float32), batch_size=16, verbose=0
+    ).reshape(-1)
+    scores = predictions if int(target_class) == 1 else 1.0 - predictions
+    drops = np.maximum(original_score - scores, 0.0)
+    heat = np.zeros((height, width), dtype=np.float32)
+    counts = np.zeros((height, width), dtype=np.float32)
+    for drop, (y1, y2, x1, x2) in zip(drops, locations):
+        heat[y1:y2, x1:x2] += float(drop)
+        counts[y1:y2, x1:x2] += 1.0
+    return normalize_map(heat / np.maximum(counts, 1.0))
+
+def save_xai_visual(image, saliency, path, title):
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    axes[0].imshow(np.clip(image / 255.0, 0, 1)); axes[0].axis("off")
+    axes[0].set_title("Model input")
+    axes[1].imshow(saliency, cmap="jet"); axes[1].axis("off"); axes[1].set_title("Saliency")
+    axes[2].imshow(np.clip(image / 255.0, 0, 1)); axes[2].imshow(saliency, cmap="jet", alpha=0.42)
+    axes[2].axis("off"); axes[2].set_title("Overlay")
+    fig.suptitle(title); fig.tight_layout(); fig.savefig(path, dpi=160); plt.close(fig)
+
+def xai_sample_id(relative_path):
+    relative_path = str(relative_path)
+    suffix = hashlib.sha256(relative_path.encode("utf-8")).hexdigest()[:12]
+    return f"{Path(relative_path).stem}-{suffix}"
+
+def xai_method_metadata(method):
+    labels = {
+        "gradcam": "Grad-CAM",
+        "gradcampp": "Grad-CAM++ approximation",
+        "integrated_gradients": "Integrated Gradients magnitude",
+        "occlusion": "Occlusion score-drop map",
+    }
+    if method not in labels:
+        raise ValueError(f"Unsupported XAI method: {method}")
+    return {
+        "method": str(method),
+        "method_display_name": labels[method],
+        "is_gradcampp_approximation": method == "gradcampp",
+        "method_limitation": (
+            "First-gradient powers substitute for higher derivatives; "
+            "not validated exact Grad-CAM++."
+            if method == "gradcampp" else
+            "Autodiff may include surrogate gradients from detached extrema; "
+            "inspect signed data and completeness residual."
+            if method == "integrated_gradients" else
+            "Descriptive visualization; not validated lesion localization or causal evidence."
+        ),
+    }
+
+def compute_xai_map(model, image, target_class, method, artifact_prefix=None):
+    metadata = xai_method_metadata(method)
+    metadata["target_class"] = int(target_class)
+    if method == "integrated_gradients":
+        saliency, signed, details = integrated_gradients_map(
+            model, image, target_class, steps=32, return_details=True
+        )
+        metadata.update(details)
+        if artifact_prefix is not None:
+            signed_path = Path(str(artifact_prefix) + "_signed.npz")
+            np.savez_compressed(signed_path, signed_attribution=signed)
+            metadata["signed_attribution_path"] = str(signed_path)
+    else:
+        fn = {
+            "gradcam": gradcam_map,
+            "gradcampp": gradcampp_map,
+            "occlusion": occlusion_map,
+        }[method]
+        saliency = fn(model, image, target_class)
+    if artifact_prefix is not None:
+        metadata_path = Path(str(artifact_prefix) + "_metadata.json")
+        metadata_path.write_text(json.dumps(json_safe(metadata), indent=2), encoding="utf-8")
+    return saliency, metadata
+
 def decision_curve_table(
     y,
     probability,
