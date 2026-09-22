@@ -930,6 +930,48 @@ def save_dual_probability_figure(
     fig.tight_layout()
     fig.savefig(path, dpi=180)
     plt.close(fig)
+
+def risk_coverage_table(
+    y,
+    pred,
+    confidence,
+    min_coverage=0.10,
+):
+    y = np.asarray(y, dtype=int)
+    pred = np.asarray(pred, dtype=int)
+    confidence = np.asarray(confidence, dtype=float)
+    if y.shape != pred.shape or y.shape != confidence.shape or y.size == 0:
+        raise ValueError("PHASE2_RISK_COVERAGE_INPUT_INVALID")
+    if not np.isfinite(confidence).all():
+        raise ValueError("PHASE2_RISK_COVERAGE_CONFIDENCE_INVALID")
+    order = np.argsort(-confidence)
+    y = y[order]
+    pred = pred[order]
+    rows = []
+    for coverage in np.linspace(min_coverage, 1.0, 19):
+        n = max(1, int(round(coverage * len(y))))
+        yy = y[:n]
+        pp = pred[:n]
+        rows.append(
+            {
+                "coverage": float(n / len(y)),
+                "n_retained": int(n),
+                "risk_error_rate": float(1.0 - accuracy_score(yy, pp)),
+                "accuracy": float(accuracy_score(yy, pp)),
+                "balanced_accuracy": (
+                    float(balanced_accuracy_score(yy, pp))
+                    if len(np.unique(yy)) > 1
+                    else np.nan
+                ),
+                "recall_pneumonia": float(
+                    recall_score(yy, pp, pos_label=1, zero_division=0)
+                ),
+                "recall_normal": float(
+                    recall_score(yy, pp, pos_label=0, zero_division=0)
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
 """
     persistence_source = _patch_phase2_persistence_cell(_source(cells[persistence_cell]))
     _set_source(cells[persistence_cell], figure_helper + "\n" + persistence_source)
