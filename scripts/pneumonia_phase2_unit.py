@@ -662,6 +662,20 @@ def _phase2_http_dataset_download(handle, output_dir):
     if restore_count == 1 and copy_count == 1:
         source = source.replace(old_restore, new_restore, 1)
         source = source.replace(old_copy, new_copy, 1)
+        restore_finish = '''    if (staged / "FINAL_REPORT.json").is_file():
+        PHASE2_REMOTE_FINAL_RECEIPTS[identity] = run_file_sha256(staged / "FINAL_REPORT.json")
+    return len(completed)
+'''
+        if source.count(restore_finish) != 1:
+            raise Phase2ContractError("PHASE2_RESTORE_CLEANUP_BOUNDARY_INVALID")
+        source = source.replace(
+            restore_finish,
+            restore_finish.replace(
+                "    return len(completed)\n",
+                "    shutil.rmtree(temp)\n    return len(completed)\n",
+            ),
+            1,
+        )
         source = source.replace('state.glob("*.zip")', 'state.glob("*.cgpzip")')
         source = source.replace(
             "FOLD_{int(fold)}_RECOVERY.zip",

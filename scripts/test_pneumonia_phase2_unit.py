@@ -1,10 +1,14 @@
+import ast
+import hashlib
 import json
 import pathlib
 import re
+import shutil
 import sys
 import tempfile
 import types
 import unittest
+import zipfile
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -341,6 +345,14 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertIn("path=str(safe_name)", joined)
             self.assertIn("FOLD_{int(fold)}_RECOVERY.cgpzip", joined)
             self.assertIn("_phase2_http_dataset_download", joined)
+            self.assertEqual(joined.count("    shutil.rmtree(temp)\n    return len(completed)"), 1)
+            self.assertLess(
+                joined.index(
+                    'PHASE2_REMOTE_FINAL_RECEIPTS[identity] = '
+                    'run_file_sha256(staged / "FINAL_REPORT.json")'
+                ),
+                joined.index("    shutil.rmtree(temp)\n    return len(completed)"),
+            )
             self.assertNotIn(
                 "kagglehub.dataset_download(phase2_handle(model_id, resolution)",
                 joined,
@@ -360,6 +372,94 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertNotIn("run_or_restore_hpo_candidate_fold(", joined)
             self.assertNotIn("MASTER / PHASE-2 ORCHESTRATOR", joined)
             self.assertNotIn("CONFIRMATION HPO — DETERMINISTIC", joined)
+
+    def test_restore_cleanup_requires_exact_source_boundary(self):
+        notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+        persistence = next(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+            if "def phase2_restore(" in "".join(cell.get("source", []))
+        )
+        drifted = persistence.replace(
+            "    return len(completed)\n",
+            "    return int(len(completed))\n",
+            1,
+        )
+        self.assertNotEqual(drifted, persistence)
+        with self.assertRaisesRegex(
+            phase2.Phase2ContractError,
+            "PHASE2_RESTORE_CLEANUP_BOUNDARY_INVALID",
+        ):
+            phase2._patch_phase2_persistence_cell(drifted)
+
+    def test_restored_archive_temp_is_removed_after_evidence_copy(self):
+        notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+        persistence = next(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+            if "def phase2_restore(" in "".join(cell.get("source", []))
+        )
+        patched = phase2._patch_phase2_persistence_cell(persistence)
+        restore_function = next(
+            node
+            for node in ast.parse(patched).body
+            if isinstance(node, ast.FunctionDef) and node.name == "phase2_restore"
+        )
+        restore_module = ast.fix_missing_locations(
+            ast.Module(body=[restore_function], type_ignores=[])
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            out = work / "output"
+            state = work / "state"
+            archive_name = "FOLD_1_RECOVERY.cgpzip"
+            fold_receipt = b'{"status":"COMPLETE"}'
+
+            def download(_handle, target):
+                (target / "CAMPAIGN_STATE.json").write_text(
+                    json.dumps({"artifact_sha256": {archive_name: "a" * 64}}),
+                    encoding="utf-8",
+                )
+                with zipfile.ZipFile(target / archive_name, "w") as archive:
+                    archive.writestr("FOLDS/fold_1/COMPLETED.json", fold_receipt)
+
+            def state_root(*_args):
+                state.mkdir(exist_ok=True)
+                return state
+
+            namespace = {
+                "WORK": work,
+                "Path": pathlib.Path,
+                "json": json,
+                "re": re,
+                "shutil": shutil,
+                "zipfile": zipfile,
+                "PHASE2_RESTORE_VERIFIED": set(),
+                "PHASE2_REMOTE_FINAL_RECEIPTS": {},
+                "PHASE2_REMOTE_FOLD_RECEIPTS": {},
+                "phase2_output_root": lambda *_args: out,
+                "phase2_state_root": state_root,
+                "phase2_handle": lambda *_args: "owner/state",
+                "_phase2_http_dataset_download": download,
+                "_is_explicit_http_not_found": lambda _exc: False,
+                "phase2_contract": lambda *_args, **_kwargs: {},
+                "validate_receipt": lambda *_args, **_kwargs: None,
+                "safe_extract_zip": lambda archive, target: zipfile.ZipFile(archive).extractall(
+                    target
+                ),
+                "phase2_validate_fold": lambda *_args: None,
+                "phase2_validate_report": lambda *_args: None,
+                "run_file_sha256": lambda path: hashlib.sha256(
+                    pathlib.Path(path).read_bytes()
+                ).hexdigest(),
+            }
+            # The source is the checked-in frozen notebook, not external input.
+            exec(compile(restore_module, "<phase2-restore>", "exec"), namespace)  # noqa: S102  # nosec B102
+            self.assertEqual(namespace["phase2_restore"]("M11", 224), 1)
+            self.assertFalse((work / "_PHASE2_RESTORE_V17").joinpath("M11", "R224").exists())
+            self.assertEqual((out / "FOLDS/fold_1/COMPLETED.json").read_bytes(), fold_receipt)
+            self.assertTrue((state / archive_name).is_file())
+            self.assertEqual(namespace["PHASE2_RESTORE_VERIFIED"], {("M11", 224)})
 
     def test_raw_canonical_notebook_is_rejected_before_hpo_can_run(self):
         with (
