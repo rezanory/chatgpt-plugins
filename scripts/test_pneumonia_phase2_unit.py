@@ -1,6 +1,7 @@
 import ast
 import hashlib
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -400,13 +401,26 @@ class Phase2UnitTests(unittest.TestCase):
             if "def phase2_restore(" in "".join(cell.get("source", []))
         )
         patched = phase2._patch_phase2_persistence_cell(persistence)
-        restore_function = next(
+        restore_functions = [
             node
             for node in ast.parse(patched).body
-            if isinstance(node, ast.FunctionDef) and node.name == "phase2_restore"
+            if isinstance(node, ast.FunctionDef)
+            and node.name in {
+                "_phase2_link_validated_restore_file",
+                "_phase2_require_restore_headroom",
+                "phase2_restore",
+            }
+        ]
+        self.assertEqual(
+            [node.name for node in restore_functions],
+            [
+                "_phase2_link_validated_restore_file",
+                "_phase2_require_restore_headroom",
+                "phase2_restore",
+            ],
         )
         restore_module = ast.fix_missing_locations(
-            ast.Module(body=[restore_function], type_ignores=[])
+            ast.Module(body=restore_functions, type_ignores=[])
         )
         with tempfile.TemporaryDirectory() as directory:
             work = pathlib.Path(directory)
@@ -430,6 +444,7 @@ class Phase2UnitTests(unittest.TestCase):
             namespace = {
                 "WORK": work,
                 "Path": pathlib.Path,
+                "os": os,
                 "json": json,
                 "re": re,
                 "shutil": shutil,
@@ -459,6 +474,216 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertFalse((work / "_PHASE2_RESTORE_V17").joinpath("M11", "R224").exists())
             self.assertEqual((out / "FOLDS/fold_1/COMPLETED.json").read_bytes(), fold_receipt)
             self.assertTrue((state / archive_name).is_file())
+            self.assertEqual(namespace["PHASE2_RESTORE_VERIFIED"], {("M11", 224)})
+
+    def test_restore_links_validated_files_without_duplicate_bytes(self):
+        notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+        persistence = next(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+            if "def phase2_restore(" in "".join(cell.get("source", []))
+        )
+        patched = phase2._patch_phase2_persistence_cell(persistence)
+        link_function = next(
+            node
+            for node in ast.parse(patched).body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_phase2_link_validated_restore_file"
+        )
+        module = ast.fix_missing_locations(ast.Module(body=[link_function], type_ignores=[]))
+        namespace = {
+            "Path": pathlib.Path,
+            "os": os,
+            "run_file_sha256": lambda path: hashlib.sha256(
+                pathlib.Path(path).read_bytes()
+            ).hexdigest(),
+        }
+        exec(compile(module, "<phase2-link>", "exec"), namespace)  # noqa: S102  # nosec B102
+        link = namespace["_phase2_link_validated_restore_file"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "download" / "FOLD_1_RECOVERY.cgpzip"
+            source.parent.mkdir()
+            source.write_bytes(b"sealed archive")
+            target = root / "state" / source.name
+            link(source, target)
+            self.assertEqual(source.stat().st_ino, target.stat().st_ino)
+            source.unlink()
+            self.assertEqual(target.read_bytes(), b"sealed archive")
+            conflict = root / "state" / "conflict.cgpzip"
+            conflict.write_bytes(b"other evidence")
+            with self.assertRaisesRegex(RuntimeError, "PHASE2_RESTORE_TARGET_COLLISION"):
+                link(target, conflict)
+            self.assertEqual(conflict.read_bytes(), b"other evidence")
+
+    def test_restore_headroom_fails_before_extracting_archives(self):
+        notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+        persistence = next(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+            if "def phase2_restore(" in "".join(cell.get("source", []))
+        )
+        patched = phase2._patch_phase2_persistence_cell(persistence)
+        budget_function = next(
+            node
+            for node in ast.parse(patched).body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_phase2_require_restore_headroom"
+        )
+        module = ast.fix_missing_locations(ast.Module(body=[budget_function], type_ignores=[]))
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            archive_path = root / "FOLD_1_RECOVERY.cgpzip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("FOLDS/fold_1/COMPLETED.json", b"sealed evidence")
+            namespace = {"zipfile": zipfile, "shutil": shutil, "WORK": root, "json": json}
+            exec(compile(module, "<phase2-headroom>", "exec"), namespace)  # noqa: S102  # nosec B102
+            with (
+                mock.patch.object(
+                    shutil, "disk_usage", return_value=types.SimpleNamespace(free=0)
+                ),
+                self.assertRaisesRegex(RuntimeError, "PHASE2_RESTORE_HEADROOM_INSUFFICIENT"),
+            ):
+                namespace["_phase2_require_restore_headroom"]([archive_path])
+
+    def test_final_archive_does_not_duplicate_sealed_fold_payloads(self):
+        notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+        persistence = next(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+            if "def phase2_restore(" in "".join(cell.get("source", []))
+        )
+        patched = phase2._patch_phase2_persistence_cell(persistence)
+        final_functions = [
+            node
+            for node in ast.parse(patched).body
+            if isinstance(node, ast.FunctionDef)
+            and node.name in {"_phase2_require_final_headroom", "phase2_ensure_final_persisted"}
+        ]
+        module = ast.fix_missing_locations(ast.Module(body=final_functions, type_ignores=[]))
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            out = root / "out"
+            state = root / "state"
+            out.mkdir()
+            state.mkdir()
+            (out / "FINAL_REPORT.json").write_bytes(b'{"status":"COMPLETE"}')
+            for fold in range(1, 6):
+                fold_dir = out / "FOLDS" / f"fold_{fold}"
+                fold_dir.mkdir(parents=True)
+                (fold_dir / "COMPLETED.json").write_bytes(b'{"status":"COMPLETED"}')
+                (fold_dir / "final_selected.weights.h5").write_bytes(b"model weights")
+            namespace = {
+                "Path": pathlib.Path,
+                "zipfile": zipfile,
+                "WORK": root,
+                "shutil": shutil,
+                "json": json,
+                "PHASE2_RESTORE_VERIFIED": {("M11", 224)},
+                "PHASE2_REMOTE_FINAL_RECEIPTS": {},
+                "PHASE2_REMOTE_FOLD_RECEIPTS": {},
+                "phase2_validate_report": lambda *_args: None,
+                "phase2_state_root": lambda *_args: state,
+                "phase2_seal_persistence": lambda *_args: None,
+                "phase2_upload": lambda *_args, **_kwargs: None,
+                "run_file_sha256": lambda path: hashlib.sha256(
+                    pathlib.Path(path).read_bytes()
+                ).hexdigest(),
+            }
+            exec(compile(module, "<phase2-final>", "exec"), namespace)  # noqa: S102  # nosec B102
+            self.assertTrue(namespace["phase2_ensure_final_persisted"]("M11", 224, out))
+            with zipfile.ZipFile(state / "FINAL_EVIDENCE.cgpzip") as archive:
+                self.assertIn("FINAL_REPORT.json", archive.namelist())
+                self.assertFalse(any(name.startswith("FOLDS/") for name in archive.namelist()))
+
+            with (
+                mock.patch.object(
+                    shutil, "disk_usage", return_value=types.SimpleNamespace(free=0)
+                ),
+                self.assertRaisesRegex(RuntimeError, "PHASE2_FINAL_HEADROOM_INSUFFICIENT"),
+            ):
+                namespace["phase2_ensure_final_persisted"]("M11", 224, out)
+
+    def test_compact_final_archive_round_trips_with_five_fold_archives(self):
+        notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+        persistence = next(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+            if "def phase2_restore(" in "".join(cell.get("source", []))
+        )
+        patched = phase2._patch_phase2_persistence_cell(persistence)
+        names = {
+            "_phase2_link_validated_restore_file",
+            "_phase2_require_restore_headroom",
+            "phase2_restore",
+        }
+        functions = [
+            node
+            for node in ast.parse(patched).body
+            if isinstance(node, ast.FunctionDef) and node.name in names
+        ]
+        module = ast.fix_missing_locations(ast.Module(body=functions, type_ignores=[]))
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            out = root / "out"
+            state = root / "state"
+            marker = {"artifact_sha256": {}}
+
+            def download(_handle, target):
+                for fold in range(1, 6):
+                    archive_name = f"FOLD_{fold}_RECOVERY.cgpzip"
+                    with zipfile.ZipFile(target / archive_name, "w") as archive:
+                        archive.writestr(
+                            f"FOLDS/fold_{fold}/COMPLETED.json",
+                            b'{"status":"COMPLETED"}',
+                        )
+                    marker["artifact_sha256"][archive_name] = "a" * 64
+                with zipfile.ZipFile(target / "FINAL_EVIDENCE.cgpzip", "w") as archive:
+                    archive.writestr("FINAL_REPORT.json", b'{"status":"COMPLETE"}')
+                marker["artifact_sha256"]["FINAL_EVIDENCE.cgpzip"] = "b" * 64
+                (target / "CAMPAIGN_STATE.json").write_text(
+                    json.dumps(marker), encoding="utf-8"
+                )
+
+            def validate_report(_model, _resolution, location):
+                self.assertTrue((location / "FINAL_REPORT.json").is_file())
+                for fold in range(1, 6):
+                    self.assertTrue(
+                        (location / "FOLDS" / f"fold_{fold}" / "COMPLETED.json").is_file()
+                    )
+
+            namespace = {
+                "WORK": root,
+                "Path": pathlib.Path,
+                "os": os,
+                "json": json,
+                "re": re,
+                "shutil": shutil,
+                "zipfile": zipfile,
+                "PHASE2_RESTORE_VERIFIED": set(),
+                "PHASE2_REMOTE_FINAL_RECEIPTS": {},
+                "PHASE2_REMOTE_FOLD_RECEIPTS": {},
+                "phase2_output_root": lambda *_args: out,
+                "phase2_state_root": lambda *_args: state,
+                "phase2_handle": lambda *_args: "owner/state",
+                "_phase2_http_dataset_download": download,
+                "_is_explicit_http_not_found": lambda _exc: False,
+                "phase2_contract": lambda *_args, **_kwargs: {},
+                "validate_receipt": lambda *_args, **_kwargs: None,
+                "safe_extract_zip": lambda archive, target: zipfile.ZipFile(archive).extractall(
+                    target
+                ),
+                "phase2_validate_fold": lambda *_args: None,
+                "phase2_validate_report": validate_report,
+                "run_file_sha256": lambda path: hashlib.sha256(
+                    pathlib.Path(path).read_bytes()
+                ).hexdigest(),
+            }
+            exec(compile(module, "<phase2-roundtrip>", "exec"), namespace)  # noqa: S102  # nosec B102
+            self.assertEqual(namespace["phase2_restore"]("M11", 224), 5)
+            self.assertFalse((root / "_PHASE2_RESTORE_V17").joinpath("M11", "R224").exists())
+            self.assertTrue((out / "FINAL_REPORT.json").is_file())
+            self.assertEqual(len(list(state.glob("*.cgpzip"))), 6)
             self.assertEqual(namespace["PHASE2_RESTORE_VERIFIED"], {("M11", 224)})
 
     def test_raw_canonical_notebook_is_rejected_before_hpo_can_run(self):
