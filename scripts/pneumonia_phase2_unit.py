@@ -554,6 +554,87 @@ def _phase2_http_dataset_download(handle, output_dir):
             raise RuntimeError("PHASE2_HTTP_RESTORE_ARTIFACT_PATH_DRIFT")
     return str(Path(output_dir).resolve())
 
+
+def _phase2_link_validated_restore_file(source, target):
+    source = Path(source)
+    target = Path(target)
+    if not source.is_file() or source.is_symlink():
+        raise RuntimeError("PHASE2_RESTORE_SOURCE_FILE_INVALID")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if source.stat().st_dev != target.parent.stat().st_dev:
+        raise RuntimeError("BLOCKED_VALIDATION_INFRASTRUCTURE: PHASE2_RESTORE_CROSS_DEVICE")
+    if target.exists() or target.is_symlink():
+        if (
+            target.is_symlink()
+            or not target.is_file()
+            or run_file_sha256(target) != run_file_sha256(source)
+        ):
+            raise RuntimeError(
+                "BLOCKED_EXACT_EVIDENCE_LINEAGE_MISMATCH: PHASE2_RESTORE_TARGET_COLLISION"
+            )
+        return
+    try:
+        os.link(source, target)
+    except OSError as exc:
+        raise RuntimeError(
+            "BLOCKED_VALIDATION_INFRASTRUCTURE: PHASE2_RESTORE_HARDLINK_UNAVAILABLE "
+            f"errno={exc.errno}"
+        ) from exc
+
+
+def _phase2_require_restore_headroom(archives):
+    unpacked_bytes = 0
+    for archive_path in archives:
+        with zipfile.ZipFile(archive_path) as archive:
+            unpacked_bytes += sum(
+                item.file_size for item in archive.infolist() if not item.is_dir()
+            )
+    # Keep space for the notebook autosave and report/cache writes after restore.
+    reserve_bytes = max(1 << 30, unpacked_bytes // 10)
+    available_bytes = shutil.disk_usage(WORK).free
+    if available_bytes < unpacked_bytes + reserve_bytes:
+        raise RuntimeError(
+            "BLOCKED_VALIDATION_INFRASTRUCTURE: PHASE2_RESTORE_HEADROOM_INSUFFICIENT "
+            f"free={available_bytes} unpacked={unpacked_bytes} reserve={reserve_bytes}"
+        )
+    print(
+        "PHASE2_RESTORE_STORAGE_PREFLIGHT="
+        + json.dumps(
+            {
+                "free_bytes": available_bytes,
+                "unpacked_bytes": unpacked_bytes,
+                "reserve_bytes": reserve_bytes,
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def _phase2_require_final_headroom(out):
+    evidence_bytes = sum(
+        path.stat().st_size
+        for path in out.rglob("*")
+        if path.is_file() and path.relative_to(out).parts[0] != "FOLDS"
+    )
+    reserve_bytes = max(1 << 30, evidence_bytes // 10)
+    available_bytes = shutil.disk_usage(WORK).free
+    if available_bytes < evidence_bytes + reserve_bytes:
+        raise RuntimeError(
+            "BLOCKED_VALIDATION_INFRASTRUCTURE: PHASE2_FINAL_HEADROOM_INSUFFICIENT "
+            f"free={available_bytes} evidence={evidence_bytes} reserve={reserve_bytes}"
+        )
+    print(
+        "PHASE2_FINAL_STORAGE_PREFLIGHT="
+        + json.dumps(
+            {
+                "free_bytes": available_bytes,
+                "evidence_bytes": evidence_bytes,
+                "reserve_bytes": reserve_bytes,
+            },
+            sort_keys=True,
+        )
+    )
+
 """
     source = source.replace(restore_marker, helper + restore_marker, 1)
     source = source.replace(
@@ -616,6 +697,7 @@ def _phase2_http_dataset_download(handle, output_dir):
             sealed_archives,
             allowed_statuses={"COMPLETE"},
         )
+        _phase2_require_restore_headroom(sealed_archives.values())
         for archive in sealed_archives.values():
             safe_extract_zip(archive, staged)
         restored_archives = dict(sealed_archives)
@@ -655,19 +737,67 @@ def _phase2_http_dataset_download(handle, output_dir):
                         bundle.write(source_file, arcname=str(source_file.relative_to(expanded)))
             restored_archives[archive_name] = archive_path
     for source in [marker, *restored_archives.values()]:
-        shutil.copy2(source, state / source.name)
+        _phase2_link_validated_restore_file(source, state / source.name)
 """
     restore_count = source.count(old_restore)
     copy_count = source.count(old_copy)
     if restore_count == 1 and copy_count == 1:
         source = source.replace(old_restore, new_restore, 1)
         source = source.replace(old_copy, new_copy, 1)
+        old_output_copy = '''    for source in staged.rglob("*"):
+        if source.is_file():
+            target = out / source.relative_to(staged)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+'''
+        if source.count(old_output_copy) != 1:
+            raise Phase2ContractError("PHASE2_RESTORE_OUTPUT_COPY_BOUNDARY_INVALID")
+        source = source.replace(
+            old_output_copy,
+            old_output_copy.replace(
+                "            shutil.copy2(source, target)\n",
+                "            _phase2_link_validated_restore_file(source, target)\n",
+            ),
+            1,
+        )
+        restore_finish = '''    if (staged / "FINAL_REPORT.json").is_file():
+        PHASE2_REMOTE_FINAL_RECEIPTS[identity] = run_file_sha256(staged / "FINAL_REPORT.json")
+    return len(completed)
+'''
+        if source.count(restore_finish) != 1:
+            raise Phase2ContractError("PHASE2_RESTORE_CLEANUP_BOUNDARY_INVALID")
+        source = source.replace(
+            restore_finish,
+            restore_finish.replace(
+                "    return len(completed)\n",
+                "    shutil.rmtree(temp)\n    return len(completed)\n",
+            ),
+            1,
+        )
         source = source.replace('state.glob("*.zip")', 'state.glob("*.cgpzip")')
         source = source.replace(
             "FOLD_{int(fold)}_RECOVERY.zip",
             "FOLD_{int(fold)}_RECOVERY.cgpzip",
         )
         source = source.replace("FINAL_EVIDENCE.zip", "FINAL_EVIDENCE.cgpzip")
+        old_final_archive = (
+            '    with zipfile.ZipFile(final_archive, "w", '
+            'compression=zipfile.ZIP_DEFLATED) as archive:\n'
+            '        for path in sorted(out.rglob("*")):\n'
+            '            if path.is_file():\n'
+            '                archive.write(path, arcname=path.relative_to(out).as_posix())\n'
+        )
+        if source.count(old_final_archive) != 1:
+            raise Phase2ContractError("PHASE2_FINAL_ARCHIVE_BOUNDARY_INVALID")
+        source = source.replace(
+            old_final_archive,
+            "    _phase2_require_final_headroom(out)\n"
+            + old_final_archive.replace(
+                "            if path.is_file():\n",
+                '            if path.is_file() and path.relative_to(out).parts[0] != "FOLDS":\n',
+            ),
+            1,
+        )
     elif restore_count or copy_count or 'marker = temp / "CAMPAIGN_STATE.json"' in source:
         # A real persistence cell must match both coupled boundaries exactly.
         # Helper-only test sources stop before these blocks and are intentionally
