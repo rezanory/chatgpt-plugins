@@ -27,6 +27,10 @@ const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
     "rezanory/chatgpt-plugins/.github/workflows/kaggle-11-pool-readiness.yml@refs/heads/main",
     new Set(["push", "workflow_dispatch"]),
   ],
+  [
+    "rezanory/chatgpt-plugins/.github/workflows/pneumonia-phase2-fleet-state.yml@refs/heads/main",
+    new Set(["workflow_dispatch"]),
+  ],
 ]);
 const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   [
