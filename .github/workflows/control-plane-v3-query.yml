@@ -20,7 +20,7 @@ jobs:
   query:
     if: >-
       ${{ (github.event_name == 'workflow_dispatch' && github.actor_id == 62356000) ||
-          (github.event.issue.number == 33 &&
+          ((github.event.issue.number == 33 || github.event.issue.number == 126) &&
            github.event.comment.user.id == 62356000 &&
            startsWith(github.event.comment.body, 'CONTROL_PLANE_V3_QUERY ')) }}
     # Use the online, pre-provisioned self-hosted runner for read-only broker
@@ -56,7 +56,9 @@ jobs:
           $h=@{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
           $body="CONTROL PLANE V3 QUERY START | run=$env:GITHUB_RUN_ID | impl=$env:CGP_QUERY_IMPL_SHA | read_only=true | cloudflare_deploy=false | kaggle_compute=false"
           $p=@{body=$body}|ConvertTo-Json -Compress
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
+          $event=Get-Content -Raw $env:GITHUB_EVENT_PATH | ConvertFrom-Json
+          $issue=[int]$event.issue.number
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/$issue/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p | Out-Null
 
       - name: Publish workflow-dispatch query start marker
         if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -153,7 +155,7 @@ jobs:
                 "- Read only: `true`\n- Cloudflare deploy: `false`\n"
                 "- Kaggle compute launched: `false`\n\n```json\n"+raw+"\n```")
           payload=json.dumps({'body':body},ensure_ascii=True).encode('utf-8')
-          url=f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/33/comments"
+          event=json.loads(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))\n          issue=int(event["issue"]["number"])\n          url=f"https://api.github.com/repos/{os.environ[\'GITHUB_REPOSITORY\']}/issues/{issue}/comments"
           req=urllib.request.Request(url,data=payload,method='POST',headers={
               'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],
               'Accept':'application/vnd.github+json',
@@ -190,7 +192,9 @@ jobs:
           $impl=if($env:CGP_QUERY_IMPL_SHA){$env:CGP_QUERY_IMPL_SHA}else{'unresolved'}
           $body="## CONTROL PLANE V3 QUERY WORKFLOW DIAGNOSTIC`n`n- Run: ``$env:GITHUB_RUN_ID```n- Query implementation: ``$impl```n- Result: ``FAILED_BEFORE_SANITIZED_RECEIPT```n- Read only: ``true```n- Cloudflare deploy: ``false```n- Kaggle compute launched: ``false``"
           $p=@{body=$body}|ConvertTo-Json -Compress
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/33/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p -TimeoutSec 15 | Out-Null
+          $event=Get-Content -Raw $env:GITHUB_EVENT_PATH | ConvertFrom-Json
+          $issue=[int]$event.issue.number
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/issues/$issue/comments" -Method Post -Headers $h -ContentType 'application/json' -Body $p -TimeoutSec 15 | Out-Null
 
   soilbin_q1_v2_package:
     if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V2_PACKAGE_READ_BROKER_ALLOWED' }}
