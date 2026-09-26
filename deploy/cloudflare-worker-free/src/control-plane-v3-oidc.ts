@@ -41,6 +41,10 @@ const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
     "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/main",
     new Set(["workflow_dispatch"]),
   ],
+  [
+    "rezanory/chatgpt-plugins/.github/workflows/m07-vindr-pcxr-external-validation-20260927.yml@refs/heads/main",
+    new Set(["workflow_dispatch"]),
+  ],
 ]);
 const CLOCK_SKEW_SECONDS = 60;
 
