@@ -1,0 +1,356 @@
+name: m07-vindr-pcxr-external-validation-20260927
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: External validation stage
+        required: true
+        default: preflight
+        type: choice
+        options:
+          - preflight
+
+permissions:
+  id-token: write
+  contents: read
+  actions: write
+
+concurrency:
+  group: m07-vindr-pcxr-external-validation
+  cancel-in-progress: false
+
+jobs:
+  vindr-preflight:
+    if: ${{ github.event.inputs.stage == 'preflight' }}
+    runs-on: [self-hosted, windows, x64, v622]
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Build fail-closed VinDr-PCXR preflight
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $script=@'
+          from pathlib import Path
+          import json, os, hashlib
+          import pandas as pd
+
+          OUT=Path('/kaggle/working/M07_VINDR_PCXR_PREFLIGHT.json')
+          ROOT=Path('/kaggle/input')
+          print('CGP_PHASE:M07_VINDR_PREFLIGHT_BOOT', flush=True)
+
+          files=[p for p in ROOT.rglob('*') if p.is_file()]
+          csvs=[p for p in files if p.suffix.lower()=='.csv']
+          dicoms=[p for p in files if p.suffix.lower() in {'.dcm','.dicom'}]
+          images=[p for p in files if p.suffix.lower() in {'.png','.jpg','.jpeg'}]
+
+          receipt={
+              'schema':'m07.external.vindr_pcxr.preflight.v1',
+              'status':'BLOCKED',
+              'gpu_used':False,
+              'training_started':False,
+              'inference_started':False,
+              'input_root_exists':ROOT.exists(),
+              'file_count':len(files),
+              'csv_count':len(csvs),
+              'dicom_count':len(dicoms),
+              'raster_image_count':len(images),
+              'csvs':[],
+              'dicom_identity':{},
+          }
+
+          for p in sorted(csvs):
+              try:
+                  df=pd.read_csv(p)
+                  cols=[str(c) for c in df.columns]
+                  pneum=[c for c in cols if 'pneumonia' in c.lower()]
+                  nofind=[c for c in cols if c.lower().strip().replace('_',' ') in {'no finding','no findings'}]
+                  pid=[c for c in cols if c.lower().strip().replace('_',' ') in {'patient id','patientid','patient'}]
+                  rec={
+                      'path':p.relative_to(ROOT).as_posix(),
+                      'rows':int(len(df)),
+                      'columns':cols,
+                      'pneumonia_columns':pneum,
+                      'no_finding_columns':nofind,
+                      'patient_id_columns':pid,
+                  }
+                  for c in pneum+nofind:
+                      try:
+                          vc=df[c].value_counts(dropna=False).head(10).to_dict()
+                          rec.setdefault('value_counts',{})[c]={str(k):int(v) for k,v in vc.items()}
+                      except Exception:
+                          pass
+                  receipt['csvs'].append(rec)
+              except Exception as exc:
+                  receipt['csvs'].append({'path':p.relative_to(ROOT).as_posix(),'error':repr(exc)[:500]})
+
+          if dicoms:
+              try:
+                  import pydicom
+                  patient_hashes=[]
+                  studies=set()
+                  sops=set()
+                  views={}
+                  ages_present=0
+                  errors=[]
+                  sample=dicoms[:min(len(dicoms),200)]
+                  for p in sample:
+                      try:
+                          ds=pydicom.dcmread(
+                              str(p),
+                              stop_before_pixels=True,
+                              specific_tags=['PatientID','StudyInstanceUID','SOPInstanceUID','PatientAge','ViewPosition'],
+                          )
+                          pid=str(getattr(ds,'PatientID','')).strip()
+                          if pid:
+                              patient_hashes.append(hashlib.sha256(pid.encode()).hexdigest())
+                          st=str(getattr(ds,'StudyInstanceUID','')).strip()
+                          if st:
+                              studies.add(hashlib.sha256(st.encode()).hexdigest())
+                          sop=str(getattr(ds,'SOPInstanceUID','')).strip()
+                          if sop:
+                              sops.add(hashlib.sha256(sop.encode()).hexdigest())
+                          age=str(getattr(ds,'PatientAge','')).strip()
+                          if age:
+                              ages_present+=1
+                          view=str(getattr(ds,'ViewPosition','')).strip()
+                          if view:
+                              views[view]=views.get(view,0)+1
+                      except Exception as exc:
+                          errors.append(repr(exc)[:200])
+                  receipt['dicom_identity']={
+                      'sampled':len(sample),
+                      'patient_id_present':len(patient_hashes),
+                      'unique_patient_ids_hashed':len(set(patient_hashes)),
+                      'study_uid_present_unique_hashed':len(studies),
+                      'sop_uid_present_unique_hashed':len(sops),
+                      'patient_age_present':ages_present,
+                      'view_positions':views,
+                      'read_errors':errors[:5],
+                  }
+              except Exception as exc:
+                  receipt['dicom_identity']={'probe_error':repr(exc)[:500]}
+
+          label_tables=[
+              x for x in receipt['csvs']
+              if x.get('pneumonia_columns') and x.get('no_finding_columns')
+          ]
+          patient_csv=any(x.get('patient_id_columns') for x in receipt['csvs'])
+          dicom_pid=int(receipt.get('dicom_identity',{}).get('patient_id_present',0) or 0)>0
+          receipt['label_tables_found']=len(label_tables)
+          receipt['patient_identity_available']=bool(patient_csv or dicom_pid)
+          receipt['status']=(
+              'PASS_DATASET_SCHEMA'
+              if files and label_tables
+              else 'BLOCKED_DATASET_OR_LABEL_SCHEMA'
+          )
+          receipt['next_action']=(
+              'BUILD_EXTERNAL_MANIFEST'
+              if receipt['status']=='PASS_DATASET_SCHEMA' and receipt['patient_identity_available']
+              else (
+                  'RESOLVE_PATIENT_IDENTITY'
+                  if receipt['status']=='PASS_DATASET_SCHEMA'
+                  else 'RESOLVE_COMPETITION_ACCESS_OR_SCHEMA'
+              )
+          )
+          OUT.write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding='utf-8')
+          print('CGP_PHASE:M07_VINDR_PREFLIGHT_DONE', flush=True)
+          print(json.dumps(receipt,sort_keys=True), flush=True)
+          '@
+          $path=Join-Path $env:RUNNER_TEMP 'm07-vindr-pcxr-preflight.py'
+          [IO.File]::WriteAllText($path,$script,[Text.UTF8Encoding]::new($false))
+          "CGP_PREFLIGHT_SCRIPT=$path" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Request trusted Kaggle action OIDC
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length-lt100){throw 'action OIDC unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Launch CPU-only VinDr-PCXR preflight
+        id: launch
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $runner=@'
+          import json, os, pathlib, urllib.request, urllib.error
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+          code=pathlib.Path(os.environ['CGP_PREFLIGHT_SCRIPT']).read_text(encoding='utf-8')
+          kernel_ref='trickermark/m07-vindr-pcxr-preflight-20260927'
+          payload={
+              'request_id':'m07-vindr-pcxr-preflight-kg05-20260927',
+              'provider':'kaggle',
+              'operation_class':'compute',
+              'account_id':'kg-05',
+              'purpose':'CPU-only access/schema/patient-identity preflight for approved M07 external validation on VinDr-PCXR. No GPU, training, inference, or threshold tuning.',
+              'service':'kernels.KernelsApiService',
+              'method':'SaveKernel',
+              'body':{
+                  'slug':kernel_ref,
+                  'newTitle':'M07 VinDr-PCXR External Preflight 20260927',
+                  'text':code,
+                  'language':'python',
+                  'kernelType':'script',
+                  'kernelExecutionType':'SAVE_AND_RUN_ALL',
+                  'isPrivate':True,
+                  'enableGpu':False,
+                  'enableTpu':False,
+                  'enableInternet':True,
+                  'kernelDataSources':[],
+                  'datasetDataSources':[],
+                  'competitionDataSources':['pediatric-cxr-analysis-challenge'],
+                  'modelDataSources':[],
+              },
+          }
+          req=urllib.request.Request(
+              endpoint,
+              data=json.dumps(payload,separators=(',',':')).encode(),
+              method='POST',
+              headers={
+                  'Authorization':'Bearer '+os.environ['CGP_ACTION_OIDC_TOKEN'],
+                  'Content-Type':'application/json',
+                  'Accept':'application/json',
+                  'User-Agent':'m07-vindr-external/1.0',
+              },
+          )
+          try:
+              with urllib.request.urlopen(req,timeout=240) as resp:
+                  raw=resp.read().decode('utf-8','replace')
+                  result=json.loads(raw or '{}')
+          except urllib.error.HTTPError as exc:
+              raw=exc.read(10000).decode('utf-8','replace')
+              result={'ok':False,'http_status':exc.code,'error':raw}
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'m07-vindr-preflight-launch.json'
+          out.write_text(json.dumps(result,indent=2),encoding='utf-8')
+          print(json.dumps(result,sort_keys=True))
+          if not result.get('ok'):
+              raise SystemExit('VINDR_PREFLIGHT_SUBMISSION_REJECTED')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('M07_VINDR_KERNEL_REF='+kernel_ref+'\n')
+              h.write('M07_VINDR_LAUNCH_JSON='+str(out)+'\n')
+          '@
+          $runner | & $python -
+          if($LASTEXITCODE-ne0){throw 'VinDr-PCXR preflight launch failed'}
+
+      - name: Request trusted Kaggle read OIDC
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length-lt100){throw 'read OIDC unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Wait for preflight terminal and recover receipt
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $runner=@'
+          import json, os, pathlib, time, urllib.request, urllib.parse
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
+          token=os.environ['CGP_READ_OIDC_TOKEN']
+          owner,slug=os.environ['M07_VINDR_KERNEL_REF'].split('/',1)
+
+          def call(payload):
+              req=urllib.request.Request(
+                  endpoint,
+                  data=json.dumps(payload,separators=(',',':')).encode(),
+                  method='POST',
+                  headers={
+                      'Authorization':'Bearer '+token,
+                      'Content-Type':'application/json',
+                      'Accept':'application/json',
+                      'User-Agent':'m07-vindr-external/1.0',
+                  },
+              )
+              with urllib.request.urlopen(req,timeout=120) as resp:
+                  return json.loads(resp.read().decode('utf-8','replace') or '{}')
+
+          terminal=None
+          history=[]
+          for attempt in range(1,61):
+              r=call({
+                  'action':'kernel_status',
+                  'account_id':'kg-05',
+                  'kernel_ref':owner+'/'+slug,
+              })
+              history.append(r)
+              status=str((((r.get('result') or {}).get('status')) or ((r.get('result') or {}).get('result') or {}).get('status') or '')).upper()
+              print('VINDR_PREFLIGHT_STATUS',attempt,status,flush=True)
+              if status in {'COMPLETE','ERROR','CANCELLED'}:
+                  terminal=status
+                  break
+              time.sleep(20)
+          hist=pathlib.Path(os.environ['RUNNER_TEMP'])/'m07-vindr-preflight-status.json'
+          hist.write_text(json.dumps(history,indent=2),encoding='utf-8')
+          if terminal!='COMPLETE':
+              raise SystemExit('VINDR_PREFLIGHT_TERMINAL_'+str(terminal))
+
+          items=[]
+          for page in range(1,20):
+              r=call({
+                  'action':'raw_read',
+                  'account_id':'kg-05',
+                  'service':'kernels.KernelsApiService',
+                  'method':'ListKernelSessionOutput',
+                  'body':{'userName':owner,'kernelSlug':slug,'page':page,'pageSize':100},
+              })
+              result=r.get('result') or {}
+              fs=result.get('files') or []
+              items.extend(fs)
+              if len(fs)<100:
+                  break
+          target=None
+          for item in items:
+              name=str(item.get('fileName',''))
+              if name.endswith('M07_VINDR_PCXR_PREFLIGHT.json'):
+                  target=item
+                  break
+          if not target or not target.get('url'):
+              raise SystemExit('VINDR_PREFLIGHT_RECEIPT_NOT_FOUND')
+          url=str(target['url'])
+          parsed=urllib.parse.urlparse(url)
+          if parsed.scheme!='https' or parsed.hostname!='www.kaggleusercontent.com':
+              raise SystemExit('VINDR_PREFLIGHT_UNTRUSTED_OUTPUT_URL')
+          with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'m07-vindr-external/1.0'}),timeout=120) as resp:
+              data=resp.read()
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'M07_VINDR_PCXR_PREFLIGHT.json'
+          out.write_bytes(data)
+          receipt=json.loads(data.decode('utf-8'))
+          print('M07_VINDR_PREFLIGHT_RECEIPT',json.dumps(receipt,sort_keys=True),flush=True)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('M07_VINDR_PREFLIGHT_JSON='+str(out)+'\n')
+              h.write('M07_VINDR_STATUS_JSON='+str(hist)+'\n')
+          if receipt.get('status')!='PASS_DATASET_SCHEMA':
+              raise SystemExit('VINDR_PREFLIGHT_DATASET_SCHEMA_BLOCKED')
+          '@
+          $runner | & $python -
+          if($LASTEXITCODE-ne0){throw 'VinDr-PCXR preflight validation failed'}
+
+      - name: Preserve preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-vindr-pcxr-preflight-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/m07-vindr-preflight-launch.json
+            ${{ runner.temp }}/m07-vindr-preflight-status.json
+            ${{ runner.temp }}/M07_VINDR_PCXR_PREFLIGHT.json
+          if-no-files-found: warn
+          retention-days: 30
