@@ -25,7 +25,7 @@ jobs:
            startsWith(github.event.comment.body, 'CONTROL_PLANE_V3_QUERY ')) }}
     # Use the online, pre-provisioned self-hosted runner for read-only broker
     # queries when GitHub-hosted capacity is unavailable due account billing.
-    runs-on: [self-hosted, windows, x64, v622]
+    runs-on: ubuntu-latest
     environment: cloudflare-production
     timeout-minutes: 20
     concurrency:
