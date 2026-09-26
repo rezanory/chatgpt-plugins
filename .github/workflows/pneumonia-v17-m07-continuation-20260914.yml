@@ -2870,6 +2870,7 @@ jobs:
           token=os.environ['CGP_ACTION_OIDC_TOKEN']
           code=pathlib.Path('scripts/m07_vindr_pcxr_preflight.py').read_text(encoding='utf-8')
           accounts=[
+              ('master','azadka'),
               ('kg-03','rezanory'),
               ('kg-05','trickermark'),
               ('kg-04','reyhanehazad'),
