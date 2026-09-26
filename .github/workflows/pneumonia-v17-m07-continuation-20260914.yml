@@ -2827,3 +2827,274 @@ jobs:
           path: ${{ runner.temp }}/m07-vindr-submit-only-response.json
           if-no-files-found: error
           retention-days: 30
+
+
+  m07-vindr-pcxr-account-access-scan:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.recovery == 'M07_EXTERNAL_VINDR_ACCOUNT_ACCESS_SCAN_V1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Request trusted action OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          sep='&' if '?' in base else '?'
+          req=urllib.request.Request(
+              base+sep+'audience=cgp-control-plane-v3-action',
+              headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']},
+          )
+          with urllib.request.urlopen(req,timeout=30) as r:
+              token=json.load(r)['value']
+          if len(token)<100:
+              raise SystemExit('ACTION_OIDC_UNAVAILABLE')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('CGP_ACTION_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Find first Kaggle worker with VinDr-PCXR rules already accepted
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, pathlib, urllib.error, urllib.request
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+          token=os.environ['CGP_ACTION_OIDC_TOKEN']
+          code=pathlib.Path('scripts/m07_vindr_pcxr_preflight.py').read_text(encoding='utf-8')
+          accounts=[
+              ('kg-03','rezanory'),
+              ('kg-05','trickermark'),
+              ('kg-04','reyhanehazad'),
+              ('kg-02','radlinaradlina'),
+              ('kg-06','msdenis'),
+              ('kg-07','nisabulutmark'),
+              ('kg-08','azadkk'),
+              ('kg-09','mylovevpn1'),
+              ('kg-10','computstu1'),
+              ('kg-11','jobreza1'),
+          ]
+          results=[]
+          selected=None
+          def call(payload):
+              req=urllib.request.Request(
+                  endpoint,
+                  data=json.dumps(payload,separators=(',',':')).encode(),
+                  method='POST',
+                  headers={
+                      'Authorization':'Bearer '+token,
+                      'Content-Type':'application/json',
+                      'Accept':'application/json',
+                      'User-Agent':'m07-vindr-account-scan/1.0',
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(req,timeout=90) as r:
+                      raw=r.read().decode('utf-8','replace')
+                      return json.loads(raw or '{}')
+              except urllib.error.HTTPError as exc:
+                  return {
+                      'ok':False,
+                      'http_status':exc.code,
+                      'error':exc.read(12000).decode('utf-8','replace'),
+                  }
+              except Exception as exc:
+                  return {'ok':False,'error_type':type(exc).__name__,'error':str(exc)[:5000]}
+
+          for account_id,owner in accounts:
+              kernel_ref=f'{owner}/m07-vindr-pcxr-preflight-20260927'
+              payload={
+                  'request_id':f'm07-vindr-pcxr-access-{account_id}-20260927',
+                  'provider':'kaggle',
+                  'operation_class':'compute',
+                  'account_id':account_id,
+                  'purpose':'CPU-only VinDr-PCXR access/schema preflight for frozen M07. No GPU, training, inference, or threshold tuning.',
+                  'service':'kernels.KernelsApiService',
+                  'method':'SaveKernel',
+                  'body':{
+                      'slug':kernel_ref,
+                      'newTitle':f'M07 VinDr-PCXR External Preflight {account_id} 20260927',
+                      'text':code,
+                      'language':'python',
+                      'kernelType':'script',
+                      'kernelExecutionType':'SAVE_AND_RUN_ALL',
+                      'isPrivate':True,
+                      'enableGpu':False,
+                      'enableTpu':False,
+                      'enableInternet':True,
+                      'kernelDataSources':[],
+                      'datasetDataSources':[],
+                      'competitionDataSources':['pediatric-cxr-analysis-challenge'],
+                      'modelDataSources':[],
+                  },
+              }
+              response=call(payload)
+              provider_result=response.get('result') if isinstance(response.get('result'),dict) else {}
+              provider_error=str(provider_result.get('error') or response.get('error') or '')
+              accepted=bool(response.get('ok')) and not provider_error
+              row={
+                  'account_id':account_id,
+                  'owner':owner,
+                  'kernel_ref':kernel_ref,
+                  'accepted':accepted,
+                  'broker_ok':bool(response.get('ok')),
+                  'provider_error':provider_error[:2000],
+                  'provider_ref':response.get('provider_ref'),
+                  'result':provider_result,
+              }
+              results.append(row)
+              print('VINDR_ACCOUNT_ACCESS',json.dumps(row,sort_keys=True),flush=True)
+              if accepted:
+                  selected=row
+                  break
+
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          (root/'m07-vindr-account-access-scan.json').write_text(
+              json.dumps({'results':results,'selected':selected},indent=2),
+              encoding='utf-8',
+          )
+          if selected is None:
+              raise SystemExit('NO_WORKER_HAS_VINDR_RULES_ACCEPTED')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('M07_VINDR_ACCOUNT='+selected['account_id']+'\n')
+              h.write('M07_VINDR_OWNER='+selected['owner']+'\n')
+              h.write('M07_VINDR_KERNEL_REF='+selected['kernel_ref']+'\n')
+          PY
+
+      - name: Request trusted read OIDC identity
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          sep='&' if '?' in base else '?'
+          req=urllib.request.Request(
+              base+sep+'audience=cgp-control-plane-v3',
+              headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']},
+          )
+          with urllib.request.urlopen(req,timeout=30) as r:
+              token=json.load(r)['value']
+          if len(token)<100:
+              raise SystemExit('READ_OIDC_UNAVAILABLE')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('CGP_READ_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Verify selected VinDr-PCXR preflight terminal and receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, pathlib, time, urllib.error, urllib.parse, urllib.request
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
+          token=os.environ['CGP_READ_OIDC_TOKEN']
+          account=os.environ['M07_VINDR_ACCOUNT']
+          ref=os.environ['M07_VINDR_KERNEL_REF']
+          owner,slug=ref.split('/',1)
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+
+          def call(payload):
+              req=urllib.request.Request(
+                  endpoint,
+                  data=json.dumps(payload,separators=(',',':')).encode(),
+                  method='POST',
+                  headers={
+                      'Authorization':'Bearer '+token,
+                      'Content-Type':'application/json',
+                      'Accept':'application/json',
+                      'User-Agent':'m07-vindr-account-scan/1.0',
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(req,timeout=120) as r:
+                      return json.loads(r.read().decode('utf-8','replace') or '{}')
+              except urllib.error.HTTPError as exc:
+                  return {'ok':False,'http_status':exc.code,'error':exc.read(12000).decode('utf-8','replace')}
+
+          def status_of(value):
+              if isinstance(value,dict):
+                  for key in ('status','kernelStatus','state'):
+                      v=value.get(key)
+                      if isinstance(v,str) and v.upper() in {'RUNNING','QUEUED','COMPLETE','ERROR','CANCELLED'}:
+                          return v.upper()
+                  for v in value.values():
+                      s=status_of(v)
+                      if s:return s
+              if isinstance(value,list):
+                  for v in value:
+                      s=status_of(v)
+                      if s:return s
+              return ''
+
+          history=[]
+          terminal=''
+          for attempt in range(1,81):
+              row=call({'action':'kernel_status','account_id':account,'kernel_ref':ref})
+              history.append(row)
+              status=status_of(row)
+              print('VINDR_SELECTED_STATUS',attempt,status or 'UNKNOWN',flush=True)
+              if status in {'COMPLETE','ERROR','CANCELLED'}:
+                  terminal=status
+                  break
+              time.sleep(15)
+          (root/'m07-vindr-selected-status.json').write_text(json.dumps(history,indent=2),encoding='utf-8')
+          if terminal!='COMPLETE':
+              raise SystemExit('VINDR_SELECTED_TERMINAL_'+(terminal or 'TIMEOUT'))
+
+          items=[]
+          for page in range(1,21):
+              row=call({
+                  'action':'raw_read',
+                  'account_id':account,
+                  'service':'kernels.KernelsApiService',
+                  'method':'ListKernelSessionOutput',
+                  'body':{'userName':owner,'kernelSlug':slug,'page':page,'pageSize':100},
+              })
+              files=(row.get('result') or {}).get('files') or []
+              items.extend(files)
+              if len(files)<100:break
+
+          target=next(
+              (x for x in items if str(x.get('fileName','')).endswith('M07_VINDR_PCXR_PREFLIGHT.json')),
+              None,
+          )
+          if not target or not target.get('url'):
+              raise SystemExit('VINDR_SELECTED_RECEIPT_NOT_FOUND')
+          url=str(target['url'])
+          parsed=urllib.parse.urlparse(url)
+          if parsed.scheme!='https' or parsed.hostname!='www.kaggleusercontent.com':
+              raise SystemExit('VINDR_SELECTED_RECEIPT_URL_INVALID')
+          with urllib.request.urlopen(
+              urllib.request.Request(url,headers={'User-Agent':'m07-vindr-account-scan/1.0'}),
+              timeout=120,
+          ) as r:
+              data=r.read()
+          receipt=json.loads(data.decode('utf-8'))
+          (root/'M07_VINDR_PCXR_PREFLIGHT.json').write_bytes(data)
+          print('M07_VINDR_PREFLIGHT_RECEIPT',json.dumps(receipt,sort_keys=True),flush=True)
+          if receipt.get('status')!='PASS_DATASET_SCHEMA':
+              raise SystemExit('VINDR_PREFLIGHT_SCHEMA_BLOCKED')
+          PY
+
+      - name: Preserve VinDr account-access and preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-vindr-account-access-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/m07-vindr-account-access-scan.json
+            ${{ runner.temp }}/m07-vindr-selected-status.json
+            ${{ runner.temp }}/M07_VINDR_PCXR_PREFLIGHT.json
+          if-no-files-found: warn
+          retention-days: 30
