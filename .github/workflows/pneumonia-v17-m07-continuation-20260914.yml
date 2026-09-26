@@ -2648,3 +2648,74 @@ jobs:
           $providerRef=if($result.provider_ref){[string]$result.provider_ref}elseif($result.result.ref){[string]$result.result.ref}else{''}
           if(-not $providerRef){throw 'runtime predecessor mount probe provider ref missing'}
           Write-Host "M07_RUNTIME_PREDECESSOR_MOUNT_PROBE_SUBMITTED kernel=trickermark/m07-runtime-predecessor-mount-probe-$env:GITHUB_RUN_ID provider_ref=$providerRef gpu=false training=false locked_test=false"
+
+
+  m07-vindr-pcxr-external-preflight:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.recovery == 'M07_EXTERNAL_VINDR_PREFLIGHT_V1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Request trusted action OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          sep='&' if '?' in base else '?'
+          req=urllib.request.Request(
+              base+sep+'audience=cgp-control-plane-v3-action',
+              headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']},
+          )
+          with urllib.request.urlopen(req,timeout=30) as r:
+              token=json.load(r)['value']
+          if len(token)<100:
+              raise SystemExit('ACTION_OIDC_UNAVAILABLE')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('CGP_ACTION_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Request trusted read OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          sep='&' if '?' in base else '?'
+          req=urllib.request.Request(
+              base+sep+'audience=cgp-control-plane-v3',
+              headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']},
+          )
+          with urllib.request.urlopen(req,timeout=30) as r:
+              token=json.load(r)['value']
+          if len(token)<100:
+              raise SystemExit('READ_OIDC_UNAVAILABLE')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('CGP_READ_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Launch and verify CPU-only VinDr-PCXR preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/m07_vindr_pcxr_preflight_dispatch.py
+
+      - name: Preserve VinDr-PCXR preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-vindr-pcxr-preflight-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/m07-vindr-preflight-launch.json
+            ${{ runner.temp }}/m07-vindr-preflight-status.json
+            ${{ runner.temp }}/M07_VINDR_PCXR_PREFLIGHT.json
+          if-no-files-found: warn
+          retention-days: 30
