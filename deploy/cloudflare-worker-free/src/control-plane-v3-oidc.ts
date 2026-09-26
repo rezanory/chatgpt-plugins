@@ -197,7 +197,10 @@ async function verifyBrokerOidc(
   if (!allowedEvents || !allowedEvents.has(eventName) || ref !== TRUSTED_REF) {
     throw new Error("GitHub OIDC workflow/ref/event mismatch");
   }
-  if (claims.repository_visibility !== "private") throw new Error("GitHub OIDC repository visibility mismatch");
+  const repositoryVisibility = claimString(claims, "repository_visibility");
+  if (repositoryVisibility !== "private" && repositoryVisibility !== "public") {
+    throw new Error("GitHub OIDC repository visibility mismatch");
+  }
   if (!/^\d+$/.test(runId) || !/^[0-9a-f]{40}$/.test(sha)) {
     throw new Error("GitHub OIDC run/sha claim invalid");
   }
