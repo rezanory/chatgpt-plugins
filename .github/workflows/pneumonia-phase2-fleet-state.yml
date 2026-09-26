@@ -14,7 +14,7 @@ concurrency:
 jobs:
   inventory:
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 20
+    timeout-minutes: 12
     steps:
       - name: Request GitHub OIDC read identity
         shell: powershell
@@ -29,7 +29,7 @@ jobs:
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_OIDC_TOKEN=$token" + [Environment]::NewLine,[Text.UTF8Encoding]::new($false))
 
-      - name: Inventory all Phase-2 lanes from Kaggle
+      - name: Inventory current Phase-2 checkpoints from Kaggle
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -42,142 +42,109 @@ jobs:
           BASE='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
           TOKEN=os.environ['CGP_OIDC_TOKEN']
           ASSIGNMENTS={
-            'M01':('master','azadka'),
-            'M02':('kg-02','radlinaradlina'),
-            'M03':('kg-03','rezanory'),
-            'M04':('kg-04','reyhanehazad'),
-            'M05':('kg-05','trickermark'),
-            'M06':('kg-06','msdenis'),
-            'M08':('kg-07','nisabulutmark'),
-            'M09':('kg-08','azadkk'),
-            'M10':('kg-09','mylovevpn1'),
-            'M11':('kg-10','computstu1'),
-            'M12':('kg-11','jobreza1'),
+            'M01':('master','azadka',384),
+            'M02':('kg-02','radlinaradlina',384),
+            'M03':('kg-03','rezanory',384),
+            'M04':('kg-04','reyhanehazad',384),
+            'M05':('kg-05','trickermark',224),
+            'M06':('kg-06','msdenis',384),
+            'M08':('kg-07','nisabulutmark',384),
+            'M09':('kg-08','azadkk',320),
+            'M10':('kg-09','mylovevpn1',384),
+            'M11':('kg-10','computstu1',224),
+            'M12':('kg-11','jobreza1',320),
           }
-          RESOLUTIONS=(224,320,384)
 
-          def broker(payload, timeout=90):
+          def broker(payload, timeout=75):
             req=urllib.request.Request(
               BASE+'/control-plane/v3/read/kaggle',
               data=json.dumps(payload,separators=(',',':')).encode(),
               method='POST',
-              headers={
-                'Authorization':'Bearer '+TOKEN,
-                'Content-Type':'application/json',
-                'Accept':'application/json',
-                'User-Agent':'phase2-fleet-state/1.0',
-              })
-            with urllib.request.urlopen(req,timeout=timeout) as r:
-              out=json.load(r)
+              headers={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json',
+                       'Accept':'application/json','User-Agent':'phase2-fleet-state/1.1'})
+            try:
+              with urllib.request.urlopen(req,timeout=timeout) as r:
+                out=json.load(r)
+            except urllib.error.HTTPError as exc:
+              body=exc.read(2000).decode('utf-8','replace')
+              raise RuntimeError(f'HTTP {exc.code}: {body}') from exc
             if not out.get('ok'):
               raise RuntimeError(str(out.get('error') or 'broker not ok'))
             return out.get('result') or {}
 
-          def state_for(model, account, owner, resolution):
+          def inspect(model):
+            account,owner,resolution=ASSIGNMENTS[model]
             slug=f'pneumonia-{model.lower()}-r{resolution}-state-v1-7'
             handle=f'{owner}/{slug}'
-            listed=broker({
-              'action':'raw_read','account_id':account,
+            listed=broker({'action':'raw_read','account_id':account,
               'service':'datasets.DatasetApiService','method':'ListDatasets',
-              'body':{'group':'MY','search':slug,'page':1,'pageSize':100},
-            },60)
+              'body':{'group':'MY','search':slug,'page':1,'pageSize':100}},45)
             datasets=[x for x in (listed.get('datasets') or []) if isinstance(x,dict)]
             exact=[x for x in datasets if str(x.get('ref') or '').lower()==handle.lower()]
-            row={'resolution':resolution,'dataset_ref':handle,'exists':False,'latest_attempt':0}
+            row={'model_id':model,'account_id':account,'owner':owner,'resolution':resolution,
+                 'dataset_ref':handle,'exists':False}
             if exact:
-              if len(exact)!=1:
-                raise RuntimeError(f'{model} R{resolution}: exact dataset count={len(exact)}')
+              if len(exact)!=1: raise RuntimeError(f'exact dataset count={len(exact)}')
               version=exact[0].get('currentVersionNumber',exact[0].get('current_version_number'))
-              if not isinstance(version,int) or version<1:
-                raise RuntimeError(f'{model} R{resolution}: invalid current version')
+              if not isinstance(version,int) or version<1: raise RuntimeError('invalid current version')
               row.update(exists=True,dataset_version_number=version)
-              marker=broker({
-                'action':'dataset_json_files','account_id':account,
-                'dataset_ref':handle,'dataset_version_number':version,
-                'file_names':['CAMPAIGN_STATE.json'],'max_bytes_per_file':262144,
-              },120)
+              marker=broker({'action':'dataset_json_files','account_id':account,'dataset_ref':handle,
+                'dataset_version_number':version,'file_names':['CAMPAIGN_STATE.json'],
+                'max_bytes_per_file':262144},90)
               files=marker.get('files') or []
               if len(files)!=1 or not isinstance(files[0],dict) or not isinstance(files[0].get('json'),dict):
-                raise RuntimeError(f'{model} R{resolution}: marker missing')
-              payload=files[0]['json']
-              artifacts=payload.get('artifact_sha256') or {}
-              fold_ids=[]
+                raise RuntimeError('marker missing')
+              payload=files[0]['json']; artifacts=payload.get('artifact_sha256') or {}
+              folds=[]
               for name in artifacts:
                 m=re.fullmatch(r'FOLD_([1-5])_RECOVERY\.(?:zip|cgpzip)',str(name))
-                if m: fold_ids.append(int(m.group(1)))
-              row.update(
-                marker_status=payload.get('status'),
-                completed_folds=sorted(set(fold_ids)),
-                has_final_evidence=('FINAL_EVIDENCE.cgpzip' in artifacts or 'FINAL_EVIDENCE.zip' in artifacts),
-                marker_updated_utc=payload.get('updated_utc'),
-                marker_sha256=files[0].get('sha256'),
-              )
+                if m: folds.append(int(m.group(1)))
+              row.update(marker_status=payload.get('status'),completed_folds=sorted(set(folds)),
+                         has_final_evidence=('FINAL_EVIDENCE.cgpzip' in artifacts or 'FINAL_EVIDENCE.zip' in artifacts),
+                         marker_updated_utc=payload.get('updated_utc'),marker_sha256=files[0].get('sha256'))
 
-            kernels=broker({
-              'action':'raw_read','account_id':account,
+            kernels=broker({'action':'raw_read','account_id':account,
               'service':'kernels.KernelsApiService','method':'ListKernels',
-              'body':{'group':'PROFILE','user':owner,'search':f'pneumonia-v1-7-phase2-{model.lower()}-r{resolution}','sortBy':'DATE_RUN','page':1,'pageSize':100},
-            },60)
-            items=kernels.get('kernels') or []
-            latest=0
-            refs=[]
-            rx=re.compile(rf'^(?:{re.escape(owner)}/)?pneumonia-v1-7-phase2-{model.lower()}-r{resolution}-a(\d{{2}})-\d+$',re.I)
-            for item in items:
-              if not isinstance(item,dict):
-                continue
-              for candidate in (item.get('ref'),item.get('slug'),item.get('kernelSlug')):
-                value=str(candidate or '').strip()
-                if not value:
-                  continue
-                m=rx.fullmatch(value)
-                if m:
-                  latest=max(latest,int(m.group(1)))
-                  refs.append(value)
-                  break
+              'body':{'group':'PROFILE','user':owner,
+                      'search':f'pneumonia-v1-7-phase2-{model.lower()}-r{resolution}',
+                      'sortBy':'DATE_RUN','page':1,'pageSize':100}},45)
+            rx=re.compile(rf'pneumonia-v1-7-phase2-{model.lower()}-r{resolution}-a(\d{{2}})-\d+',re.I)
+            attempts=[]
+            for item in (kernels.get('kernels') or []):
+              if isinstance(item,dict):
+                attempts.extend(int(m.group(1)) for m in rx.finditer(json.dumps(item,sort_keys=True)))
+            latest=max(attempts,default=0)
             row['latest_attempt']=latest
-            row['kernel_matches']=len(set(refs))
+            folds=row.get('completed_folds') or []
+            unit_complete=(row.get('exists') is True and folds==[1,2,3,4,5] and row.get('has_final_evidence') is True)
+            row['current_resolution_complete']=unit_complete
+            if unit_complete:
+              if resolution==384:
+                row.update(complete=True,next_token=None)
+              else:
+                row.update(complete=False,next_token=f'PHASE2_UNIT_{model}_R{resolution+96 if resolution==224 else 384}_A01')
+            else:
+              attempt=latest+1
+              if attempt>99: raise RuntimeError('attempt space exhausted')
+              row.update(complete=False,next_token=f'PHASE2_UNIT_{model}_R{resolution}_A{attempt:02d}')
             return row
 
-          def one_model(model):
-            account,owner=ASSIGNMENTS[model]
-            states=[state_for(model,account,owner,r) for r in RESOLUTIONS]
-            next_token=None
-            incomplete=None
-            for row in states:
-              folds=row.get('completed_folds') or []
-              complete=(row.get('exists') is True and folds==[1,2,3,4,5] and row.get('has_final_evidence') is True)
-              row['unit_complete']=complete
-              if incomplete is None and not complete:
-                incomplete=row
-            if incomplete is not None:
-              attempt=int(incomplete.get('latest_attempt') or 0)+1
-              if attempt>99:
-                raise RuntimeError(f'{model} R{incomplete["resolution"]}: attempt space exhausted')
-              next_token=f'PHASE2_UNIT_{model}_R{incomplete["resolution"]}_A{attempt:02d}'
-            return {
-              'model_id':model,'account_id':account,'owner':owner,
-              'resolutions':states,'complete':incomplete is None,'next_token':next_token,
-            }
-
-          results=[]
-          with ThreadPoolExecutor(max_workers=6) as ex:
-            futures={ex.submit(one_model,m):m for m in ASSIGNMENTS}
+          rows=[]
+          with ThreadPoolExecutor(max_workers=8) as ex:
+            futures={ex.submit(inspect,m):m for m in ASSIGNMENTS}
             for future in as_completed(futures):
               model=futures[future]
               try:
-                results.append(future.result())
+                rows.append(future.result())
               except Exception as exc:
-                account,owner=ASSIGNMENTS[model]
-                results.append({'model_id':model,'account_id':account,'owner':owner,
-                                'complete':False,'next_token':None,
-                                'error':type(exc).__name__+': '+str(exc)})
-          results.sort(key=lambda x:x['model_id'])
-          payload={'schema':'pneumonia.phase2.fleet.state.v1','models':results,
-                   'complete_count':sum(1 for x in results if x.get('complete') is True),
-                   'total_models':len(results)}
-          print('PHASE2_FLEET_STATE='+json.dumps(payload,sort_keys=True,separators=(',',':')))
-          if any(x.get('error') for x in results):
-            raise SystemExit('fleet state contains query errors')
+                account,owner,resolution=ASSIGNMENTS[model]
+                rows.append({'model_id':model,'account_id':account,'owner':owner,'resolution':resolution,
+                             'complete':False,'next_token':None,'error':type(exc).__name__+': '+str(exc)})
+          rows.sort(key=lambda x:x['model_id'])
+          result={'schema':'pneumonia.phase2.fleet.current.v1','models':rows,
+                  'complete_count':sum(1 for x in rows if x.get('complete') is True),'total_models':len(rows)}
+          print('PHASE2_FLEET_STATE='+json.dumps(result,sort_keys=True,separators=(',',':')))
+          if any(x.get('error') for x in rows): raise SystemExit('fleet state contains query errors')
           '@
           $script | & $python -
           if($LASTEXITCODE-ne 0){throw 'Phase-2 fleet state inventory failed'}
