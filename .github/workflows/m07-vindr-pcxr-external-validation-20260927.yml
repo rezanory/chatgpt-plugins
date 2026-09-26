@@ -23,7 +23,7 @@ concurrency:
 jobs:
   vindr-preflight:
     if: ${{ github.event.inputs.stage == 'preflight' }}
-    runs-on: [self-hosted, windows, x64, v622]
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
       - name: Checkout exact workflow revision
@@ -32,7 +32,7 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Build fail-closed VinDr-PCXR preflight
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $script=@'
@@ -167,7 +167,7 @@ jobs:
           "CGP_PREFLIGHT_SCRIPT=$path" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Request trusted Kaggle action OIDC
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
@@ -179,7 +179,7 @@ jobs:
 
       - name: Launch CPU-only VinDr-PCXR preflight
         id: launch
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
@@ -245,7 +245,7 @@ jobs:
           if($LASTEXITCODE-ne0){throw 'VinDr-PCXR preflight launch failed'}
 
       - name: Request trusted Kaggle read OIDC
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
@@ -256,7 +256,7 @@ jobs:
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
 
       - name: Wait for preflight terminal and recover receipt
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
