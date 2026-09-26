@@ -2719,3 +2719,111 @@ jobs:
             ${{ runner.temp }}/M07_VINDR_PCXR_PREFLIGHT.json
           if-no-files-found: warn
           retention-days: 30
+
+
+  m07-vindr-pcxr-submit-only:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.recovery == 'M07_EXTERNAL_VINDR_SUBMIT_ONLY_V1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Request trusted action OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          sep='&' if '?' in base else '?'
+          req=urllib.request.Request(
+              base+sep+'audience=cgp-control-plane-v3-action',
+              headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']},
+          )
+          with urllib.request.urlopen(req,timeout=30) as r:
+              token=json.load(r)['value']
+          if len(token)<100:
+              raise SystemExit('ACTION_OIDC_UNAVAILABLE')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('CGP_ACTION_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Submit CPU-only VinDr-PCXR kernel and record raw response
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, pathlib, urllib.error, urllib.request
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+          code=pathlib.Path('scripts/m07_vindr_pcxr_preflight.py').read_text(encoding='utf-8')
+          kernel_ref='trickermark/m07-vindr-pcxr-submit-probe-20260927'
+          payload={
+              'request_id':'m07-vindr-pcxr-submit-only-kg05-20260927',
+              'provider':'kaggle',
+              'operation_class':'compute',
+              'account_id':'kg-05',
+              'purpose':'CPU-only VinDr-PCXR access/schema probe for frozen M07 external validation. No GPU, training, inference, or threshold tuning.',
+              'service':'kernels.KernelsApiService',
+              'method':'SaveKernel',
+              'body':{
+                  'slug':kernel_ref,
+                  'newTitle':'M07 VinDr-PCXR Submit Probe 20260927',
+                  'text':code,
+                  'language':'python',
+                  'kernelType':'script',
+                  'kernelExecutionType':'SAVE_AND_RUN_ALL',
+                  'isPrivate':True,
+                  'enableGpu':False,
+                  'enableTpu':False,
+                  'enableInternet':True,
+                  'kernelDataSources':[],
+                  'datasetDataSources':[],
+                  'competitionDataSources':['pediatric-cxr-analysis-challenge'],
+                  'modelDataSources':[],
+              },
+          }
+          req=urllib.request.Request(
+              endpoint,
+              data=json.dumps(payload,separators=(',',':')).encode(),
+              method='POST',
+              headers={
+                  'Authorization':'Bearer '+os.environ['CGP_ACTION_OIDC_TOKEN'],
+                  'Content-Type':'application/json',
+                  'Accept':'application/json',
+                  'User-Agent':'m07-vindr-submit-only/1.0',
+              },
+          )
+          result={}
+          try:
+              with urllib.request.urlopen(req,timeout=90) as r:
+                  raw=r.read().decode('utf-8','replace')
+                  result=json.loads(raw or '{}')
+          except urllib.error.HTTPError as exc:
+              result={
+                  'ok':False,
+                  'http_status':exc.code,
+                  'error':exc.read(20000).decode('utf-8','replace'),
+              }
+          except Exception as exc:
+              result={'ok':False,'error_type':type(exc).__name__,'error':str(exc)[:10000]}
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'m07-vindr-submit-only-response.json'
+          out.write_text(json.dumps(result,indent=2),encoding='utf-8')
+          print('M07_VINDR_SUBMIT_RESPONSE_BEGIN')
+          print(json.dumps(result,sort_keys=True))
+          print('M07_VINDR_SUBMIT_RESPONSE_END')
+          if not result.get('ok'):
+              raise SystemExit('VINDR_SUBMIT_REJECTED')
+          PY
+
+      - name: Preserve raw submit response
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m07-vindr-submit-only-${{ github.run_id }}
+          path: ${{ runner.temp }}/m07-vindr-submit-only-response.json
+          if-no-files-found: error
+          retention-days: 30
