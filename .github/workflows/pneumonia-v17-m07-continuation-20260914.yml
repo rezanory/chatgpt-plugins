@@ -3102,7 +3102,7 @@ jobs:
 
   m11-historical-failed-kernel-cleanup:
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.recovery == 'M11_CLEANUP_FAILED_A18_A19_V1' }}
-    runs-on: [self-hosted, windows, x64, v622]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Request trusted read OIDC identity
