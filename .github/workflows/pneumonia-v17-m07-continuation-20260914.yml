@@ -3106,7 +3106,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Request trusted read OIDC identity
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
@@ -3118,7 +3118,7 @@ jobs:
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token" + [Environment]::NewLine,[Text.UTF8Encoding]::new($false))
 
       - name: Fail-closed M11 cleanup preflight
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
@@ -3227,7 +3227,7 @@ jobs:
           if($LASTEXITCODE-ne 0){throw 'M11 cleanup preflight failed'}
 
       - name: Request trusted destructive action OIDC identity
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
@@ -3239,7 +3239,7 @@ jobs:
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token" + [Environment]::NewLine,[Text.UTF8Encoding]::new($false))
 
       - name: Delete exact failed M11 A18 and A19 kernels only
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
@@ -3280,7 +3280,7 @@ jobs:
           if($LASTEXITCODE-ne 0){throw 'M11 exact failed-kernel deletion failed'}
 
       - name: Refresh trusted read OIDC identity
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
@@ -3292,7 +3292,7 @@ jobs:
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token" + [Environment]::NewLine,[Text.UTF8Encoding]::new($false))
 
       - name: Verify deletion and sealed M11 state unchanged
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
