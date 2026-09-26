@@ -9,7 +9,7 @@ permissions:
 
 concurrency:
   group: pneumonia-phase2-fleet-state
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   inventory:
