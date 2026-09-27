@@ -7,13 +7,13 @@ import pandas as pd
 
 WORK = Path("/kaggle/working")
 INPUT = Path("/kaggle/input")
-OUT = WORK / f"M07_VINDR_PCXR_EXTERNAL_R{IMAGE_SIZE}_V2"
-OUT.mkdir(parents=True, exist_ok=True)
 
 SEED = 42
 IMAGE_SIZE = int(os.environ.get("M07_EXTERNAL_RESOLUTION", "224"))
 if IMAGE_SIZE not in {224, 320, 384}:
     raise RuntimeError(f"M07_EXTERNAL_RESOLUTION_INVALID={IMAGE_SIZE}")
+OUT = WORK / f"M07_VINDR_PCXR_EXTERNAL_R{IMAGE_SIZE}_V2"
+OUT.mkdir(parents=True, exist_ok=True)
 BOOTSTRAPS = 2000
 BOOTSTRAP_SEED = 260927
 STATE_HANDLES = {
