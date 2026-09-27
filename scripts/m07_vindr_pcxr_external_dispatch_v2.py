@@ -16,7 +16,13 @@ READ_ENDPOINT = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers
 COMPETITION = "pediatric-cxr-analysis-challenge"
 EXPECTED_SPLIT = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
 EXPECTED_RECIPE = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
-EXPECTED_COUNTS = {"primary_n": 1077, "normal": 907, "pneumonia_family": 170}
+EXPECTED_COUNTS = {
+    "primary_n": 996,
+    "no_finding": 907,
+    "pneumonia": 89,
+    "sensitivity_family_n": 1077,
+    "pneumonia_family": 170,
+}
 
 CONTRACTS = {
     "M07_EXTERNAL_VINDR_R224_V2": {
@@ -103,11 +109,13 @@ def safe_download(url: str, target: pathlib.Path):
 def verify_receipt(receipt: dict, contract: dict):
     resolution = int(contract["resolution"])
     expected = {
-        "schema": "m07.external.vindr_pcxr.terminal.v2",
+        "schema": "m07.external.vindr_pcxr.terminal.v3",
         "status": "SCIENTIFIC_RECEIPT_PASS",
         "resolution": resolution,
         "primary_n": EXPECTED_COUNTS["primary_n"],
-        "normal": EXPECTED_COUNTS["normal"],
+        "no_finding": EXPECTED_COUNTS["no_finding"],
+        "pneumonia": EXPECTED_COUNTS["pneumonia"],
+        "sensitivity_family_n": EXPECTED_COUNTS["sensitivity_family_n"],
         "pneumonia_family": EXPECTED_COUNTS["pneumonia_family"],
         "training_performed": False,
         "hpo_performed": False,
@@ -307,7 +315,7 @@ def main():
 
     zip_sha = hashlib.sha256(zip_path.read_bytes()).hexdigest()
     summary = {
-        "schema": "m07.external.vindr_pcxr.github_handoff.v2",
+        "schema": "m07.external.vindr_pcxr.github_handoff.v3",
         "status": "SCIENTIFIC_RECEIPT_PASS",
         "resolution": resolution,
         "account_id": account_id,
@@ -317,6 +325,10 @@ def main():
         "terminal_receipt_sha256": receipt["receipt_sha256"],
         "complete_zip_sha256": zip_sha,
         "primary_n": receipt["primary_n"],
+        "no_finding": receipt["no_finding"],
+        "pneumonia": receipt["pneumonia"],
+        "sensitivity_family_n": receipt["sensitivity_family_n"],
+        "pneumonia_family": receipt["pneumonia_family"],
         "training_performed": False,
         "hpo_performed": False,
         "external_threshold_tuning": False,
