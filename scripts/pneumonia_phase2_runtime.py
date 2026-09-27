@@ -562,15 +562,20 @@ def admission_preflight(token: str, run_id: str) -> dict[str, Any]:
             f"{contract['model_id'].lower()}-r{contract['resolution']}-"
         ).lower(),
     )
-    related = sorted(
-        {
-            str(item.get("ref") or "")
-            for item in kernels
-            if str(item.get("ref") or "").lower().startswith(prefixes)
-        }
-    )
+    related_by_ref = {
+        str(item.get("ref") or ""): item
+        for item in kernels
+        if str(item.get("ref") or "").lower().startswith(prefixes)
+    }
+    related = sorted(related_by_ref)
     active: list[dict[str, Any]] = []
     for kernel_ref in related:
+        listed_state = _listed_kernel_state(related_by_ref[kernel_ref])
+        if listed_state in ACTIVE_STATES:
+            active.append({"kernel_ref": kernel_ref, "state": listed_state})
+            continue
+        if listed_state in TERMINAL_STATES:
+            continue
         payload = _status(broker, contract, kernel_ref)
         state = session_state(payload)
         if state in ACTIVE_STATES:
