@@ -389,7 +389,7 @@ def preprocess_manifest(manifest):
         "policy": (
             "DICOM pixel_array -> modality LUT -> VOI LUT when available -> "
             "MONOCHROME1 inversion -> per-image finite min/max uint8 PNG -> "
-            "canonical M07 resize_with_pad 224 bilinear antialias"
+            f"canonical M07 resize_with_pad {IMAGE_SIZE} bilinear antialias"
         ),
         "modes": modes,
         "identity_evidence": {
