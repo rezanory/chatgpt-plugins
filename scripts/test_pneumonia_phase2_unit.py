@@ -653,6 +653,12 @@ class Phase2UnitTests(unittest.TestCase):
                 self.assertIn("FINAL_REPORT.json", archive.namelist())
                 self.assertFalse(any(name.startswith("FOLDS/") for name in archive.namelist()))
 
+            # Exercise the low-space preflight on a fresh finalization attempt.
+            # A valid existing FINAL_EVIDENCE is intentionally idempotent and returns
+            # before rebuilding, so remove only this synthetic test artifact first.
+            (state / "FINAL_EVIDENCE.cgpzip").unlink()
+            namespace["PHASE2_REMOTE_FINAL_RECEIPTS"].clear()
+
             with (
                 mock.patch.object(
                     shutil, "disk_usage", return_value=types.SimpleNamespace(free=0)
