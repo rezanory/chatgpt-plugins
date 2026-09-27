@@ -77,10 +77,8 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
-          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
-          $token=[string]$oidc.value
+          . "$env:GITHUB_WORKSPACE\scripts\github_oidc_retry.ps1"
+          $token=Get-GitHubOidcToken -Audience 'cgp-control-plane-v3'
           if($token.Length-lt100){throw 'GitHub pre-build read OIDC token unavailable'}
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
@@ -1088,10 +1086,8 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
-          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
-          $token=[string]$oidc.value
+          . "$env:GITHUB_WORKSPACE\scripts\github_oidc_retry.ps1"
+          $token=Get-GitHubOidcToken -Audience 'cgp-control-plane-v3-action'
           if($token.Length-lt100){throw 'GitHub OIDC token unavailable'}
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
@@ -1101,10 +1097,8 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
-          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
-          $token=[string]$oidc.value
+          . "$env:GITHUB_WORKSPACE\scripts\github_oidc_retry.ps1"
+          $token=Get-GitHubOidcToken -Audience 'cgp-control-plane-v3'
           if($token.Length-lt100){throw 'GitHub read OIDC token unavailable'}
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
@@ -1287,10 +1281,8 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
-          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
-          $token=[string]$oidc.value
+          . "$env:GITHUB_WORKSPACE\scripts\github_oidc_retry.ps1"
+          $token=Get-GitHubOidcToken -Audience 'cgp-control-plane-v3-action'
           if($token.Length-lt100){throw 'GitHub action OIDC refresh unavailable'}
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
@@ -1549,10 +1541,8 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL-or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
-          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
-          $token=[string]$oidc.value
+          . "$env:GITHUB_WORKSPACE\scripts\github_oidc_retry.ps1"
+          $token=Get-GitHubOidcToken -Audience 'cgp-control-plane-v3'
           if($token.Length-lt100){throw 'GitHub read OIDC token unavailable'}
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
@@ -1648,10 +1638,8 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
-          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
-          $token=[string]$oidc.value
+          . "$env:GITHUB_WORKSPACE\scripts\github_oidc_retry.ps1"
+          $token=Get-GitHubOidcToken -Audience 'cgp-control-plane-v3'
           if($token.Length-lt100){throw 'GitHub read OIDC token unavailable'}
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
@@ -1729,10 +1717,8 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC request context unavailable'}
-          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
-          $oidc=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
-          $token=[string]$oidc.value
+          . "$env:GITHUB_WORKSPACE\scripts\github_oidc_retry.ps1"
+          $token=Get-GitHubOidcToken -Audience 'cgp-control-plane-v3'
           if($token.Length-lt100){throw 'GitHub read OIDC token unavailable'}
           Write-Host "::add-mask::$token"
           [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_READ_OIDC_TOKEN=$token`n",[Text.UTF8Encoding]::new($false))
