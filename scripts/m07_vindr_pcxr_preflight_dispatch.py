@@ -60,7 +60,11 @@ payload = {
 launch = post(ACTION_ENDPOINT, action_token, payload)
 (ROOT / "m07-vindr-preflight-launch.json").write_text(json.dumps(launch, indent=2), encoding="utf-8")
 print("VINDR_PREFLIGHT_LAUNCH", json.dumps(launch, sort_keys=True), flush=True)
-if not launch.get("ok"):
+provider_result = launch.get("result") if isinstance(launch.get("result"), dict) else {}
+provider_error = str(provider_result.get("error") or launch.get("error") or "")
+if not launch.get("ok") or provider_error:
+    if "accept this competition's rules" in provider_error.lower():
+        raise SystemExit("VINDR_PREFLIGHT_COMPETITION_RULES_NOT_ACCEPTED")
     raise SystemExit("VINDR_PREFLIGHT_SUBMISSION_REJECTED")
 
 def extract_status(value):
