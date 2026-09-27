@@ -91,6 +91,62 @@ class Phase2UnitTests(unittest.TestCase):
                 b"sealed-archive",
             )
 
+    def test_http_restore_retries_transient_503_artifact_download(self):
+        namespace = _phase2_restore_helper_namespace()
+        artifact_name = "FOLD_1_RECOVERY.cgpzip"
+
+        class Transient503(RuntimeError):
+            def __init__(self):
+                self.response = types.SimpleNamespace(status_code=503)
+
+        class Resolver:
+            def __init__(self):
+                self.paths = []
+                self.artifact_attempts = 0
+
+            def __call__(self, handle, path, *, output_dir, force_download):
+                self.paths.append(path)
+                target = pathlib.Path(output_dir) / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if path == "CAMPAIGN_STATE.json":
+                    target.write_text(
+                        json.dumps({"artifact_sha256": {artifact_name: "a" * 64}}),
+                        encoding="utf-8",
+                    )
+                    return str(target), 7
+                self.artifact_attempts += 1
+                if self.artifact_attempts == 1:
+                    raise Transient503()
+                target.write_bytes(b"sealed-archive")
+                return str(target), 7
+
+        resolver = Resolver()
+        dataset_api = types.SimpleNamespace(
+            list_dataset_files=lambda request: types.SimpleNamespace(
+                dataset_files=[types.SimpleNamespace(name=artifact_name)],
+                next_page_token="",
+            )
+        )
+        client = types.SimpleNamespace(
+            datasets=types.SimpleNamespace(dataset_api_client=dataset_api)
+        )
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            mock.patch("kagglehub.http_resolver.DatasetHttpResolver", return_value=resolver),
+            mock.patch("kagglehub.clients.build_kaggle_client", return_value=client),
+            mock.patch("time.sleep") as sleep,
+        ):
+            result = namespace["_phase2_http_dataset_download"](
+                "azadka/pneumonia-m01-r224-state-v1-7", temp
+            )
+
+        self.assertEqual(pathlib.Path(result), pathlib.Path(temp).resolve())
+        self.assertEqual(
+            resolver.paths,
+            ["CAMPAIGN_STATE.json", artifact_name, artifact_name],
+        )
+        sleep.assert_called_once_with(1)
+
     def test_http_restore_recovers_legacy_kaggle_expanded_zip_topology(self):
         namespace = _phase2_restore_helper_namespace()
         legacy_name = "FOLD_1_RECOVERY.zip"
@@ -210,6 +266,7 @@ class Phase2UnitTests(unittest.TestCase):
             self.assertRaises(Forbidden),
         ):
             namespace["_phase2_http_dataset_download"](handle, temp)
+        self.assertEqual(resolver.call_count, 1)
 
     def test_http_403_rejects_positive_owner_identity_drift(self):
         namespace = _phase2_restore_helper_namespace()

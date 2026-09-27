@@ -392,6 +392,55 @@ class _Phase2ConfirmedRemoteAbsence(RuntimeError):
     status_code = 404
 
 
+_PHASE2_TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+
+def _phase2_exception_http_status(exc):
+    current = exc
+    seen = set()
+    for _ in range(8):
+        if current is None or id(current) in seen:
+            break
+        seen.add(id(current))
+        response = getattr(current, "response", None)
+        raw_status = getattr(
+            response,
+            "status_code",
+            getattr(current, "status_code", None),
+        )
+        if raw_status is not None:
+            try:
+                return int(raw_status)
+            except (TypeError, ValueError):
+                pass
+        current = getattr(current, "__cause__", None) or getattr(
+            current, "__context__", None
+        )
+    return None
+
+
+def _phase2_retry_read(call, *, label, attempts=6):
+    import time
+
+    if type(attempts) is not int or attempts < 1:
+        raise RuntimeError("PHASE2_TRANSIENT_RETRY_ATTEMPTS_INVALID")
+    for attempt in range(1, attempts + 1):
+        try:
+            return call()
+        except Exception as exc:
+            status = _phase2_exception_http_status(exc)
+            if status not in _PHASE2_TRANSIENT_HTTP_STATUSES or attempt >= attempts:
+                raise
+            delay = min(2 ** (attempt - 1), 30)
+            print(
+                "PHASE2_TRANSIENT_READ_RETRY "
+                f"label={label} status={status} attempt={attempt}/{attempts} "
+                f"sleep_seconds={delay}"
+            )
+            time.sleep(delay)
+    raise RuntimeError("PHASE2_TRANSIENT_RETRY_UNREACHABLE")
+
+
 def _phase2_owner_inventory_contains(handle):
     from kagglehub.clients import build_kaggle_client
     from kagglesdk.datasets.types.dataset_api_service import ApiListDatasetsRequest
@@ -414,7 +463,10 @@ def _phase2_owner_inventory_contains(handle):
     request.page_size = 100
     page_tokens = set()
     for _ in range(10):
-        response = client.datasets.dataset_api_client.list_datasets(request)
+        response = _phase2_retry_read(
+            lambda: client.datasets.dataset_api_client.list_datasets(request),
+            label="owner_inventory",
+        )
         refs = {
             str(getattr(item, "ref", "") or "").strip().lower()
             for item in (getattr(response, "datasets", None) or [])
@@ -445,7 +497,10 @@ def _phase2_dataset_file_names(handle, version):
     names = []
     page_tokens = set()
     for _ in range(50):
-        response = client.datasets.dataset_api_client.list_dataset_files(request)
+        response = _phase2_retry_read(
+            lambda: client.datasets.dataset_api_client.list_dataset_files(request),
+            label="dataset_file_inventory",
+        )
         for item in (getattr(response, "dataset_files", None) or []):
             name = str(getattr(item, "name", "") or getattr(item, "ref", "") or "").strip()
             if name:
@@ -474,11 +529,14 @@ def _phase2_http_dataset_download(handle, output_dir):
     parsed = parse_dataset_handle(handle)
     resolver = DatasetHttpResolver()
     try:
-        marker_path, version = resolver(
-            parsed,
-            path="CAMPAIGN_STATE.json",
-            output_dir=str(output_dir),
-            force_download=True,
+        marker_path, version = _phase2_retry_read(
+            lambda: resolver(
+                parsed,
+                path="CAMPAIGN_STATE.json",
+                output_dir=str(output_dir),
+                force_download=True,
+            ),
+            label="campaign_state",
         )
     except Exception as exc:
         response = getattr(exc, "response", None)
@@ -539,11 +597,14 @@ def _phase2_http_dataset_download(handle, output_dir):
         raise RuntimeError("PHASE2_HTTP_RESTORE_ARTIFACT_INVENTORY_EMPTY")
     for artifact_name in selected_names:
         safe_name = _phase2_safe_dataset_path(artifact_name)
-        artifact_path, artifact_version = resolver(
-            versioned,
-            path=str(safe_name),
-            output_dir=str(output_dir),
-            force_download=True,
+        artifact_path, artifact_version = _phase2_retry_read(
+            lambda: resolver(
+                versioned,
+                path=str(safe_name),
+                output_dir=str(output_dir),
+                force_download=True,
+            ),
+            label=f"artifact:{safe_name}",
         )
         expected_path = Path(output_dir).joinpath(*safe_name.parts)
         if (
