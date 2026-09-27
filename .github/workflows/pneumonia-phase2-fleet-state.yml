@@ -281,3 +281,112 @@ jobs:
           $script | & $python -
           if($LASTEXITCODE-ne 0){throw 'M11 cleanup audit failed'}
 
+  m11_dependency_audit:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Request GitHub OIDC read identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $uri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3"
+          $r=Invoke-RestMethod -Uri $uri -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'GitHub OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_OIDC_TOKEN=$token" + [Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+
+      - name: Prove M11 canonical-state dependencies
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, urllib.request, urllib.error
+
+          BASE='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          TOKEN=os.environ['CGP_OIDC_TOKEN']
+          ACCOUNT='kg-10'; OWNER='computstu1'
+          DATASET='computstu1/pneumonia-m11-r224-state-v1-7'; VERSION=6
+
+          def broker(payload, timeout=90):
+              req=urllib.request.Request(
+                  BASE+'/control-plane/v3/read/kaggle',
+                  data=json.dumps(payload,separators=(',',':')).encode(),
+                  method='POST',
+                  headers={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json',
+                           'Accept':'application/json','User-Agent':'m11-dependency-audit/1.0'})
+              try:
+                  with urllib.request.urlopen(req,timeout=timeout) as r:
+                      out=json.load(r)
+              except urllib.error.HTTPError as exc:
+                  body=exc.read(3000).decode('utf-8','replace')
+                  raise RuntimeError(f'HTTP {exc.code}: {body}') from exc
+              if not out.get('ok'):
+                  raise RuntimeError(str(out.get('error') or 'broker not ok'))
+              return out.get('result') or {}
+
+          marker=broker({
+              'action':'dataset_json_files','account_id':ACCOUNT,'dataset_ref':DATASET,
+              'dataset_version_number':VERSION,'file_names':['CAMPAIGN_STATE.json'],
+              'max_bytes_per_file':262144,
+          },90)
+          files=marker.get('files') or []
+          if len(files)!=1 or not isinstance(files[0],dict) or not isinstance(files[0].get('json'),dict):
+              raise RuntimeError('canonical CAMPAIGN_STATE missing')
+          campaign=files[0]['json']
+
+          listing=broker({
+              'action':'raw_read','account_id':ACCOUNT,
+              'service':'datasets.DatasetApiService','method':'ListDatasetFiles',
+              'body':{'ownerSlug':'computstu1','datasetSlug':'pneumonia-m11-r224-state-v1-7',
+                      'datasetVersionNumber':VERSION,'pageSize':100},
+          },60)
+          raw_files=listing.get('datasetFiles') or listing.get('files') or []
+          dataset_files=[]
+          for x in raw_files:
+              if not isinstance(x,dict): continue
+              dataset_files.append({
+                  'name':x.get('ref',x.get('name',x.get('fileName'))),
+                  'totalBytes':x.get('totalBytes',x.get('size',x.get('fileSize'))),
+                  'creationDate':x.get('creationDate',x.get('dateCreated')),
+              })
+
+          kernels=broker({
+              'action':'raw_read','account_id':ACCOUNT,
+              'service':'kernels.KernelsApiService','method':'ListKernels',
+              'body':{'group':'PROFILE','user':OWNER,'search':'m11','sortBy':'DATE_RUN','page':1,'pageSize':100},
+          },60)
+          broad=[]
+          for item in (kernels.get('kernels') or []):
+              if not isinstance(item,dict): continue
+              ref=str(item.get('ref') or '')
+              if not ref.lower().startswith(OWNER.lower()+'/') or 'm11' not in ref.lower(): continue
+              slug=ref.split('/',1)[1]
+              try:
+                  status=broker({
+                      'action':'raw_read','account_id':ACCOUNT,
+                      'service':'kernels.KernelsApiService','method':'GetKernelSessionStatus',
+                      'body':{'userName':OWNER,'kernelSlug':slug},
+                  },60)
+              except Exception as exc:
+                  status={'error':type(exc).__name__+': '+str(exc)[:500]}
+              broad.append({'ref':ref,'title':item.get('title'),'lastRunTime':item.get('lastRunTime'),
+                            'versionNumber':item.get('versionNumber'),'status':status})
+
+          result={
+              'schema':'m11.dependency.audit.v1',
+              'dataset_ref':DATASET,'dataset_version':VERSION,
+              'campaign_state_sha256':files[0].get('sha256'),
+              'campaign_state':campaign,
+              'dataset_files':dataset_files,
+              'broad_kernels':broad,
+          }
+          print('M11_DEPENDENCY_AUDIT='+json.dumps(result,sort_keys=True,separators=(',',':')))
+          '@
+          $script | & $python -
+          if($LASTEXITCODE-ne 0){throw 'M11 dependency audit failed'}
+
