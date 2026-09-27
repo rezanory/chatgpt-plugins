@@ -1,0 +1,83 @@
+{
+  "schema": "m07.external.vindr_pcxr.readiness.v1",
+  "status": "READY_PENDING_AUTHORIZED_DATA",
+  "recorded_at_utc": "2026-09-27T13:52:00Z",
+  "repository": "rezanory/chatgpt-plugins",
+  "scientific_progress_percent": 22,
+  "execution_readiness": {
+    "oidc_path": "PASS_ALLOWLISTED_WORKFLOW_PATH",
+    "competition_dependency_required": false,
+    "authorized_source_path": "IMPLEMENTED",
+    "frozen_resolution": 384,
+    "frozen_only": true,
+    "fail_closed": true,
+    "python_compile": {
+      "status": "PASS",
+      "exit_code": 0,
+      "files": [
+        "scripts/m07_vindr_pcxr_authorized_preflight.py",
+        "scripts/m07_vindr_pcxr_authorized_local_runner.py",
+        "scripts/m07_vindr_pcxr_external_v2.py"
+      ]
+    }
+  },
+  "code_identity": {
+    "authorized_preflight_blob": "fd18d4e40bccb2faeefa6a02ec7a870655d01c10",
+    "authorized_local_runner_blob": "382b82147da75ec6a69f8af1ae93fec88ffe451b",
+    "external_v2_blob": "f54ed95cda34c80a4d70bcb6f3988977140ffb2e",
+    "external_dispatch_v2_blob": "de97fad38a8e46a3f13818732a9ef9573a57e43a",
+    "preflight_dispatch_blob": "ef3a261cbd7cc5dec59c78c4b3b7c3d38659511c"
+  },
+  "scientific_contract": {
+    "primary_endpoint": {
+      "negative": "No finding",
+      "positive": "Pneumonia",
+      "other_diagnoses": "excluded from negative class"
+    },
+    "expected_primary_if_official_metadata_matches": {
+      "no_finding": 907,
+      "pneumonia": 89,
+      "total": 996
+    },
+    "secondary_sensitivity": "Pneumonia-family only",
+    "external_threshold_tuning": false,
+    "retraining": false,
+    "hpo": false,
+    "adaptation": false,
+    "ci_policy": "PatientID cluster if complete; else StudyInstanceUID cluster if complete; else image-level with explicit limitation."
+  },
+  "data_gate": {
+    "status": "BLOCKED",
+    "official_source": "PhysioNet VinDr-PCXR v1.0.0",
+    "official_access_policy": "Restricted access; registered users must sign the specified data use agreement.",
+    "local_authorized_copy_found": false,
+    "kaggle_accounts_role": "compute_only",
+    "configured_kaggle_accounts": 11,
+    "note": "No scientific inference is permitted before an authorized data root passes the real-data preflight."
+  },
+  "completed_without_scientific_inference": [
+    "OIDC/control-plane route diagnosis",
+    "11-account datasource access scan",
+    "provider-error fail-closed handling",
+    "exact-Pneumonia primary endpoint correction",
+    "label-map proof gate design",
+    "patient/study/image bootstrap policy",
+    "authorized data/state root decoupling",
+    "authorized real-data preflight implementation",
+    "authorized local frozen-R384 runner implementation",
+    "syntax/compile validation with exit code 0"
+  ],
+  "not_complete": [
+    "real VinDr inventory",
+    "real VinDr schema receipt",
+    "real metadata label-map proof",
+    "real duplicate/leakage receipt",
+    "R384 frozen inference",
+    "predictions and metrics",
+    "bootstrap 95% CI",
+    "internal-external comparison and generalization gap",
+    "updated model card",
+    "scientific closure receipt",
+    "final evidence ZIP"
+  ]
+}
