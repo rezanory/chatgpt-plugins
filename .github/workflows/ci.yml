@@ -45,7 +45,7 @@ jobs:
             -e packages/repair-engine `
             -e plugins/kaggle `
             -e plugins/kaggle-gateway `
-            'pytest>=8.4' 'ruff>=0.12' 2>&1 | Tee-Object -Append -FilePath "$env:RUNNER_TEMP\ci-sync.log"
+            'pytest>=8.4' 'ruff>=0.12' 'kagglehub>=1.0,<2' 2>&1 | Tee-Object -Append -FilePath "$env:RUNNER_TEMP\ci-sync.log"
           $code=$LASTEXITCODE
           if($code-ne 0){exit $code}
 
@@ -86,6 +86,12 @@ jobs:
           $python=$env:CI_PYTHON
           if(-not (Test-Path -LiteralPath $python)){throw 'isolated CI Python missing'}
           & $python -m pytest 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci-tests.log"
+          $code=$LASTEXITCODE
+          if($code-ne 0){exit $code}
+          & $python -m pytest `
+            scripts/test_pneumonia_phase2_unit.py `
+            scripts/test_pneumonia_phase2_runtime.py `
+            2>&1 | Tee-Object -Append -FilePath "$env:RUNNER_TEMP\ci-tests.log"
           $code=$LASTEXITCODE
           if($code-ne 0){exit $code}
 
