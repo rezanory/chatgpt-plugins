@@ -5,8 +5,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-WORK = Path("/kaggle/working")
-INPUT = Path("/kaggle/input")
+WORK = Path(os.environ.get("M07_EXTERNAL_WORK_ROOT", "/kaggle/working")).resolve()
+INPUT = Path(os.environ.get("M07_EXTERNAL_INPUT_ROOT", "/kaggle/input")).resolve()
+DATA_ROOT = Path(os.environ.get("M07_EXTERNAL_DATA_ROOT", str(INPUT))).resolve()
+STATE_INPUT_ROOT = Path(os.environ.get("M07_EXTERNAL_STATE_ROOT", str(INPUT))).resolve()
 
 SEED = 42
 IMAGE_SIZE = int(os.environ.get("M07_EXTERNAL_RESOLUTION", "224"))
@@ -66,6 +68,12 @@ LABEL_DICTIONARY_SOURCE = {
 }
 
 print("CGP_PHASE:M07_VINDR_EXTERNAL_BOOT", flush=True)
+print(json.dumps({
+    "data_root": str(DATA_ROOT),
+    "state_input_root": str(STATE_INPUT_ROOT),
+    "work_root": str(WORK),
+    "resolution": IMAGE_SIZE,
+}, sort_keys=True), flush=True)
 
 
 def sha256_file(path: Path, chunk=8 * 1024 * 1024):
@@ -95,7 +103,7 @@ def safe_json(value):
 def locate_state_root():
     roots = []
     if IMAGE_SIZE == 224:
-        for marker in INPUT.rglob("PERSISTENCE_MANIFEST_V1_4.json"):
+        for marker in STATE_INPUT_ROOT.rglob("PERSISTENCE_MANIFEST_V1_4.json"):
             root = marker.parent.resolve()
             if all(
                 (
@@ -110,7 +118,7 @@ def locate_state_root():
                 roots.append(root)
     else:
         expected_artifacts = {f"FOLD_{fold}_RECOVERY.zip" for fold in range(1, 6)}
-        for marker in INPUT.rglob("CAMPAIGN_STATE.json"):
+        for marker in STATE_INPUT_ROOT.rglob("CAMPAIGN_STATE.json"):
             try:
                 payload = json.loads(marker.read_text(encoding="utf-8"))
             except Exception:
@@ -163,7 +171,7 @@ def locate_state_root():
 
 def locate_annotation_root(state_root):
     roots = []
-    for p in INPUT.rglob("image_labels_test.csv"):
+    for p in DATA_ROOT.rglob("image_labels_test.csv"):
         rp = p.resolve()
         if state_root in rp.parents:
             continue
@@ -229,7 +237,7 @@ def build_manifest(annotation_root, state_root):
     diagnosis = matrix[:, offset:offset + 15]
 
     dicom_map = {}
-    for p in INPUT.rglob("*"):
+    for p in DATA_ROOT.rglob("*"):
         if not p.is_file() or p.suffix.lower() not in {".dicom", ".dcm"}:
             continue
         rp = p.resolve()
@@ -290,8 +298,8 @@ def build_manifest(annotation_root, state_root):
         "exact_internal_external_sha_overlap": 0,
         "label_map_proof": {
             "source": LABEL_DICTIONARY_SOURCE,
-            "actual_metadata_file": labels_path.relative_to(INPUT).as_posix(),
-            "actual_annotations_file": annotations_path.relative_to(INPUT).as_posix(),
+            "actual_metadata_file": labels_path.relative_to(DATA_ROOT).as_posix(),
+            "actual_annotations_file": annotations_path.relative_to(DATA_ROOT).as_posix(),
             "actual_metadata_sha256": {
                 "image_labels_test.csv": sha256_file(labels_path),
                 "annotations_test.csv": sha256_file(annotations_path),
