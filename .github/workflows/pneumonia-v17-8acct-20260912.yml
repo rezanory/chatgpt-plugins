@@ -11,6 +11,7 @@ on:
         type: choice
         options:
           - soilbin-v4-raw-waveform
+          - m11-safe-kernel-cleanup
 
 permissions:
   id-token: write
@@ -1000,3 +1001,63 @@ jobs:
           path: ${{ env.SOILBIN_V4_SUMMARY_PATH }}
           if-no-files-found: error
           retention-days: 30
+
+  m11-safe-kernel-cleanup:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.actor_id == 62356000 && inputs.task == 'm11-safe-kernel-cleanup' }}
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Request destructive Kaggle OIDC identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN){throw 'GitHub OIDC context unavailable'}
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $uri="$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3-action"
+          $r=Invoke-RestMethod -Uri $uri -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'GitHub OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_ACTION_OIDC_TOKEN=$token" + [Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+
+      - name: Delete exact evidence-cleared M11 kernels
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle'
+          $headers=@{Authorization="Bearer $env:CGP_ACTION_OIDC_TOKEN";'Content-Type'='application/json'}
+          $slugs=@(
+            'pneumonia-v1-7-phase2-m11-r224-a01-35531422030',
+            'pneumonia-v1-7-phase2-m11-r224-a02-35537767626',
+            'pneumonia-v1-7-phase2-m11-r224-a04-35545795061',
+            'pneumonia-v1-7-phase2-m11-r224-a05-35548583694',
+            'pneumonia-v1-7-phase2-m11-r224-a11-35606585807',
+            'pneumonia-v1-7-phase2-m11-r224-a12-35654596990',
+            'pneumonia-v1-7-phase2-m11-r224-a13-35669056244',
+            'pneumonia-v1-7-phase2-m11-r224-a14-35675337117',
+            'pneumonia-v1-7-phase2-m11-r224-a15-35680521507',
+            'pneumonia-v1-7-phase2-m11-r224-a16-35685321355',
+            'pneumonia-v1-7-phase2-m11-r224-a17-35692735260'
+          )
+          $rows=@()
+          foreach($slug in $slugs){
+            $payload=@{
+              provider='kaggle'
+              operation_class='destructive'
+              account_id='kg-10'
+              service='kernels.KernelsApiService'
+              method='DeleteKernel'
+              body=@{userName='computstu1';kernelSlug=$slug}
+            } | ConvertTo-Json -Depth 6 -Compress
+            try {
+              $r=Invoke-RestMethod -Uri $endpoint -Method Post -Headers $headers -Body $payload -TimeoutSec 120
+              if(-not $r.ok){throw 'broker returned ok=false'}
+              $rows += [pscustomobject]@{ref=('computstu1/'+$slug);deleted=$true;provider_ref=$r.provider_ref}
+            } catch {
+              $rows += [pscustomobject]@{ref=('computstu1/'+$slug);deleted=$false;error=$_.Exception.Message}
+              throw
+            }
+          }
+          $result=[pscustomobject]@{schema='m11.kernel.cleanup.v1';deleted=$rows}
+          Write-Host ('M11_KERNEL_DELETE='+($result | ConvertTo-Json -Depth 8 -Compress))
+
