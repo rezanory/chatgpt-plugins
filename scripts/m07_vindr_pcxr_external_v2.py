@@ -187,6 +187,17 @@ def parse_vector(value):
 
 def build_manifest(annotation_root, state_root):
     labels_path = annotation_root / "image_labels_test.csv"
+    annotations_path = annotation_root / "annotations_test.csv"
+    if not annotations_path.is_file():
+        raise RuntimeError("VINDR_ANNOTATIONS_TEST_MISSING")
+    annotation_columns = {
+        str(c).strip().lower()
+        for c in pd.read_csv(annotations_path, nrows=0).columns
+    }
+    if not {"image_id", "class_name"}.issubset(annotation_columns):
+        raise RuntimeError(
+            f"BAD_ANNOTATION_COLUMNS={sorted(annotation_columns)}"
+        )
     df = pd.read_csv(labels_path)
     cols = {str(c).strip().lower(): c for c in df.columns}
     if "image_id" not in cols or "labels" not in cols:
@@ -280,6 +291,12 @@ def build_manifest(annotation_root, state_root):
         "label_map_proof": {
             "source": LABEL_DICTIONARY_SOURCE,
             "actual_metadata_file": labels_path.relative_to(INPUT).as_posix(),
+            "actual_annotations_file": annotations_path.relative_to(INPUT).as_posix(),
+            "actual_metadata_sha256": {
+                "image_labels_test.csv": sha256_file(labels_path),
+                "annotations_test.csv": sha256_file(annotations_path),
+            },
+            "annotation_columns": sorted(annotation_columns),
             "label_vector_width": int(width),
             "candidate_diagnosis_offsets_zero_based": [int(x) for x in matching_offsets],
             "selected_diagnosis_offset_zero_based": int(offset),
@@ -343,23 +360,31 @@ def dicom_to_png(src: Path, dst: Path):
     arr = np.rint((arr - lo) / (hi - lo) * 255.0).clip(0, 255).astype(np.uint8)
     dst.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(arr, mode="L").save(dst, format="PNG", optimize=False)
-    return photo, voi
+    patient_id = str(getattr(ds, "PatientID", "") or "").strip()
+    study_instance_uid = str(getattr(ds, "StudyInstanceUID", "") or "").strip()
+    return photo, voi, patient_id, study_instance_uid
 
 
 def preprocess_manifest(manifest):
     root = OUT / "PRESENTATION_PNG"
     shutil.rmtree(root, ignore_errors=True)
     root.mkdir(parents=True, exist_ok=True)
-    paths, modes = [], {}
+    paths, modes, patient_ids, study_uids = [], {}, [], []
     for i, row in manifest.iterrows():
         if i % 100 == 0:
             print(f"CGP_PHASE:PRESENTATION {i}/{len(manifest)}", flush=True)
         dst = root / f"{row.image_id}.png"
-        photo, voi = dicom_to_png(Path(row.filepath_dicom), dst)
+        photo, voi, patient_id, study_uid = dicom_to_png(Path(row.filepath_dicom), dst)
         modes[f"{photo}|voi={voi}"] = modes.get(f"{photo}|voi={voi}", 0) + 1
         paths.append(str(dst))
+        patient_ids.append(patient_id)
+        study_uids.append(study_uid)
     out = manifest.copy()
     out["filepath"] = paths
+    out["patient_id"] = patient_ids
+    out["study_instance_uid"] = study_uids
+    patient_nonempty = int(sum(bool(x) for x in patient_ids))
+    study_nonempty = int(sum(bool(x) for x in study_uids))
     return out, {
         "policy": (
             "DICOM pixel_array -> modality LUT -> VOI LUT when available -> "
@@ -367,6 +392,13 @@ def preprocess_manifest(manifest):
             "canonical M07 resize_with_pad 224 bilinear antialias"
         ),
         "modes": modes,
+        "identity_evidence": {
+            "patient_id_nonempty": patient_nonempty,
+            "patient_id_unique_nonempty": len({x for x in patient_ids if x}),
+            "study_instance_uid_nonempty": study_nonempty,
+            "study_instance_uid_unique_nonempty": len({x for x in study_uids if x}),
+            "total": int(len(out)),
+        },
     }
 
 
@@ -629,8 +661,10 @@ def metrics(y, pred, score):
     }
 
 
-def bootstrap(y, pred, score):
-    y, pred, score = np.asarray(y, int), np.asarray(pred, int), np.asarray(score, float)
+def bootstrap(frame):
+    y = frame.label.to_numpy(int)
+    pred = frame.prediction_primary_normalized.to_numpy(int)
+    score = frame.normalized_ensemble_score.to_numpy(float)
     rng = np.random.default_rng(BOOTSTRAP_SEED)
     keys = [
         "accuracy", "balanced_accuracy", "macro_precision", "macro_recall",
@@ -638,16 +672,47 @@ def bootstrap(y, pred, score):
         "precision_normal", "recall_normal", "precision_pneumonia", "recall_pneumonia",
     ]
     vals = {k: [] for k in keys}
-    for _ in range(BOOTSTRAPS):
-        idx = rng.integers(0, len(y), len(y))
-        if len(np.unique(y[idx])) < 2:
+
+    cluster_column = None
+    unit = "EXAM_IMAGE"
+    for candidate, candidate_unit in (
+        ("patient_id", "PATIENT_CLUSTER"),
+        ("study_instance_uid", "STUDY_CLUSTER"),
+    ):
+        if candidate not in frame.columns:
             continue
-        m = metrics(y[idx], pred[idx], score[idx])
-        for k in keys:
-            vals[k].append(m[k])
+        values = frame[candidate].fillna("").astype(str).str.strip()
+        if len(values) == len(frame) and values.ne("").all():
+            cluster_column = candidate
+            unit = candidate_unit
+            break
+
+    if cluster_column:
+        groups = frame[cluster_column].astype(str).to_numpy()
+        unique_groups = np.unique(groups)
+        group_indices = {g: np.flatnonzero(groups == g) for g in unique_groups}
+        for _ in range(BOOTSTRAPS):
+            sampled_groups = rng.choice(unique_groups, size=len(unique_groups), replace=True)
+            idx = np.concatenate([group_indices[g] for g in sampled_groups])
+            if len(np.unique(y[idx])) < 2:
+                continue
+            m = metrics(y[idx], pred[idx], score[idx])
+            for k in keys:
+                vals[k].append(m[k])
+    else:
+        for _ in range(BOOTSTRAPS):
+            idx = rng.integers(0, len(y), len(y))
+            if len(np.unique(y[idx])) < 2:
+                continue
+            m = metrics(y[idx], pred[idx], score[idx])
+            for k in keys:
+                vals[k].append(m[k])
+
     return {
-        "unit": "EXAM_IMAGE",
-        "patient_cluster_bootstrap": False,
+        "unit": unit,
+        "cluster_column": cluster_column,
+        "patient_cluster_bootstrap": cluster_column == "patient_id",
+        "study_cluster_bootstrap": cluster_column == "study_instance_uid",
         "requested": BOOTSTRAPS,
         "valid": len(next(iter(vals.values()))),
         "95ci": {
@@ -670,7 +735,7 @@ def ece15(y, p):
     return float(total), rows
 
 
-def evaluate(frame, name):
+def evaluate(frame, name, positive_label_name="Pneumonia"):
     y = frame.label.to_numpy(int)
     pred = frame.prediction_primary_normalized.to_numpy(int)
     score = frame.normalized_ensemble_score.to_numpy(float)
@@ -678,7 +743,7 @@ def evaluate(frame, name):
     result["brier_mean_probability"] = float(brier_score_loss(y, frame.mean_probability))
     ece, bins = ece15(y, frame.mean_probability)
     result["ece15_mean_probability"] = ece
-    ci = bootstrap(y, pred, score)
+    ci = bootstrap(frame)
 
     fpr, tpr, rt = roc_curve(y, score)
     pd.DataFrame({"fpr": fpr, "tpr": tpr, "threshold": rt}).to_csv(
@@ -696,8 +761,8 @@ def evaluate(frame, name):
     cm = np.asarray(result["confusion_matrix"])
     fig, ax = plt.subplots(figsize=(5, 5))
     im = ax.imshow(cm)
-    ax.set_xticks([0, 1], ["Normal", "Pneumonia-family"])
-    ax.set_yticks([0, 1], ["Normal", "Pneumonia-family"])
+    ax.set_xticks([0, 1], ["No finding", positive_label_name])
+    ax.set_yticks([0, 1], ["No finding", positive_label_name])
     ax.set_xlabel("Predicted"); ax.set_ylabel("True"); ax.set_title(name)
     for i in range(2):
         for j in range(2):
@@ -730,6 +795,45 @@ manifest, manifest_meta = build_manifest(annotation_root, state_root)
 )
 manifest, presentation = preprocess_manifest(manifest)
 manifest.to_csv(OUT / "M07_VINDR_INFERENCE_MANIFEST.csv", index=False)
+
+primary_manifest = manifest[(manifest.no_finding == 1) | (manifest.pneumonia == 1)].copy()
+primary_manifest["label"] = primary_manifest.pneumonia.astype(int)
+primary_manifest_counts = {
+    int(k): int(v)
+    for k, v in primary_manifest.label.value_counts().sort_index().to_dict().items()
+}
+if (
+    len(primary_manifest) != EXPECTED_PRIMARY_N
+    or primary_manifest_counts != EXPECTED_PRIMARY_COUNTS
+):
+    raise RuntimeError(
+        "PRIMARY_MANIFEST_MISMATCH="
+        + json.dumps(
+            {"n": len(primary_manifest), "counts": primary_manifest_counts},
+            sort_keys=True,
+        )
+    )
+primary_manifest.to_csv(OUT / "M07_VINDR_PRIMARY_MANIFEST.csv", index=False)
+
+integrity_receipt = {
+    "schema": "m07.external.vindr_pcxr.pre_inference_integrity.v1",
+    "status": "PASS_PREINFERENCE_INTEGRITY",
+    "test_metadata_n": manifest_meta["test_metadata_n"],
+    "inference_n": manifest_meta["inference_n"],
+    "primary_n": int(len(primary_manifest)),
+    "primary_counts": {str(k): int(v) for k, v in primary_manifest_counts.items()},
+    "external_exact_duplicate_dicom_sha": 0,
+    "internal_external_exact_sha_overlap": manifest_meta["exact_internal_external_sha_overlap"],
+    "label_map_proof_status": manifest_meta["label_map_proof"]["status"],
+    "metadata_sha256": manifest_meta["label_map_proof"]["actual_metadata_sha256"],
+    "training_performed": False,
+    "hpo_performed": False,
+    "inference_started": False,
+}
+(OUT / "M07_VINDR_PREINFERENCE_INTEGRITY_RECEIPT.json").write_text(
+    json.dumps(safe_json(integrity_receipt), indent=2, ensure_ascii=False),
+    encoding="utf-8",
+)
 
 print("CGP_PHASE:M07_VINDR_INFERENCE", flush=True)
 ds = build_eval_dataset(manifest, EVAL_BATCH_SIZE)
@@ -768,10 +872,12 @@ if len(primary_frame) != EXPECTED_PRIMARY_N or primary_counts != EXPECTED_PRIMAR
     raise RuntimeError(
         f"PRIMARY_PNEUMONIA_COHORT_MISMATCH n={len(primary_frame)} counts={primary_counts}"
     )
-primary = evaluate(primary_frame, "PRIMARY_PNEUMONIA_ONLY")
+primary = evaluate(primary_frame, "PRIMARY_PNEUMONIA_ONLY", "Pneumonia")
 primary_frame.to_csv(OUT / "M07_VINDR_PRIMARY_PNEUMONIA_PREDICTIONS.csv", index=False)
 
-family_result = evaluate(manifest, "SENSITIVITY_PNEUMONIA_FAMILY")
+family_result = evaluate(
+    manifest, "SENSITIVITY_PNEUMONIA_FAMILY", "Pneumonia-family"
+)
 manifest.to_csv(OUT / "M07_VINDR_PNEUMONIA_FAMILY_PREDICTIONS.csv", index=False)
 
 oof_metrics = None
@@ -784,6 +890,22 @@ if isinstance(oof_metrics, dict):
               "macro_f1", "mcc", "auroc", "auprc_pneumonia"]:
         if k in oof_metrics and k in primary["metrics"]:
             gaps[k] = float(oof_metrics[k]) - float(primary["metrics"][k])
+
+bootstrap_policy = {
+    key: value
+    for key, value in primary["bootstrap"].items()
+    if key != "95ci"
+}
+if primary["bootstrap"]["unit"] == "EXAM_IMAGE":
+    ci_identity_note = (
+        "No complete verified PatientID or StudyInstanceUID linkage was present in the "
+        "actual mounted DICOM metadata; 95% CIs therefore use exam/image resampling."
+    )
+else:
+    ci_identity_note = (
+        "Actual mounted DICOM metadata provided complete identity linkage; 95% CIs use "
+        f"{primary['bootstrap']['unit']} resampling."
+    )
 
 report = {
     "schema": "m07.external.vindr_pcxr.resolution.v3",
@@ -804,12 +926,7 @@ report = {
     "fold_receipts": fold_receipts,
     "manifest": manifest_meta,
     "presentation": presentation,
-    "bootstrap_policy": {
-        "unit": "EXAM_IMAGE",
-        "n_boot": BOOTSTRAPS,
-        "patient_cluster_bootstrap": False,
-        "limitation": "No verified public patient/study linkage is available; no synthetic patient identifiers were created.",
-    },
+    "bootstrap_policy": bootstrap_policy,
     "primary": primary,
     "sensitivity_pneumonia_family": family_result,
     "internal_external_comparison": {
@@ -818,7 +935,7 @@ report = {
         "oof_minus_external": gaps,
     },
     "limitations": [
-        "External CIs use exam/image resampling rather than verified patient-cluster resampling.",
+        ci_identity_note,
         "A deterministic DICOM presentation transform precedes the canonical M07 resize path.",
         "Primary endpoint uses exact Pneumonia versus clean No finding; all other diagnoses are excluded from the negative class.",
         "Pneumonia-family harmonization is reported only as a prespecified secondary sensitivity analysis.",
@@ -842,7 +959,8 @@ model_card = (
     f"Primary N: {len(primary_frame)} (907 No finding, 89 Pneumonia)\n\n"
     "Sensitivity endpoint: clean No finding vs pneumonia-family "
     "(Brocho-pneumonia, Pneumonia, Pleuro-pneumonia)\n\n"
-    "Confidence intervals: 2,000 exam/image bootstrap resamples because verified patient linkage is unavailable.\n\n"
+    f"Confidence intervals: {BOOTSTRAPS} bootstrap resamples; "
+    f"unit={primary['bootstrap']['unit']}.\n\n"
     "Primary metrics:\n\n"
     + json.dumps(safe_json(primary["metrics"]), indent=2)
     + "\n"
