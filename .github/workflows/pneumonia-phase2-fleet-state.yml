@@ -390,3 +390,107 @@ jobs:
           $script | & $python -
           if($LASTEXITCODE-ne 0){throw 'M11 dependency audit failed'}
 
+  m11_delete_preflight:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Request GitHub OIDC read identity
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $sep=if($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')){'&'}else{'?'}
+          $r=Invoke-RestMethod -Uri "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)$($sep)audience=cgp-control-plane-v3" -Headers @{Authorization="Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"} -TimeoutSec 30
+          $token=[string]$r.value
+          if($token.Length -lt 100){throw 'GitHub OIDC token unavailable'}
+          Write-Host "::add-mask::$token"
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"CGP_OIDC_TOKEN=$token" + [Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+
+      - name: Gate exact DELETE_SAFE M11 kernels
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=(Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if(-not $python){$python=(Get-Command python -ErrorAction Stop).Source}
+          $script=@'
+          import json, os, re, urllib.request, urllib.error
+          BASE='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          TOKEN=os.environ['CGP_OIDC_TOKEN']; ACCOUNT='kg-10'; OWNER='computstu1'
+          EXPECTED_STATE_SHA='0b66cfa263a0efd0118aa3f8df948b121a3646ebf3058070ec1210b7b504622d'
+          SAFE_ATTEMPTS={1,2,4,5,11,12,13,14,15,16,17}
+          KEEP_ATTEMPTS={3,6,7,8,9,10}
+
+          def broker(payload, timeout=90):
+              req=urllib.request.Request(BASE+'/control-plane/v3/read/kaggle',
+                  data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
+                  headers={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Accept':'application/json',
+                           'User-Agent':'m11-delete-preflight/1.0'})
+              with urllib.request.urlopen(req,timeout=timeout) as r: out=json.load(r)
+              if not out.get('ok'): raise RuntimeError(str(out.get('error') or 'broker not ok'))
+              return out.get('result') or {}
+
+          marker=broker({'action':'dataset_json_files','account_id':ACCOUNT,
+              'dataset_ref':'computstu1/pneumonia-m11-r224-state-v1-7','dataset_version_number':6,
+              'file_names':['CAMPAIGN_STATE.json'],'max_bytes_per_file':262144})
+          mf=marker.get('files') or []
+          if len(mf)!=1 or mf[0].get('sha256')!=EXPECTED_STATE_SHA:
+              raise RuntimeError('canonical CAMPAIGN_STATE SHA drift')
+
+          listing=broker({'action':'raw_read','account_id':ACCOUNT,
+              'service':'kernels.KernelsApiService','method':'ListKernels',
+              'body':{'group':'PROFILE','user':OWNER,'search':'m11','sortBy':'DATE_RUN','page':1,'pageSize':100}},60)
+          rx=re.compile(r'^computstu1/pneumonia-v1-7-phase2-m11-r224-a(\d{2})-(\d+)$',re.I)
+          refs={}
+          for item in (listing.get('kernels') or []):
+              if not isinstance(item,dict): continue
+              ref=str(item.get('ref') or '')
+              m=rx.fullmatch(ref)
+              if m: refs[int(m.group(1))]=ref
+          if set(refs)!=SAFE_ATTEMPTS|KEEP_ATTEMPTS:
+              raise RuntimeError('unexpected M11 kernel attempt inventory: '+repr(sorted(refs)))
+
+          rows=[]; measured_total=0; unknown_total=0
+          critical_rx=re.compile(r'(PHASE2_UNIT_TERMINAL_RECEIPT\.json$|CAMPAIGN_STATE\.json$|FOLD_[1-5]_RECOVERY\.(?:zip|cgpzip)$|FOLDS/fold_[1-5]/COMPLETED\.json$)',re.I)
+          for attempt in sorted(SAFE_ATTEMPTS):
+              ref=refs[attempt]; slug=ref.split('/',1)[1]
+              st=broker({'action':'raw_read','account_id':ACCOUNT,
+                  'service':'kernels.KernelsApiService','method':'GetKernelSessionStatus',
+                  'body':{'userName':OWNER,'kernelSlug':slug}},60)
+              if str(st.get('status') or '').upper()!='ERROR':
+                  raise RuntimeError(f'A{attempt:02d} not ERROR: {st}')
+              out=broker({'action':'raw_read','account_id':ACCOUNT,
+                  'service':'kernels.KernelsApiService','method':'ListKernelSessionOutput',
+                  'body':{'userName':OWNER,'kernelSlug':slug,'pageSize':200}},90)
+              names=[]; measured=0; unknown=0
+              for x in (out.get('files') or []):
+                  if not isinstance(x,dict): continue
+                  name=str(x.get('fileName') or x.get('name') or x.get('ref') or '')
+                  names.append(name)
+                  size=next((x.get(k) for k in ('totalBytes','size','fileSize') if isinstance(x.get(k),(int,float))),None)
+                  if isinstance(size,(int,float)):
+                      measured+=int(size); continue
+                  url=x.get('url') or x.get('downloadUrl')
+                  got=None
+                  if isinstance(url,str) and url.startswith('https://') and 'kaggleusercontent.com' in urllib.parse.urlparse(url).hostname:
+                      try:
+                          req=urllib.request.Request(url,method='HEAD',headers={'User-Agent':'m11-size-audit/1.0'})
+                          with urllib.request.urlopen(req,timeout=30) as resp:
+                              cl=resp.headers.get('Content-Length')
+                              if cl and cl.isdigit(): got=int(cl)
+                      except Exception:
+                          got=None
+                  if got is None: unknown+=1
+                  else: measured+=got
+              critical=[n for n in names if critical_rx.search(n)]
+              if critical: raise RuntimeError(f'A{attempt:02d} contains critical evidence: {critical}')
+              rows.append({'attempt':attempt,'ref':ref,'status':'ERROR','file_count':len(names),
+                           'critical_evidence':critical,'measured_bytes':measured,'unknown_file_count':unknown})
+              measured_total+=measured; unknown_total+=unknown
+
+          result={'schema':'m11.delete.preflight.v1','campaign_state_sha256':EXPECTED_STATE_SHA,
+                  'delete_safe':rows,'measured_total_bytes':measured_total,'unknown_file_count':unknown_total,
+                  'keep_attempts':sorted(KEEP_ATTEMPTS)}
+          print('M11_DELETE_PREFLIGHT='+json.dumps(result,sort_keys=True,separators=(',',':')))
+          '@
+          $script | & $python -
+          if($LASTEXITCODE-ne 0){throw 'M11 delete preflight failed'}
+
