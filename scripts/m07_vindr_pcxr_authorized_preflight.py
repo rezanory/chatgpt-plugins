@@ -179,6 +179,7 @@ def main() -> None:
 
     identity = {
         "sampled": 0,
+        "header_read_success": 0,
         "patient_id_present": 0,
         "study_instance_uid_present": 0,
         "sop_instance_uid_present": 0,
@@ -194,6 +195,7 @@ def main() -> None:
                     specific_tags=["PatientID", "StudyInstanceUID", "SOPInstanceUID"],
                 )
                 identity["sampled"] += 1
+                identity["header_read_success"] += 1
                 if str(getattr(ds, "PatientID", "") or "").strip():
                     identity["patient_id_present"] += 1
                 if str(getattr(ds, "StudyInstanceUID", "") or "").strip():
@@ -206,6 +208,23 @@ def main() -> None:
                     break
     except Exception as exc:
         identity["probe_error"] = f"{type(exc).__name__}: {exc}"[:500]
+
+    if identity.get("probe_error"):
+        fail(receipt, output, "PYDICOM_HEADER_PROBE_UNAVAILABLE")
+    if identity.get("header_read_success") != EXPECTED_TEST_N or identity.get("errors"):
+        fail(
+            receipt,
+            output,
+            "DICOM_HEADER_READ_INCOMPLETE="
+            + json.dumps(
+                {
+                    "expected": EXPECTED_TEST_N,
+                    "header_read_success": identity.get("header_read_success"),
+                    "errors": identity.get("errors", [])[:10],
+                },
+                sort_keys=True,
+            ),
+        )
 
     cluster_policy = "EXAM_IMAGE"
     if identity.get("sampled") == EXPECTED_TEST_N:
