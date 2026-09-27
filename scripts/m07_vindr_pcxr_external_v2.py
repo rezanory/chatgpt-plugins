@@ -46,8 +46,24 @@ DIAGNOSIS_LABELS = [
 EXPECTED_DIAGNOSIS_COUNTS = np.array(
     [907, 174, 84, 77, 90, 2, 89, 0, 0, 1, 0, 1, 3, 1, 0], dtype=np.int64
 )
-EXPECTED_PRIMARY_COUNTS = {0: 907, 1: 170}
-EXPECTED_PRIMARY_N = 1077
+EXPECTED_TEST_N = 1397
+EXPECTED_INFERENCE_COUNTS = {0: 907, 1: 170}
+EXPECTED_INFERENCE_N = 1077
+EXPECTED_PRIMARY_COUNTS = {0: 907, 1: 89}
+EXPECTED_PRIMARY_N = 996
+LABEL_DICTIONARY_SOURCE = {
+    "dataset": "VinDr-PCXR / PediCXR",
+    "surface": "image_labels_test.csv",
+    "official_reference": (
+        "Scientific Data 2023 PediCXR Table 3 + "
+        "Kaggle pediatric-cxr-analysis-challenge data description"
+    ),
+    "proof_policy": (
+        "actual label vector must have one unique 15-diagnosis offset whose observed "
+        "test prevalences exactly match the official diagnosis data dictionary; counts "
+        "are a consistency proof, never a learned/tuned mapping"
+    ),
+}
 
 print("CGP_PHASE:M07_VINDR_EXTERNAL_BOOT", flush=True)
 
@@ -178,6 +194,8 @@ def build_manifest(annotation_root, state_root):
     iid_col, labels_col = cols["image_id"], cols["labels"]
     if df[iid_col].astype(str).duplicated().any():
         raise RuntimeError("DUPLICATE_TEST_IMAGE_ID")
+    if len(df) != EXPECTED_TEST_N:
+        raise RuntimeError(f"VINDR_TEST_METADATA_COUNT_MISMATCH={len(df)}")
 
     vectors = [parse_vector(v) for v in df[labels_col]]
     widths = sorted({len(v) for v in vectors})
@@ -232,8 +250,8 @@ def build_manifest(annotation_root, state_root):
 
     manifest = pd.DataFrame(rows).sort_values("image_id").reset_index(drop=True)
     counts = {int(k): int(v) for k, v in manifest.label.value_counts().sort_index().to_dict().items()}
-    if len(manifest) != EXPECTED_PRIMARY_N or counts != EXPECTED_PRIMARY_COUNTS:
-        raise RuntimeError(f"PRIMARY_COHORT_MISMATCH n={len(manifest)} counts={counts}")
+    if len(manifest) != EXPECTED_INFERENCE_N or counts != EXPECTED_INFERENCE_COUNTS:
+        raise RuntimeError(f"INFERENCE_COHORT_MISMATCH n={len(manifest)} counts={counts}")
 
     manifest["sha256_external_dicom"] = [sha256_file(Path(p)) for p in manifest.filepath_dicom]
     if manifest.sha256_external_dicom.duplicated().any():
@@ -255,13 +273,33 @@ def build_manifest(annotation_root, state_root):
         "diagnosis_labels": DIAGNOSIS_LABELS,
         "observed_diagnosis_counts": diagnosis.sum(axis=0).astype(int).tolist(),
         "published_diagnosis_counts": EXPECTED_DIAGNOSIS_COUNTS.tolist(),
-        "primary_n": int(len(manifest)),
-        "primary_counts": {str(k): int(v) for k, v in counts.items()},
+        "test_metadata_n": int(len(df)),
+        "inference_n": int(len(manifest)),
+        "inference_counts": {str(k): int(v) for k, v in counts.items()},
         "exact_internal_external_sha_overlap": 0,
+        "label_map_proof": {
+            "source": LABEL_DICTIONARY_SOURCE,
+            "actual_metadata_file": labels_path.relative_to(INPUT).as_posix(),
+            "label_vector_width": int(width),
+            "candidate_diagnosis_offsets_zero_based": [int(x) for x in matching_offsets],
+            "selected_diagnosis_offset_zero_based": int(offset),
+            "observed_diagnosis_counts": diagnosis.sum(axis=0).astype(int).tolist(),
+            "official_diagnosis_counts": EXPECTED_DIAGNOSIS_COUNTS.tolist(),
+            "resolved_indices_zero_based_within_diagnosis_block": {
+                "No finding": 0,
+                "Brocho-pneumonia": 2,
+                "Pneumonia": 6,
+                "Pleuro-pneumonia": 7,
+            },
+            "status": "PROVED_BY_ACTUAL_METADATA_UNIQUE_ALIGNMENT",
+        },
         "policy": {
-            "negative": "No finding",
-            "positive": ["Brocho-pneumonia", "Pneumonia", "Pleuro-pneumonia"],
-            "other_non_family_diagnoses": "excluded unless pneumonia-family is positive",
+            "primary_negative": "No finding",
+            "primary_positive": "Pneumonia",
+            "primary_other_diagnoses": "excluded; never relabeled as No finding",
+            "secondary_sensitivity_positive": [
+                "Brocho-pneumonia", "Pneumonia", "Pleuro-pneumonia"
+            ],
         },
     }
     return manifest, meta
@@ -686,8 +724,12 @@ state_root = locate_state_root()
 annotation_root = locate_annotation_root(state_root)
 params, thresholds, weights, fold_receipts = load_folds(state_root)
 manifest, manifest_meta = build_manifest(annotation_root, state_root)
+(OUT / "M07_VINDR_LABEL_MAP_PROOF.json").write_text(
+    json.dumps(safe_json(manifest_meta["label_map_proof"]), indent=2, ensure_ascii=False),
+    encoding="utf-8",
+)
 manifest, presentation = preprocess_manifest(manifest)
-manifest.to_csv(OUT / "M07_VINDR_PRIMARY_MANIFEST.csv", index=False)
+manifest.to_csv(OUT / "M07_VINDR_INFERENCE_MANIFEST.csv", index=False)
 
 print("CGP_PHASE:M07_VINDR_INFERENCE", flush=True)
 ds = build_eval_dataset(manifest, EVAL_BATCH_SIZE)
@@ -716,15 +758,21 @@ manifest["prediction_primary_normalized"] = (manifest.normalized_ensemble_score 
 manifest["prediction_majority_vote"] = (votes.sum(axis=0) >= 3).astype(int)
 manifest.to_csv(OUT / "M07_VINDR_EXTERNAL_PREDICTIONS.csv", index=False)
 
-primary = evaluate(manifest, "PRIMARY_PNEUMONIA_FAMILY")
+primary_frame = manifest[(manifest.no_finding == 1) | (manifest.pneumonia == 1)].copy()
+primary_frame["label"] = primary_frame.pneumonia.astype(int)
+primary_counts = {
+    int(k): int(v)
+    for k, v in primary_frame.label.value_counts().sort_index().to_dict().items()
+}
+if len(primary_frame) != EXPECTED_PRIMARY_N or primary_counts != EXPECTED_PRIMARY_COUNTS:
+    raise RuntimeError(
+        f"PRIMARY_PNEUMONIA_COHORT_MISMATCH n={len(primary_frame)} counts={primary_counts}"
+    )
+primary = evaluate(primary_frame, "PRIMARY_PNEUMONIA_ONLY")
+primary_frame.to_csv(OUT / "M07_VINDR_PRIMARY_PNEUMONIA_PREDICTIONS.csv", index=False)
 
-sensitivity = manifest[(manifest.label == 0) | (manifest.pneumonia == 1)].copy()
-sensitivity["label"] = sensitivity.pneumonia.astype(int)
-scounts = {int(k): int(v) for k, v in sensitivity.label.value_counts().sort_index().to_dict().items()}
-if len(sensitivity) != 996 or scounts != {0: 907, 1: 89}:
-    raise RuntimeError(f"PNEUMONIA_ONLY_COHORT_MISMATCH n={len(sensitivity)} counts={scounts}")
-sensitivity_result = evaluate(sensitivity, "SENSITIVITY_PNEUMONIA_ONLY")
-sensitivity.to_csv(OUT / "M07_VINDR_PNEUMONIA_ONLY_PREDICTIONS.csv", index=False)
+family_result = evaluate(manifest, "SENSITIVITY_PNEUMONIA_FAMILY")
+manifest.to_csv(OUT / "M07_VINDR_PNEUMONIA_FAMILY_PREDICTIONS.csv", index=False)
 
 oof_metrics = None
 oof_files = list(state_root.rglob("M07_OOF_PRIMARY_METRICS.json"))
@@ -738,7 +786,7 @@ if isinstance(oof_metrics, dict):
             gaps[k] = float(oof_metrics[k]) - float(primary["metrics"][k])
 
 report = {
-    "schema": "m07.external.vindr_pcxr.resolution.v2",
+    "schema": "m07.external.vindr_pcxr.resolution.v3",
     "status": "SCIENTIFIC_RECEIPT_PASS",
     "model": "M07 Final Gate - ConvNeXt-Tiny + EdgeBlock + CBAM + FLSD-53",
     "resolution": IMAGE_SIZE,
@@ -763,7 +811,7 @@ report = {
         "limitation": "No verified public patient/study linkage is available; no synthetic patient identifiers were created.",
     },
     "primary": primary,
-    "sensitivity_pneumonia_only": sensitivity_result,
+    "sensitivity_pneumonia_family": family_result,
     "internal_external_comparison": {
         "oof_internal": oof_metrics,
         "external_primary": primary["metrics"],
@@ -772,7 +820,8 @@ report = {
     "limitations": [
         "External CIs use exam/image resampling rather than verified patient-cluster resampling.",
         "A deterministic DICOM presentation transform precedes the canonical M07 resize path.",
-        "Pneumonia-family harmonization is frozen before inference.",
+        "Primary endpoint uses exact Pneumonia versus clean No finding; all other diagnoses are excluded from the negative class.",
+        "Pneumonia-family harmonization is reported only as a prespecified secondary sensitivity analysis.",
         "No external labels are used for training, model selection, threshold selection, or calibration fitting.",
     ],
 }
@@ -789,9 +838,10 @@ model_card = (
     f"Frozen recipe fingerprint: {EXPECTED_RECIPE}\n\n"
     "External split: VinDr-PCXR test only\n\n"
     "Training/HPO/adaptation/threshold tuning on external: NO\n\n"
-    "Primary endpoint: No finding vs pneumonia-family\n\n"
-    f"Primary N: {len(manifest)} (907 normal, 170 pneumonia-family)\n\n"
-    "Sensitivity endpoint: No finding vs Pneumonia-only\n\n"
+    "Primary endpoint: clean No finding vs exact Pneumonia\n\n"
+    f"Primary N: {len(primary_frame)} (907 No finding, 89 Pneumonia)\n\n"
+    "Sensitivity endpoint: clean No finding vs pneumonia-family "
+    "(Brocho-pneumonia, Pneumonia, Pleuro-pneumonia)\n\n"
     "Confidence intervals: 2,000 exam/image bootstrap resamples because verified patient linkage is unavailable.\n\n"
     "Primary metrics:\n\n"
     + json.dumps(safe_json(primary["metrics"]), indent=2)
@@ -805,12 +855,14 @@ for p in sorted(OUT.rglob("*")):
         hashes[p.relative_to(OUT).as_posix()] = sha256_file(p)
 
 receipt = {
-    "schema": "m07.external.vindr_pcxr.terminal.v2",
+    "schema": "m07.external.vindr_pcxr.terminal.v3",
     "status": "SCIENTIFIC_RECEIPT_PASS",
     "resolution": IMAGE_SIZE,
-    "primary_n": len(manifest),
-    "normal": 907,
-    "pneumonia_family": 170,
+    "primary_n": len(primary_frame),
+    "no_finding": int(primary_counts[0]),
+    "pneumonia": int(primary_counts[1]),
+    "sensitivity_family_n": len(manifest),
+    "pneumonia_family": int((manifest.label == 1).sum()),
     "training_performed": False,
     "hpo_performed": False,
     "external_threshold_tuning": False,
@@ -833,7 +885,7 @@ print("CGP_PHASE:M07_VINDR_EXTERNAL_COMPLETE", flush=True)
 print(json.dumps({
     "status": "SCIENTIFIC_RECEIPT_PASS",
     "resolution": IMAGE_SIZE,
-    "primary_n": len(manifest),
+    "primary_n": len(primary_frame),
     "zip": str(zip_path),
     "zip_sha256": sha256_file(zip_path),
     "receipt_sha256": receipt["receipt_sha256"],
