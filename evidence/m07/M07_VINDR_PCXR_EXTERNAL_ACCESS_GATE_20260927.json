@@ -1,0 +1,78 @@
+{
+  "schema": "m07.external.vindr_pcxr.access_gate.v1",
+  "status": "BLOCKED_DATA_ACCESS",
+  "recorded_at_utc": "2026-09-27T13:34:00Z",
+  "project": "Pneumonia M07 — External Validation / Scientific Closure",
+  "repository": "rezanory/chatgpt-plugins",
+  "dataset": "VinDr-PCXR",
+  "compute_context": {
+    "kaggle_accounts_role": "compute_only",
+    "configured_account_count": 11,
+    "competition_participation_required": false,
+    "note": "The configured Kaggle accounts are compute resources. No scientific requirement depends on joining or competing in a Kaggle competition."
+  },
+  "scientific_guards": {
+    "frozen_model_only": true,
+    "training_performed": false,
+    "hpo_performed": false,
+    "inference_started": false,
+    "external_threshold_tuning": false,
+    "external_adaptation": false,
+    "fail_closed": true
+  },
+  "evidence": {
+    "cloudflare_deploy_run": {
+      "run_id": 36275813000,
+      "conclusion": "cancelled",
+      "head_sha": "ed27e97e796f92a463a82beeb3a5c7ff44996ede"
+    },
+    "preflight_run": {
+      "run_id": 36277407693,
+      "conclusion": "cancelled",
+      "provider_message": "You must accept this competition's rules before you'll be able to add it as a datasource: pediatric-cxr-analysis-challenge",
+      "interpretation": "Kaggle datasource access gate; no dataset mount or scientific inference occurred."
+    },
+    "account_access_scan": {
+      "run_id": 36277617685,
+      "configured_accounts_checked": 11,
+      "accepted_accounts": 0,
+      "terminal": "NO_WORKER_HAS_VINDR_RULES_ACCEPTED"
+    },
+    "external_submission_probe": {
+      "run_id": 36278524263,
+      "conclusion": "failure",
+      "token": "M07_EXTERNAL_VINDR_R224_V2",
+      "terminal": "M07_VINDR_COMPETITION_RULES_NOT_ACCEPTED",
+      "inference_started": false
+    }
+  },
+  "current_code_identity": {
+    "workflow_blob": "155cbe43b89e1d9783f46256dc4edf96419a9b78",
+    "preflight_blob": "0e6cd98e6a20a4e8b2b85ca383ac1e77019aefa1",
+    "preflight_dispatch_blob": "ef3a261cbd7cc5dec59c78c4b3b7c3d38659511c",
+    "external_v2_blob": "000a0c26feec7f4db6262b2a9dc0f907c89f80b0",
+    "external_dispatch_v2_blob": "de97fad38a8e46a3f13818732a9ef9573a57e43a"
+  },
+  "current_scientific_contract": {
+    "primary_endpoint": {
+      "negative": "No finding",
+      "positive": "Pneumonia",
+      "other_diagnoses": "excluded from the negative class"
+    },
+    "expected_primary_cohort_if_official_test_metadata_matches": {
+      "no_finding": 907,
+      "pneumonia": 89,
+      "total": 996
+    },
+    "secondary_sensitivity": "Pneumonia-family may be reported separately; it is not the primary endpoint.",
+    "ci_policy": "Prefer verified patient/study cluster bootstrap when actual identity linkage exists; otherwise image-level bootstrap with explicit limitation."
+  },
+  "next_gate": {
+    "requirement": "Provide an authorized VinDr-PCXR data source that may legally be used for this validation workflow.",
+    "prohibited_shortcuts": [
+      "Do not treat Kaggle competition participation as a project requirement.",
+      "Do not bypass VinDr/PhysioNet access controls or data-use agreements.",
+      "Do not start inference until actual metadata, label mapping, integrity, duplicate, and leakage checks pass."
+    ]
+  }
+}
