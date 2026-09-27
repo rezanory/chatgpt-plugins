@@ -121,6 +121,65 @@ class Phase2RuntimeTests(unittest.TestCase):
         ):
             runtime.admission_preflight(token, run_id)
 
+    def test_preflight_uses_explicit_terminal_list_state_without_status_probe(self):
+        token = "PHASE2_UNIT_M01_R224_A09"
+        run_id = "35599900009"
+        previous_ref = "azadka/pneumonia-v1-7-phase2-m01-r224-a08-35599800008"
+
+        class Broker:
+            def __init__(self):
+                self.calls = []
+
+            def read(self, payload, timeout=90):
+                self.calls.append(payload)
+                if payload.get("method") == "ListKernels":
+                    return {"kernels": [{"ref": previous_ref, "status": "COMPLETE"}]}
+                raise AssertionError(payload)
+
+        broker = Broker()
+        with (
+            mock.patch.object(runtime, "OidcReadBroker", return_value=broker),
+            mock.patch.object(
+                runtime,
+                "_state_snapshot",
+                return_value={"completed_folds": [1], "topology": "SEALED_CGPZIP"},
+            ),
+        ):
+            result = runtime.admission_preflight(token, run_id)
+
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["related_terminal_candidates"], [previous_ref])
+        self.assertEqual([call.get("method") for call in broker.calls], ["ListKernels"])
+
+    def test_preflight_blocks_explicit_active_list_state_without_status_probe(self):
+        token = "PHASE2_UNIT_M01_R224_A09"
+        run_id = "35599900009"
+        previous_ref = "azadka/pneumonia-v1-7-phase2-m01-r224-a08-35599800008"
+
+        class Broker:
+            def __init__(self):
+                self.calls = []
+
+            def read(self, payload, timeout=90):
+                self.calls.append(payload)
+                if payload.get("method") == "ListKernels":
+                    return {"kernels": [{"ref": previous_ref, "status": "RUNNING"}]}
+                raise AssertionError(payload)
+
+        broker = Broker()
+        with (
+            mock.patch.object(runtime, "OidcReadBroker", return_value=broker),
+            mock.patch.object(
+                runtime,
+                "_state_snapshot",
+                return_value={"completed_folds": [1], "topology": "SEALED_CGPZIP"},
+            ),
+            self.assertRaisesRegex(RuntimeError, "active duplicate Phase2 unit"),
+        ):
+            runtime.admission_preflight(token, run_id)
+
+        self.assertEqual([call.get("method") for call in broker.calls], ["ListKernels"])
+
     def test_oidc_refresh_retries_transient_transport(self):
         class Response:
             def __enter__(self):
