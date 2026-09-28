@@ -167,7 +167,7 @@ jobs:
           import json,os,pathlib,urllib.request
           ok=os.environ.get('SOILBIN_V6_23_ITEMS')=='23'
           title='COMPLETE' if ok else 'FAILED_OR_INCOMPLETE'
-          body=(f"## SOILBIN V6 ΓÇö 23-item Kaggle run {title}\n\n"
+          body=(f"## SOILBIN V6 — 23-item Kaggle run {title}\n\n"
                 f"- GitHub run: `{os.environ['GITHUB_RUN_ID']}`\n"
                 f"- Kaggle: `kg-09 / mylovevpn1`\n"
                 f"- Kernel: `{os.environ.get('SOILBIN_V6_23_KERNEL_REF','unknown')}`\n"
@@ -304,7 +304,7 @@ jobs:
           import json,os,urllib.request
           ok=os.environ.get('SOILBIN_V6_23_ITEMS')=='23'
           title='COMPLETE' if ok else 'FAILED_OR_INCOMPLETE'
-          body=(f"## SOILBIN V6 ΓÇö evidence collection {title}\n\n"
+          body=(f"## SOILBIN V6 — evidence collection {title}\n\n"
                 f"- GitHub run: `{os.environ['GITHUB_RUN_ID']}`\n"
                 "- Kaggle: `kg-09 / mylovevpn1`\n"
                 "- Kernel: `mylovevpn1/soilbin-q1-q2-v6-23-item-extension-20260928`\n"
