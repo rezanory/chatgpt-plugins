@@ -485,3 +485,132 @@ jobs:
                        'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'soilbin-v7/1.0'})
           with urllib.request.urlopen(req,timeout=30): pass
           PY
+
+  v7-collect-only:
+    if: ${{ github.event.issue.number == 134 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V7_MEMORY_SPECTRAL_COLLECT_KG09' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Poll existing V7 and collect evidence with OIDC refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,pathlib,time,urllib.request,urllib.error,urllib.parse
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
+          account='kg-09'
+          ref='mylovevpn1/soilbin-q1-q2-v7-memory-spectral-20260928'
+          owner,slug=ref.split('/',1)
+
+          def request_oidc():
+              base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+              sep='&' if '?' in base else '?'
+              target=base+sep+'audience='+urllib.parse.quote('cgp-control-plane-v3',safe='')
+              req=urllib.request.Request(target,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN'],'Accept':'application/json'})
+              with urllib.request.urlopen(req,timeout=30) as r:
+                  tok=str(json.load(r).get('value') or '').strip()
+              if len(tok)<100: raise RuntimeError('fresh read OIDC unavailable')
+              print('::add-mask::'+tok)
+              return tok
+
+          token=request_oidc()
+
+          def call(payload,timeout=120):
+              global token
+              for refresh_attempt in range(2):
+                  req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
+                      headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json','User-Agent':'soilbin-v7-collect/1.0'})
+                  try:
+                      with urllib.request.urlopen(req,timeout=timeout) as r:
+                          val=json.loads(r.read().decode('utf-8','replace') or '{}')
+                      if val.get('ok') is not True or val.get('read_only') is not True:
+                          raise RuntimeError('read broker rejected: '+json.dumps(val)[:1500])
+                      return val.get('result') or {}
+                  except urllib.error.HTTPError as e:
+                      detail=e.read(4000).decode('utf-8','replace')
+                      if e.code==403 and 'GitHub OIDC JWT expired' in detail and refresh_attempt==0:
+                          token=request_oidc()
+                          continue
+                      raise RuntimeError(f'read broker HTTP {e.code}: {detail}') from e
+              raise RuntimeError('read broker refresh exhausted')
+
+          for attempt in range(210):
+              st=call({'action':'raw_read','account_id':account,'service':'kernels.KernelsApiService',
+                       'method':'GetKernelSessionStatus','body':{'userName':owner,'kernelSlug':slug}},60)
+              txt=json.dumps(st,ensure_ascii=False,sort_keys=True).upper()
+              print('V7_COLLECT_STATUS',attempt,txt[:1200],flush=True)
+              if 'COMPLETE' in txt: break
+              if any(x in txt for x in ['ERROR','FAILED','CANCELLED']):
+                  raise SystemExit('V7 Kaggle terminal failure: '+txt[:2400])
+              time.sleep(20)
+          else:
+              raise SystemExit('V7 Kaggle status polling timed out')
+
+          out=call({'action':'output_json_files','account_id':account,'kernel_ref':ref,
+                    'file_names':['RESULTS_V7.json','RUN_MANIFEST_V7.json'],
+                    'max_bytes_per_file':262144},180)
+          files=out.get('files') or []
+          if len(files)!=2:
+              raise SystemExit('expected 2 V7 evidence files, got '+str(len(files))+' :: '+json.dumps(out)[:1800])
+          dest=pathlib.Path(os.environ['RUNNER_TEMP'])/'soilbin-v7-evidence'
+          dest.mkdir(parents=True,exist_ok=True)
+          by={}
+          for item in files:
+              name=str(item.get('file_name') or '')
+              value=item.get('json')
+              if not isinstance(value,dict): raise SystemExit('missing JSON for '+name)
+              by[name]=value
+              (dest/name).write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
+          results=by['RESULTS_V7.json']
+          rep=results.get('baseline_reproduction') or {}
+          if rep.get('within_2pct_of_frozen_v5') is not True:
+              raise SystemExit('V7 baseline reproduction drift gate failed')
+          summary={
+              'kernel_ref':ref,
+              'kaggle_terminal_complete':True,
+              'baseline_reproduction':rep,
+              'best_extension_descriptive':results.get('best_extension_descriptive'),
+              'full_pre_registered_challenger':results.get('full_pre_registered_challenger'),
+              'primary_summary':results.get('primary_summary'),
+              'paired_vs_v5':results.get('paired_vs_v5'),
+              'robustness':results.get('robustness'),
+              'selection_counts':results.get('selection_counts'),
+              'persistence_joint_Group_MAE_N':results.get('persistence_joint_Group_MAE_N')
+          }
+          (dest/'EVIDENCE_SUMMARY_V7.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('SOILBIN_V7_EVIDENCE_DIR='+str(dest)+'\n')
+              h.write('SOILBIN_V7_COMPLETE=1\n')
+          print('SOILBIN_V7_KAGGLE_COMPLETE',json.dumps(summary,ensure_ascii=False),flush=True)
+          PY
+
+      - name: Upload V7 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: soilbin-v7-memory-spectral-evidence
+          path: ${{ env.SOILBIN_V7_EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish V7 collection receipt
+        if: always()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json,os,urllib.request
+          ok=os.environ.get('SOILBIN_V7_COMPLETE')=='1'
+          title='COMPLETE' if ok else 'FAILED_OR_INCOMPLETE'
+          body=(f"SOILBIN V7 evidence collection {title}\n"
+                f"GitHub run: {os.environ['GITHUB_RUN_ID']}\n"
+                "Kaggle: kg-09 / mylovevpn1\n"
+                "Kernel: mylovevpn1/soilbin-q1-q2-v7-memory-spectral-20260928\n"
+                f"V7 evidence gate: {'PASS' if ok else 'not verified'}\n"
+                "No duplicate Kaggle launch was performed.\n")
+          req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/134/comments",
+              data=json.dumps({'body':body}).encode(),method='POST',
+              headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json',
+                       'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'soilbin-v7-collect/1.0'})
+          with urllib.request.urlopen(req,timeout=30): pass
+          PY
