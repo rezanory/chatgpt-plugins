@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   launch-and-collect:
-    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V6_23_LAUNCH_KG09' }}
+    if: ${{ github.event.issue.number == 134 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V6_23_LAUNCH_KG09' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -171,7 +171,7 @@ jobs:
                 f"- Kernel: `mylovevpn1/soilbin-q1-q2-v6-23-extension-20260928`\n"
                 f"- 23-item evidence gate: `{'23/23' if ok else 'not verified'}`\n"
                 "- V5 frozen claims remain unchanged; V6 is post-lock exploratory.\n")
-          req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/33/comments",
+          req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/134/comments",
               data=json.dumps({'body':body}).encode(),method='POST',
               headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json',
                        'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'soilbin-v6-23/1.0'})
