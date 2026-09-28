@@ -1,0 +1,34 @@
+{
+  "schema": "m07.external.rsna_pediatric.manifest.v1",
+  "status": "FROZEN_PREINFERENCE",
+  "source": "RSNA Pneumonia Detection Challenge adjudicated annotations + NIH ChestX-ray14 metadata",
+  "selection": {
+    "age_min": 1,
+    "expanded_age_max": 18,
+    "primary_age_lt": 10,
+    "allowed_calculated_labels": {
+      "0": "Normal",
+      "1": "Lung Opacity"
+    },
+    "excluded": [
+      "No Lung Opacity / Not Normal",
+      "Unlabeled"
+    ]
+  },
+  "counts": {
+    "expanded_images": 1099,
+    "expanded_patients": 553,
+    "expanded_negative": 578,
+    "expanded_positive": 521,
+    "primary_images": 282,
+    "primary_patients": 158,
+    "primary_negative": 146,
+    "primary_positive": 136
+  },
+  "manifest_sha256": "3450a101e626a09535d98e5aa9ca52dbf64ded584c2952f7613e3c22981cf5cd",
+  "source_sha256": {
+    "rsna_mappings_json": "803ce79e3bc9c66d3631738e91e62e1175730e98ad1415e8dc4d6292ba10bf27",
+    "rsna_annotations_json": "f8f5c54bae158fc0e2f019af979471803151a5922463ff3a378d7734e01b18fb",
+    "nih_data_entry_csv": "88f75094e25ccc0c6f1f9cdfd4b2f94f9379a0ae07d5ff4dcf94242707b07462"
+  }
+}

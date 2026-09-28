@@ -12,6 +12,10 @@ const PHASE2_WORKFLOW_REF =
   "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/main";
 const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   [
+    "rezanory/chatgpt-plugins/.github/workflows/soilbin-q1-v6-23-extension.yml@refs/heads/main",
+    new Set(["issue_comment"]),
+  ],
+  [
     "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main",
     new Set(["issue_comment", "workflow_dispatch"]),
   ],
@@ -33,6 +37,10 @@ const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   ],
 ]);
 const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
+  [
+    "rezanory/chatgpt-plugins/.github/workflows/soilbin-q1-v6-23-extension.yml@refs/heads/main",
+    new Set(["issue_comment"]),
+  ],
   [
     "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-8acct-20260912.yml@refs/heads/main",
     new Set(["issue_comment", "workflow_dispatch"]),
