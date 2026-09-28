@@ -984,3 +984,147 @@ jobs:
           path: ${{ runner.temp }}/soilbin-parallel-v10-v15
           if-no-files-found: warn
           retention-days: 30
+
+
+  v16-functional-pass-dynamics:
+    if: ${{ github.event.issue.number == 134 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V16_FUNCTIONAL_PASS_DYNAMICS_LAUNCH_KG09' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout frozen V16 source
+        uses: actions/checkout@v4
+        with:
+          ref: 5b2dd11a9ecdb67751104dbb464942455c6c7c24
+
+      - name: Validate V16 payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='control-plane-payloads/soilbin-q1-v16-pass-dynamics'
+          python -m py_compile "$ROOT/soilbin_v16_runner.py" "$ROOT/launch_soilbin_v16_cloudflare.py"
+          python - <<'PY'
+          import base64,gzip,hashlib,pathlib
+          root=pathlib.Path('control-plane-payloads/soilbin-q1-v16-pass-dynamics')
+          code=(root/'soilbin_v16_runner.py').read_text(encoding='utf-8')
+          required=['LINEAR','LOGARITHMIC','POWER_FREE','EXPONENTIAL_FREE','STRETCHED_EXP_DECAY',
+                    'PIECEWISE_LOG','DECAY_REBOUND','NESTED_SELECTED','RESULTS_V16.json',
+                    'RUN_MANIFEST_V16.json','collapse_confirmed']
+          for token in required:
+              if token not in code: raise SystemExit('missing V16 guard: '+token)
+          encoded=(root/'all_features_51.csv.gz.b64').read_text(encoding='utf-8').strip()
+          raw=gzip.decompress(base64.b64decode(encoded,validate=True))
+          got=hashlib.sha256(raw).hexdigest()
+          expected='dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059'
+          if got!=expected: raise SystemExit('data fingerprint mismatch: '+got)
+          print('SOILBIN_V16_PAYLOAD_OK',hashlib.sha256(code.encode()).hexdigest())
+          PY
+
+      - name: Request trusted write OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.parse,urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']; sep='&' if '?' in base else '?'
+          target=base+sep+'audience='+urllib.parse.quote('cgp-control-plane-v3-action',safe='')
+          req=urllib.request.Request(target,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
+          with urllib.request.urlopen(req,timeout=30) as r: token=json.load(r)['value']
+          if len(token)<100: raise SystemExit('write OIDC unavailable')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('CGP_ACTION_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Launch V16 on Kaggle kg-09
+        shell: bash
+        run: |
+          set -euo pipefail
+          python control-plane-payloads/soilbin-q1-v16-pass-dynamics/launch_soilbin_v16_cloudflare.py
+
+      - name: Poll V16 and collect evidence with OIDC refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,pathlib,time,urllib.error,urllib.parse,urllib.request
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
+          account='kg-09'
+          raw_ref=os.environ.get('SOILBIN_V16_KERNEL_REF','').strip()
+          ref=raw_ref.removeprefix('/code/')
+          if '/' not in ref: raise SystemExit('invalid V16 kernel ref: '+raw_ref)
+          owner,slug=ref.split('/',1)
+
+          def request_oidc():
+              base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']; sep='&' if '?' in base else '?'
+              target=base+sep+'audience='+urllib.parse.quote('cgp-control-plane-v3',safe='')
+              req=urllib.request.Request(target,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN'],'Accept':'application/json'})
+              with urllib.request.urlopen(req,timeout=30) as r: tok=str(json.load(r).get('value') or '').strip()
+              if len(tok)<100: raise RuntimeError('fresh read OIDC unavailable')
+              print('::add-mask::'+tok); return tok
+          token=request_oidc()
+
+          def call(payload,timeout=120):
+              global token
+              for refresh_attempt in range(2):
+                  req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
+                      headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json',
+                               'User-Agent':'soilbin-v16-evidence/1.0'})
+                  try:
+                      with urllib.request.urlopen(req,timeout=timeout) as r:
+                          val=json.loads(r.read().decode('utf-8','replace') or '{}')
+                      if val.get('ok') is not True or val.get('read_only') is not True:
+                          raise RuntimeError('read broker rejected: '+json.dumps(val)[:1500])
+                      return val.get('result') or {}
+                  except urllib.error.HTTPError as e:
+                      detail=e.read(4000).decode('utf-8','replace')
+                      if e.code==403 and 'GitHub OIDC JWT expired' in detail and refresh_attempt==0:
+                          token=request_oidc(); continue
+                      raise RuntimeError(f'read broker HTTP {e.code}: {detail}') from e
+              raise RuntimeError('read broker refresh exhausted')
+
+          for attempt in range(330):
+              st=call({'action':'raw_read','account_id':account,'service':'kernels.KernelsApiService',
+                       'method':'GetKernelSessionStatus','body':{'userName':owner,'kernelSlug':slug}},60)
+              txt=json.dumps(st,ensure_ascii=False,sort_keys=True).upper()
+              print('V16_KAGGLE_STATUS',attempt,txt[:1200],flush=True)
+              if 'COMPLETE' in txt: break
+              if any(x in txt for x in ['ERROR','FAILED','CANCELLED']):
+                  raise SystemExit('V16 Kaggle terminal failure: '+txt[:2400])
+              time.sleep(20)
+          else:
+              raise SystemExit('V16 Kaggle status polling timed out')
+
+          out=call({'action':'output_json_files','account_id':account,'kernel_ref':ref,
+                    'file_names':['RESULTS_V16.json','RUN_MANIFEST_V16.json'],'max_bytes_per_file':1048576},180)
+          files=out.get('files') or []
+          if len(files)!=2: raise SystemExit('expected 2 V16 evidence files, got '+str(len(files))+' :: '+json.dumps(out)[:1800])
+          dest=pathlib.Path(os.environ['RUNNER_TEMP'])/'soilbin-v16-evidence'; dest.mkdir(parents=True,exist_ok=True)
+          by={}
+          for item in files:
+              name=str(item.get('file_name') or ''); value=item.get('json')
+              if not isinstance(value,dict): raise SystemExit('missing JSON for '+name)
+              by[name]=value; (dest/name).write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
+          res=by['RESULTS_V16.json']; man=by['RUN_MANIFEST_V16.json']
+          if res.get('schema')!='soilbin.q1.v16.functional-pass-dynamics': raise SystemExit('unexpected V16 schema')
+          if res.get('does_not_supersede_v5') is not True: raise SystemExit('V16 lock guard failed')
+          if int(res.get('n_valid_runs',0))!=51 or int(res.get('n_consecutive_transitions',0))!=41: raise SystemExit('V16 data gate failed')
+          guards=res.get('guards') or {}
+          if guards.get('random_split_used') is not False or guards.get('outer_group_held_out') is not True:
+              raise SystemExit('V16 validation guard failed')
+          if guards.get('collapse_confirmed') is not False: raise SystemExit('V16 overclaim guard failed')
+          summary={'kernel_ref':ref,'kaggle_terminal_complete':True,
+                   'primary_decision':res.get('primary_decision'),
+                   't6_candidate_transition_evidence':res.get('t6_candidate_transition_evidence'),
+                   'source_sha256':man.get('source_sha256')}
+          (dest/'EVIDENCE_SUMMARY_V16.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('SOILBIN_V16_EVIDENCE_DIR='+str(dest)+'\nSOILBIN_V16_COMPLETE=1\nSOILBIN_V16_KERNEL_REF_NORMALIZED='+ref+'\n')
+          print('SOILBIN_V16_KAGGLE_COMPLETE',json.dumps(summary,ensure_ascii=False),flush=True)
+          PY
+
+      - name: Upload V16 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: soilbin-v16-functional-pass-dynamics-evidence
+          path: ${{ env.SOILBIN_V16_EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 30
