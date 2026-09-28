@@ -1,0 +1,179 @@
+name: soilbin-q1-v6-23-extension
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: soilbin-q1-v6-23-kg09
+  cancel-in-progress: false
+
+jobs:
+  launch-and-collect:
+    if: ${{ github.event.issue.number == 33 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V6_23_LAUNCH_KG09' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Validate V6 23-item payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='control-plane-payloads/soilbin-q1-v6-23-extension'
+          python -m py_compile "$ROOT/soilbin_v6_23_runner.py" "$ROOT/launch_soilbin_v6_23_cloudflare.py"
+          python - <<'PY'
+          import pathlib
+          root=pathlib.Path('control-plane-payloads/soilbin-q1-v6-23-extension')
+          r=(root/'soilbin_v6_23_runner.py').read_text(encoding='utf-8')
+          required=[
+            'EXPECTED_23_ITEMS_GOT','does_not_supersede_v5','ITEM_4_10_HISTORY_SHUFFLE',
+            'ITEM_5_3_SPECTRAL','ITEM_5_5_INFORMATION_DESIGN','ITEM_5_8_TSP',
+            'RESULTS_V6_23.json','random_split_used'
+          ]
+          for token in required:
+              if token not in r: raise SystemExit('missing guard: '+token)
+          print('V6_23_PAYLOAD_OK')
+          PY
+
+      - name: Request trusted write OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.request,urllib.parse
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']; sep='&' if '?' in base else '?'
+          target=base+sep+'audience='+urllib.parse.quote('cgp-control-plane-v3-action',safe='')
+          req=urllib.request.Request(target,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
+          with urllib.request.urlopen(req,timeout=30) as r: token=json.load(r)['value']
+          if len(token)<100: raise SystemExit('write OIDC unavailable')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('CGP_ACTION_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Save and run V6 23-item extension on Kaggle kg-09
+        shell: bash
+        run: |
+          set -euo pipefail
+          python control-plane-payloads/soilbin-q1-v6-23-extension/launch_soilbin_v6_23_cloudflare.py
+
+      - name: Request trusted read OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.request,urllib.parse
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']; sep='&' if '?' in base else '?'
+          target=base+sep+'audience='+urllib.parse.quote('cgp-control-plane-v3',safe='')
+          req=urllib.request.Request(target,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
+          with urllib.request.urlopen(req,timeout=30) as r: token=json.load(r)['value']
+          if len(token)<100: raise SystemExit('read OIDC unavailable')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('CGP_READ_OIDC_TOKEN='+token+'\n')
+          PY
+
+      - name: Poll Kaggle until terminal and collect compact results
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,pathlib,time,urllib.request,urllib.error
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
+          token=os.environ['CGP_READ_OIDC_TOKEN']
+          account='kg-09'
+          ref='mylovevpn1/soilbin-q1-q2-v6-23-extension-20260928'
+          owner,slug=ref.split('/',1)
+          def call(payload,timeout=120):
+              req=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
+                  headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json','User-Agent':'soilbin-v6-23-evidence/1.0'})
+              with urllib.request.urlopen(req,timeout=timeout) as r:
+                  val=json.loads(r.read().decode('utf-8','replace') or '{}')
+              if val.get('ok') is not True or val.get('read_only') is not True:
+                  raise RuntimeError('read broker rejected: '+json.dumps(val)[:1200])
+              return val.get('result') or {}
+          last={}
+          for attempt in range(90):
+              last=call({'action':'raw_read','account_id':account,'service':'kernels.KernelsApiService',
+                         'method':'GetKernelSessionStatus','body':{'userName':owner,'kernelSlug':slug}},60)
+              txt=json.dumps(last,ensure_ascii=False,sort_keys=True).upper()
+              print('KAGGLE_STATUS',attempt,txt[:1000],flush=True)
+              if 'COMPLETE' in txt:
+                  break
+              if any(x in txt for x in ['ERROR','FAILED','CANCELLED']):
+                  raise SystemExit('Kaggle terminal failure: '+txt[:1800])
+              time.sleep(20)
+          else:
+              raise SystemExit('Kaggle status polling timed out')
+          out=call({'action':'output_json_files','account_id':account,'kernel_ref':ref,
+                    'file_names':['RESULTS_V6_23.json','MASTER_MANIFEST_V6_23.json'],
+                    'max_bytes_per_file':524288},180)
+          files=out.get('files') or []
+          if len(files)!=2: raise SystemExit('expected 2 evidence files, got '+str(len(files)))
+          dest=pathlib.Path(os.environ['RUNNER_TEMP'])/'soilbin-v6-23-evidence'
+          dest.mkdir(parents=True,exist_ok=True)
+          by={}
+          for f in files:
+              name=str(f.get('file_name') or '')
+              value=f.get('json')
+              if not isinstance(value,dict): raise SystemExit('missing JSON for '+name)
+              by[name]=value
+              (dest/name).write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
+          results=by['RESULTS_V6_23.json']
+          if len(results.get('items') or [])!=23: raise SystemExit('23-item completeness gate failed')
+          summary={
+            'kernel_ref':ref,
+            'kaggle_terminal_complete':True,
+            'items':len(results['items']),
+            'v5_locked_reference':results.get('v5_locked_reference'),
+            'multichannel_memory':results.get('multichannel_memory'),
+            'raw_vs_summary':results.get('raw_vs_summary'),
+            'lc_ablation':results.get('lc_ablation'),
+            'history_shuffle':results.get('history_shuffle'),
+            'spectral_vs_current':results.get('spectral_vs_current'),
+            'tsp':results.get('tsp'),
+          }
+          (dest/'EVIDENCE_SUMMARY.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              h.write('SOILBIN_V6_23_EVIDENCE_DIR='+str(dest)+'\n')
+              h.write('SOILBIN_V6_23_ITEMS=23\n')
+          print('SOILBIN_V6_23_KAGGLE_COMPLETE',json.dumps(summary,ensure_ascii=False),flush=True)
+          PY
+
+      - name: Upload V6 23-item evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: soilbin-v6-23-kaggle-evidence
+          path: ${{ env.SOILBIN_V6_23_EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish completion receipt
+        if: always()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json,os,pathlib,urllib.request
+          ok=os.environ.get('SOILBIN_V6_23_ITEMS')=='23'
+          title='COMPLETE' if ok else 'FAILED_OR_INCOMPLETE'
+          body=(f"## SOILBIN V6 — 23-item Kaggle run {title}\n\n"
+                f"- GitHub run: `{os.environ['GITHUB_RUN_ID']}`\n"
+                f"- Kaggle: `kg-09 / mylovevpn1`\n"
+                f"- Kernel: `mylovevpn1/soilbin-q1-q2-v6-23-extension-20260928`\n"
+                f"- 23-item evidence gate: `{'23/23' if ok else 'not verified'}`\n"
+                "- V5 frozen claims remain unchanged; V6 is post-lock exploratory.\n")
+          req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/33/comments",
+              data=json.dumps({'body':body}).encode(),method='POST',
+              headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json',
+                       'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'soilbin-v6-23/1.0'})
+          with urllib.request.urlopen(req,timeout=30): pass
+          PY
