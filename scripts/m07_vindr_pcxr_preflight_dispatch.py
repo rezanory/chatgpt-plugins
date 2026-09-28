@@ -67,6 +67,14 @@ if not launch.get("ok") or provider_error:
         raise SystemExit("VINDR_PREFLIGHT_COMPETITION_RULES_NOT_ACCEPTED")
     raise SystemExit("VINDR_PREFLIGHT_SUBMISSION_REJECTED")
 
+provider_ref_raw = str(launch.get("provider_ref") or provider_result.get("ref") or KERNEL_REF)
+provider_ref = provider_ref_raw.strip()
+if provider_ref.startswith("/code/"):
+    provider_ref = provider_ref[len("/code/"):]
+provider_ref = provider_ref.strip("/")
+if provider_ref.count("/") != 1:
+    raise SystemExit("VINDR_PREFLIGHT_PROVIDER_REF_INVALID=" + provider_ref_raw)
+
 def extract_status(value):
     if isinstance(value, dict):
         for key in ("status", "kernelStatus", "state"):
@@ -90,7 +98,7 @@ for attempt in range(1, 81):
     row = post(
         READ_ENDPOINT,
         read_token,
-        {"action": "kernel_status", "account_id": ACCOUNT, "kernel_ref": KERNEL_REF},
+        {"action": "resolved_kernel_status", "account_id": ACCOUNT, "kernel_ref": provider_ref},
         timeout=120,
     )
     history.append(row)
@@ -115,7 +123,7 @@ for page in range(1, 21):
             "account_id": ACCOUNT,
             "service": "kernels.KernelsApiService",
             "method": "ListKernelSessionOutput",
-            "body": {"userName": OWNER, "kernelSlug": SLUG, "page": page, "pageSize": 100},
+            "body": {"userName": provider_ref.split("/", 1)[0], "kernelSlug": provider_ref.split("/", 1)[1], "page": page, "pageSize": 100},
         },
         timeout=120,
     )
