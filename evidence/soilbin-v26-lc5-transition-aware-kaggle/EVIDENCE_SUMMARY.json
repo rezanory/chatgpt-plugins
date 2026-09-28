@@ -1,0 +1,58 @@
+{
+  "account": "kg-07",
+  "kernel_ref": "nisabulutmark/soilbin-v26-lc5-transition-aware-20260928-r1",
+  "status": "COMPLETE",
+  "champion": {
+    "variant": "V23_BASE",
+    "joint_Group_MAE_N": 23.104189837450967,
+    "LC1_Group_MAE_N": 13.009658000484931,
+    "LC5_Group_MAE_N": 33.198721674417,
+    "group_errors": {
+      "V1W1": 26.679648155504346,
+      "V1W2": 22.8423813606651,
+      "V1W3": 15.762018018540763,
+      "V2W1": 23.24407560814631,
+      "V2W2": 14.713222382670555,
+      "V2W3": 19.736590184864287,
+      "V3W1": 29.87782314614057,
+      "V3W2": 28.604939918272148,
+      "V3W3": 26.477009762254603
+    },
+    "joint_improvement_vs_V23_N": 0,
+    "joint_improvement_vs_V23_pct": 0,
+    "LC5_improvement_vs_V23_N": 0,
+    "LC5_improvement_vs_V23_pct": 0,
+    "paired_joint_vs_V23": {
+      "mean_improvement_N": 0,
+      "groups_improved": 0,
+      "exact_signflip_one_sided_p": 1,
+      "bootstrap_95CI_N": [
+        0,
+        0
+      ]
+    },
+    "paired_LC5_vs_V23": {
+      "mean_improvement_N": 0,
+      "groups_improved": 0,
+      "exact_signflip_one_sided_p": 1,
+      "bootstrap_95CI_N": [
+        0,
+        0
+      ]
+    },
+    "LC5_pass_MAE_N": {
+      "2": 45.691295184060756,
+      "3": 27.916645618936013,
+      "4": 27.379212268816154,
+      "5": 23.53017554879846,
+      "6": 44.516399274907194
+    }
+  },
+  "baseline": {
+    "V23_joint_Group_MAE_N": 23.104189837450967,
+    "V23_LC1_Group_MAE_N": 13.009658000484931,
+    "V23_LC5_Group_MAE_N": 33.198721674417
+  },
+  "runner_sha256": "32130d637c2ac5f8f58065dbc2bd66adaea73d9232c127b6ea8f62792c1ec4ff",
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059"
+}

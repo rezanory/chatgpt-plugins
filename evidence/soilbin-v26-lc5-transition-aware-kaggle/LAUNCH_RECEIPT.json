@@ -1,0 +1,16 @@
+{
+  "account": "kg-07",
+  "owner": "nisabulutmark",
+  "kernel_ref": "nisabulutmark/soilbin-v26-lc5-transition-aware-20260928-r1",
+  "recovered_existing": false,
+  "preflight_safe_accounts": [
+    "kg-07",
+    "kg-09",
+    "kg-11",
+    "kg-08"
+  ],
+  "runner_sha256": "32130d637c2ac5f8f58065dbc2bd66adaea73d9232c127b6ea8f62792c1ec4ff",
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "submitted": true,
+  "notebook_sha256": "da979a48f99bf5a7968c726176871fbb8fdcc871f5caf2e06cc8a9ddefe6b73c"
+}
