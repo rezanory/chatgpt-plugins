@@ -1601,7 +1601,7 @@ jobs:
           github.ref == 'refs/heads/main' &&
           startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') }}
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 240
+    timeout-minutes: 480
     env:
       PHASE2_UNIT_TOKEN: ${{ github.event.inputs.recovery }}
       PHASE2_EXPECTED_KERNEL_REF: ${{ needs.launch-m07-continuation.outputs.runtime_kernel_ref }}
