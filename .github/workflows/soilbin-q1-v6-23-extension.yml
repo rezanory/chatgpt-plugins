@@ -1209,3 +1209,60 @@ jobs:
           path: ${{ env.SOILBIN_V16_EVIDENCE_DIR }}
           if-no-files-found: error
           retention-days: 30
+
+
+  v17-v25-parallel-adaptive-state:
+    if: ${{ github.event.issue.number == 134 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_V17_V25_PARALLEL_LAUNCH' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout frozen V17-V25 campaign source
+        uses: actions/checkout@v4
+        with:
+          ref: 5095657
+
+      - name: Validate campaign payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='control-plane-payloads/soilbin-v17-v25-parallel'
+          python -m py_compile "$ROOT/runner.py" "$ROOT/controller.py"
+          python - <<'PY'
+          import base64,gzip,hashlib,pathlib
+          root=pathlib.Path('control-plane-payloads/soilbin-v17-v25-parallel')
+          runner=(root/'runner.py').read_text(encoding='utf-8')
+          controller=(root/'controller.py').read_text(encoding='utf-8')
+          required=[
+            'V17E','V17T','V18','V19','V20','V21','V22','V23','V24','V25',
+            'A_QLOG','B_EQUAL','C_CONVEX','D_PASS_GATE','E_STATE_GATE',
+            'REWARD_ONLY','PENALTY_ONLY','STATE_MAG','T6_PRIOR',
+            'V11_LOCK','23.86044078619803','current_or_future_target_used_for_prediction'
+          ]
+          for token in required:
+              if token not in runner and token not in controller:
+                  raise SystemExit('missing campaign guard: '+token)
+          raw=gzip.decompress(base64.b64decode((root/'all_features_51.csv.gz.b64').read_text().strip(),validate=True))
+          got=hashlib.sha256(raw).hexdigest()
+          expected='dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059'
+          if got!=expected: raise SystemExit('data fingerprint mismatch: '+got)
+          print('SOILBIN_V17_V25_PAYLOAD_OK',
+                hashlib.sha256(runner.encode()).hexdigest(),
+                hashlib.sha256(controller.encode()).hexdigest())
+          PY
+
+      - name: Execute parallel V17-V25 campaign
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -u control-plane-payloads/soilbin-v17-v25-parallel/controller.py
+
+      - name: Upload all available campaign evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soilbin-v17-v25-parallel-evidence
+          path: ${{ env.SOILBIN_V17_V25_EVIDENCE_DIR }}
+          if-no-files-found: warn
+          retention-days: 30
