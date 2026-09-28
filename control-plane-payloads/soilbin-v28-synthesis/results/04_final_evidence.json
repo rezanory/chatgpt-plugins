@@ -1,0 +1,49 @@
+{
+  "schema": "soilbin.v28.final-evidence.v1",
+  "data_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "base_commit": "5740311ef95a11188367474a3e20518456ff2e29",
+  "branch": "feat/soilbin-v28-hierarchical-ensemble-20260928",
+  "executed": {
+    "forward_reverse_true_forward_edges": 60,
+    "force_outer_groups": 9,
+    "hierarchical_outer_groups": 9,
+    "stacked_force_outer_groups": 9
+  },
+  "scientific_labels": {
+    "V28_HIER_SELECTIVE": "PREDECLARED_GROUP_OOF_DEVELOPMENT",
+    "V28_1_LC5_T2T6_STACKED": "POSTHOC_EXPLORATORY_GROUP_OOF",
+    "POSTHOC_PASS_SPECIALIZED_HEADROOM": "DESCRIPTIVE_HEADROOM_ONLY"
+  },
+  "known_execution_events": [
+    "Initial V28.1 worker attempt failed before scientific execution because __file__ was missing in reused namespace; fixed and all 9 folds rerun successfully.",
+    "Initial V28.1 combine attempt had the same __file__ namespace bug; worker outputs were preserved and only fan-in was rerun.",
+    "Hierarchical workers completed and wrote fold outputs; termination requests landed at/after completion for some sessions. Fan-in reproduced exact V23 locks.",
+    "Serial edge-ensemble duplicate was terminated only after 6-chunk parallel fan-in completed all 60 edges."
+  ],
+  "guards": {
+    "random_split_used": false,
+    "future_actual_target_at_forward_inference": false,
+    "outer_speed_load_group_held_out": true,
+    "prior_evidence_overwritten": false
+  },
+  "hashes": {
+    "edge_ensemble": "f7fb8806715d811dae529de60d08337cabae254608f469bf5af5b1c141eb8aae",
+    "simple_force_ensemble": "2bf6a9e33ec1163d069841f5855cdb9ee8984ed668eee71b642b6ee69eff8b33",
+    "hierarchical": "c275cbcd10c4ec7a0e17423b1cea92410cd882c4788e821c7fc690db70c24322",
+    "stacked_force": "19681a51e8e0d79b1e40015b60f8a46b8390c5baced587e003c6c2ffb5851ad0",
+    "synthesis": "510f46c9ebbb3ee9db88c1b6cb07b36d69c9df2a072e939138c427ff282b9b61",
+    "comparison": "15ebf31763c5d8e137a4c0f22d6292624ac17eaf74df80db344defd4d65f4f34",
+    "scientific_synthesis": "0d4c4bcbd6f0d981391d45616878bed07820fef1749d0c6e45bbcbbe071187da",
+    "v29_protocol": "09ff133c14ed65716a687208f2541b6f609b3188eca782a6c42f2b5e9676101a"
+  },
+  "bytes": {
+    "edge_ensemble": 5071,
+    "simple_force_ensemble": 162825,
+    "hierarchical": 1011956,
+    "stacked_force": 47725,
+    "synthesis": 11823,
+    "comparison": 1713,
+    "scientific_synthesis": 2277,
+    "v29_protocol": 3571
+  }
+}

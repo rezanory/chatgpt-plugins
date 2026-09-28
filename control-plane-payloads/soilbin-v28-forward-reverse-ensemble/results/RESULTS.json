@@ -1,0 +1,169 @@
+{
+  "schema": "soilbin.v28.forward-reverse-ensemble.v1",
+  "status": "COMPLETE",
+  "data_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "true_forward_edges": 60,
+  "leakage_guard": {
+    "actual_future_target_used_at_forward_inference": false,
+    "reverse_model_inverted_from_known_source_and_conditions_only": true,
+    "ensemble_weights_selected_outer_training_only": true,
+    "gate_threshold_selected_outer_training_only": true,
+    "stacker_trained_on_outer_training_OOF_predictions_only": true,
+    "random_split_used": false
+  },
+  "methods": [
+    "FORWARD",
+    "REVERSE_INVERTED",
+    "EQUAL_AVG",
+    "CONVEX",
+    "GATED",
+    "STACKED"
+  ],
+  "overall_ranked": [
+    {
+      "method": "STACKED",
+      "subset": "ALL_60",
+      "n_edges": 60,
+      "edges_improved": 34,
+      "edges_equal": 0,
+      "mean_gain_N": 1.9303052241120018,
+      "median_gain_N": 0.8516496765145085,
+      "mean_MAE_N": 38.735225909334005,
+      "sign_binomial_p_two_sided": 0.36629400670329104
+    },
+    {
+      "method": "CONVEX",
+      "subset": "ALL_60",
+      "n_edges": 60,
+      "edges_improved": 23,
+      "edges_equal": 4,
+      "mean_gain_N": -1.8617640251357135,
+      "median_gain_N": -1.1204106620422944,
+      "mean_MAE_N": 42.527295158581715,
+      "sign_binomial_p_two_sided": 0.2288055412343561
+    },
+    {
+      "method": "GATED",
+      "subset": "ALL_60",
+      "n_edges": 60,
+      "edges_improved": 15,
+      "edges_equal": 3,
+      "mean_gain_N": -2.772233678324113,
+      "median_gain_N": -1.793538032390705,
+      "mean_MAE_N": 43.43776481177011,
+      "sign_binomial_p_two_sided": 0.00046000500864878935
+    },
+    {
+      "method": "EQUAL_AVG",
+      "subset": "ALL_60",
+      "n_edges": 60,
+      "edges_improved": 22,
+      "edges_equal": 0,
+      "mean_gain_N": -9.727354331632954,
+      "median_gain_N": -7.03924997518615,
+      "mean_MAE_N": 50.39288546507896,
+      "sign_binomial_p_two_sided": 0.051893895928921435
+    },
+    {
+      "method": "REVERSE_INVERTED",
+      "subset": "ALL_60",
+      "n_edges": 60,
+      "edges_improved": 7,
+      "edges_equal": 0,
+      "mean_gain_N": -36.191628195821906,
+      "median_gain_N": -27.872936528352746,
+      "mean_MAE_N": 76.85715932926792,
+      "sign_binomial_p_two_sided": 7.671918274276823e-10
+    }
+  ],
+  "hard_LC5_T2_T6_ranked": [
+    {
+      "method": "STACKED",
+      "subset": "LC5_T2_T6",
+      "n_edges": 12,
+      "edges_improved": 7,
+      "edges_equal": 0,
+      "mean_gain_N": 7.620446576851329,
+      "median_gain_N": 4.237013053185088,
+      "mean_MAE_N": 57.55262693241186,
+      "sign_binomial_p_two_sided": 0.7744140625
+    },
+    {
+      "method": "CONVEX",
+      "subset": "LC5_T2_T6",
+      "n_edges": 12,
+      "edges_improved": 7,
+      "edges_equal": 2,
+      "mean_gain_N": 0.6141789710353903,
+      "median_gain_N": 0.48074801841788783,
+      "mean_MAE_N": 64.55889453822779,
+      "sign_binomial_p_two_sided": 0.34375
+    },
+    {
+      "method": "GATED",
+      "subset": "LC5_T2_T6",
+      "n_edges": 12,
+      "edges_improved": 4,
+      "edges_equal": 1,
+      "mean_gain_N": -1.2878525692926914,
+      "median_gain_N": -0.5833392321097222,
+      "mean_MAE_N": 66.46092607855589,
+      "sign_binomial_p_two_sided": 0.548828125
+    },
+    {
+      "method": "EQUAL_AVG",
+      "subset": "LC5_T2_T6",
+      "n_edges": 12,
+      "edges_improved": 4,
+      "edges_equal": 0,
+      "mean_gain_N": -25.838226603374892,
+      "median_gain_N": -19.34612911713533,
+      "mean_MAE_N": 91.01130011263808,
+      "sign_binomial_p_two_sided": 0.3876953125
+    },
+    {
+      "method": "REVERSE_INVERTED",
+      "subset": "LC5_T2_T6",
+      "n_edges": 12,
+      "edges_improved": 0,
+      "edges_equal": 0,
+      "mean_gain_N": -73.36494753345421,
+      "median_gain_N": -62.70768290413001,
+      "mean_MAE_N": 138.5380210427174,
+      "sign_binomial_p_two_sided": 0.00048828125
+    }
+  ],
+  "overall_best": {
+    "method": "STACKED",
+    "subset": "ALL_60",
+    "n_edges": 60,
+    "edges_improved": 34,
+    "edges_equal": 0,
+    "mean_gain_N": 1.9303052241120018,
+    "median_gain_N": 0.8516496765145085,
+    "mean_MAE_N": 38.735225909334005,
+    "sign_binomial_p_two_sided": 0.36629400670329104
+  },
+  "hard_LC5_T2_T6_best": {
+    "method": "STACKED",
+    "subset": "LC5_T2_T6",
+    "n_edges": 12,
+    "edges_improved": 7,
+    "edges_equal": 0,
+    "mean_gain_N": 7.620446576851329,
+    "median_gain_N": 4.237013053185088,
+    "mean_MAE_N": 57.55262693241186,
+    "sign_binomial_p_two_sided": 0.7744140625
+  },
+  "best_method_edge_counts": {
+    "STACKED": 26,
+    "EQUAL_AVG": 14,
+    "FORWARD": 13,
+    "GATED": 6,
+    "CONVEX": 1
+  },
+  "oracle_mean_headroom_N": 11.14371282734747,
+  "interpretation_guard": "Reverse inversion is a legal inverse-model estimate; it never receives the actual future target at forward inference.",
+  "parallel_fanin": true,
+  "chunk_count": 6
+}
