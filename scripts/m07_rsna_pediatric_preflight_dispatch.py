@@ -150,14 +150,20 @@ def main():
     if not launch.get("ok") or provider_error:
         raise SystemExit("RSNA_PREFLIGHT_SUBMISSION_REJECTED")
 
-    provider_ref = str(launch.get("provider_ref") or provider_result.get("ref") or kernel_ref)
+    provider_ref_raw = str(launch.get("provider_ref") or provider_result.get("ref") or kernel_ref)
+    provider_ref = provider_ref_raw.strip()
+    if provider_ref.startswith("/code/"):
+        provider_ref = provider_ref[len("/code/"):]
+    provider_ref = provider_ref.strip("/")
+    if provider_ref.count("/") != 1:
+        raise SystemExit("RSNA_PREFLIGHT_PROVIDER_REF_INVALID=" + provider_ref_raw)
     history = []
     terminal = ""
     for attempt in range(1, 121):
         row = post(
             READ_ENDPOINT,
             read_token,
-            {"action": "kernel_status", "account_id": ACCOUNT, "kernel_ref": provider_ref},
+            {"action": "resolved_kernel_status", "account_id": ACCOUNT, "kernel_ref": provider_ref},
             timeout=120,
         )
         history.append(row)
