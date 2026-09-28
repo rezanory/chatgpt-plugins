@@ -945,3 +945,42 @@ jobs:
                        'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'soilbin-v9/1.0'})
           with urllib.request.urlopen(req,timeout=30): pass
           PY
+
+  research-parallel-v10-v15:
+    if: ${{ github.event.issue.number == 134 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_PARALLEL_V10_V15_RESEARCH_B1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 160
+    steps:
+      - name: Checkout frozen campaign source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Validate campaign payload and protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile control-plane-payloads/soilbin-parallel-v10-v15/runner.py control-plane-payloads/soilbin-parallel-v10-v15/controller.py
+          python - <<'PY'
+          import json,pathlib,hashlib,gzip,base64
+          root=pathlib.Path('control-plane-payloads/soilbin-parallel-v10-v15')
+          protocol=json.loads((root/'EXPERIMENT_PROTOCOL.json').read_text())
+          raw=gzip.decompress(base64.b64decode((root.parent/'soilbin-q1-v3/all_features_51.csv.gz.b64').read_text().strip()))
+          assert hashlib.sha256(raw).hexdigest()==protocol['source_sha256']
+          assert protocol['fairness']['strict_meta_crossfit'] is True
+          assert protocol['execution']['cancel_or_overwrite_existing_runs'] is False
+          assert protocol['V14']['validated_multifidelity_status']=='BLOCKED_PENDING_PHYSICAL_METADATA'
+          print('PROTOCOL_VALIDATED',hashlib.sha256((root/'EXPERIMENT_PROTOCOL.json').read_bytes()).hexdigest())
+          PY
+      - name: Capacity audit and five-account fan-out, sixth-account fan-in
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -u control-plane-payloads/soilbin-parallel-v10-v15/controller.py
+      - name: Upload every available campaign receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soilbin-parallel-v10-v15-evidence
+          path: ${{ runner.temp }}/soilbin-parallel-v10-v15
+          if-no-files-found: warn
+          retention-days: 30

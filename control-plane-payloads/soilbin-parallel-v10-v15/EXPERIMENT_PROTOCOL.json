@@ -1,0 +1,97 @@
+{
+  "campaign": "20260928-research-parallel-b1",
+  "version_count": 6,
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "split_sha256": "ee49e9cbc3962eac2fc1a1fd8c933b6dc9712eea1d4c3cb3670c0b4f13c03a21",
+  "target": "predict next-pass LC1/LC5 calibrated vertical force proxy (N)",
+  "target_under_10_N": "research objective only, not acceptance threshold for selectively reporting models",
+  "parallel_lanes": [
+    "V10",
+    "V11",
+    "V12",
+    "V13",
+    "V14"
+  ],
+  "dependent_fan_in": "V15",
+  "V10": {
+    "purpose": "read-only signal/measurement audit",
+    "hardware_calibration_certificate": "not provided",
+    "new_target_definition": false
+  },
+  "V11": {
+    "purpose": "controlled loss/weight/conditional-median ablations",
+    "model_count": 8,
+    "trees": 250
+  },
+  "V12": {
+    "purpose": "TabPFN v2 direct versus delta, predictive median",
+    "package": "tabpfn==2.1.3",
+    "estimators": 2,
+    "device": "cpu",
+    "no_external_data_API": true
+  },
+  "V13": {
+    "purpose": "rank-one/rank-two probabilistic latent-state filtering",
+    "models": 3,
+    "inference": "forward only",
+    "optimizer_maxiter": 90
+  },
+  "V14": {
+    "purpose": "relaxation prior and Gaussian-process discrepancy",
+    "models": 4,
+    "validated_multifidelity_status": "BLOCKED_PENDING_PHYSICAL_METADATA",
+    "synthetic_rows_treated_as_measured": false
+  },
+  "V15": {
+    "purpose": "fixed equal and anchored convex ensemble plus refitted member-removal ablation",
+    "designated_members": [
+      "V5",
+      "QRF_MEDIAN_WEIGHTED",
+      "TABPFN_DELTA",
+      "STATE_RANK1_LOG",
+      "PHYS_EXP_GP",
+      "PERSISTENCE"
+    ],
+    "V5_minimum_weight": 0.5,
+    "other_member_weight_grid": [
+      0,
+      0.125,
+      0.25
+    ],
+    "other_member_maximum_total": 0.5,
+    "sparsity_penalty_N": 0.1,
+    "member_selection_from_outer_scores": false,
+    "inference": "exact grouped sign flip, bootstrap, Holm adjustment; exploratory"
+  },
+  "fairness": {
+    "outer_groups": 9,
+    "history_pairs": 41,
+    "raw_runs": 51,
+    "random_split": false,
+    "drop_hard_samples": false,
+    "change_labels": false,
+    "retrain_or_select_on_outer_test": false,
+    "strict_meta_crossfit": true,
+    "V5_reference_retained": true
+  },
+  "execution": {
+    "private_kernels": true,
+    "dedicated_distinct_account_per_version": true,
+    "GPU_requested": false,
+    "cancel_or_overwrite_existing_runs": false
+  },
+  "limitations": [
+    "Existing groups were used in earlier development; no new independent experiment.",
+    "V14 analytic proxy tests are not a verified physical multifidelity simulator.",
+    "V10 corrected traces cannot recover unknown original ADC/calibration parameters.",
+    "Parallel starts do not imply identical completion times. V15 requires upstream banks."
+  ],
+  "primary_sources": [
+    "https://www.nature.com/articles/s41586-024-08328-6",
+    "https://jmlr.org/papers/v7/meinshausen06a.html",
+    "https://proceedings.mlr.press/v5/alvarez09a.html",
+    "https://arxiv.org/abs/2404.11965",
+    "https://www.jmlr.org/papers/v11/cawley10a.html",
+    "https://pypi.org/project/tabpfn/2.1.3/"
+  ]
+}
