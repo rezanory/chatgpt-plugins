@@ -357,7 +357,7 @@ jobs:
           with urllib.request.urlopen(req,timeout=30) as r: token=json.load(r)['value']
           if len(token)<100: raise SystemExit('write OIDC unavailable')
           print('::add-mask::'+token)
-          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('CGP_ACTION_OIDC_TOKEN='+token+'\\n')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('CGP_ACTION_OIDC_TOKEN='+token+'\n')
           PY
 
       - name: Launch V7 on Kaggle kg-09
@@ -378,7 +378,7 @@ jobs:
           with urllib.request.urlopen(req,timeout=30) as r: token=json.load(r)['value']
           if len(token)<100: raise SystemExit('read OIDC unavailable')
           print('::add-mask::'+token)
-          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('CGP_READ_OIDC_TOKEN='+token+'\\n')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('CGP_READ_OIDC_TOKEN='+token+'\n')
           PY
 
       - name: Poll V7 and collect evidence
@@ -449,9 +449,9 @@ jobs:
           }
           (dest/'EVIDENCE_SUMMARY_V7.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
-              h.write('SOILBIN_V7_EVIDENCE_DIR='+str(dest)+'\\n')
-              h.write('SOILBIN_V7_COMPLETE=1\\n')
-              h.write('SOILBIN_V7_KERNEL_REF_NORMALIZED='+ref+'\\n')
+              h.write('SOILBIN_V7_EVIDENCE_DIR='+str(dest)+'\n')
+              h.write('SOILBIN_V7_COMPLETE=1\n')
+              h.write('SOILBIN_V7_KERNEL_REF_NORMALIZED='+ref+'\n')
           print('SOILBIN_V7_KAGGLE_COMPLETE',json.dumps(summary,ensure_ascii=False),flush=True)
           PY
 
@@ -473,12 +473,12 @@ jobs:
           import json,os,urllib.request
           ok=os.environ.get('SOILBIN_V7_COMPLETE')=='1'
           title='COMPLETE' if ok else 'FAILED_OR_INCOMPLETE'
-          body=(f"SOILBIN V7 memory/fusion/spectral Kaggle run {title}\\n"
-                f"GitHub run: {os.environ['GITHUB_RUN_ID']}\\n"
-                "Kaggle: kg-09 / mylovevpn1\\n"
-                f"Kernel: {os.environ.get('SOILBIN_V7_KERNEL_REF_NORMALIZED',os.environ.get('SOILBIN_V7_KERNEL_REF','unknown'))}\\n"
-                f"Exact V5 reproduction gate: {'PASS' if ok else 'not verified'}\\n"
-                "V7 remains post-lock exploratory; V5 is not overwritten.\\n")
+          body=(f"SOILBIN V7 memory/fusion/spectral Kaggle run {title}\n"
+                f"GitHub run: {os.environ['GITHUB_RUN_ID']}\n"
+                "Kaggle: kg-09 / mylovevpn1\n"
+                f"Kernel: {os.environ.get('SOILBIN_V7_KERNEL_REF_NORMALIZED',os.environ.get('SOILBIN_V7_KERNEL_REF','unknown'))}\n"
+                f"Exact V5 reproduction gate: {'PASS' if ok else 'not verified'}\n"
+                "V7 remains post-lock exploratory; V5 is not overwritten.\n")
           req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/134/comments",
               data=json.dumps({'body':body}).encode(),method='POST',
               headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json',
