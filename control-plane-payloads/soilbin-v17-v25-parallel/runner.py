@@ -427,7 +427,12 @@ def composite_cfg(up):
             "policy":upstream_choice(up,"V21","KEEP"),
             "channel":upstream_choice(up,"V22","SHARED_DYNAMIC")}
 
+_DYN_CACHE={}
 def dyn_predict_split(data,outer,metric,cfg):
+    key=(tuple(sorted(map(str,data.Group.unique()))),str(outer),str(metric),json.dumps(cfg,sort_keys=True,separators=(",",":")))
+    if key in _DYN_CACHE:
+        test,p,meta=_DYN_CACHE[key]
+        return test.copy(),p.copy(),dict(meta)
     train,test,Pin,Pte=expert_bundle(data,outer,metric)
     # base functional ensemble arm
     arm=cfg.get("arm","E_STATE_GATE")
@@ -446,7 +451,9 @@ def dyn_predict_split(data,outer,metric,cfg):
     t6p=t6_prior_from_inner(train.assign(D_joint=train[metric]),Pin) if metric=="D_joint" else np.ones(len(EXPERTS))/len(EXPERTS)
     eta,_=tune_eta(qtrain,Pin,Wtr,mode,law,shape,policy,1.5,t6p) if mode!="NONE" else (0.,0.)
     p,W=simulate_online(qtest,Pte,Wte,mode,eta,law,shape,policy,1.5,t6p,float(np.median(qtrain.D_joint)))
-    return test,p,{"eta":eta,"W":W}
+    meta={"eta":eta,"W":W}
+    _DYN_CACHE[key]=(test.copy(),p.copy(),dict(meta))
+    return test,p,meta
 
 # ---------- V11 force baseline and V23 integration ----------
 def fit_force_rf(train,test,extra_train=None,extra_test=None):
