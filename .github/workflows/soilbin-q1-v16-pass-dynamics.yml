@@ -2,6 +2,11 @@ name: soilbin-q1-v16-pass-dynamics
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'control-plane-payloads/soilbin-q1-v16-pass-dynamics/**'
+      - '.github/workflows/soilbin-q1-v16-pass-dynamics.yml'
 
 permissions:
   id-token: write
