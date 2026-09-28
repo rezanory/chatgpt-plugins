@@ -1,0 +1,52 @@
+{
+  "schema": "soilbin.v29.final-evidence.v1",
+  "program_progress_pct": 100.0,
+  "data_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "base_commit": "d7065acd023ded41d52e7c05891c6bc1acbba6b8",
+  "branch": "feat/soilbin-v29-meta-reward-20260929",
+  "executed": {
+    "v29_fixed_routing": true,
+    "v29_1_meta_outer_groups": 9,
+    "v29_1_modules": [
+      "Error Predictor",
+      "Winner Classifier",
+      "Generalization-Gap Predictor",
+      "Meta-Router"
+    ],
+    "v29_2_reward_outer_groups": 9,
+    "v29_2_new_relative_modes": 6
+  },
+  "execution_events": [
+    "Initial V29.2 orchestration attempt failed before scientific execution because source slicing matched a marker inside a string literal; no failed-run result was accepted.",
+    "V29.2 source slicing was corrected to the final marker; all 9 folds were rerun from zero and wrote COMPLETE outputs.",
+    "Three successful V29.2 sessions were reported interrupted at transport close after writing COMPLETE output files; fan-in verified all 9 files and exact V23 lock."
+  ],
+  "guards": {
+    "outer_speed_load_group_held_out": true,
+    "random_split_used": false,
+    "outer_test_label_used_for_own_training": false,
+    "current_test_result_affects_current_prediction_in_reward": false,
+    "observed_result_affects_only_later_passes": true,
+    "future_target_leakage": false
+  },
+  "hashes": {
+    "fixed": "d39e58bca814ba6202ed398fb8a71bf4d05f2d73952c203f2e3b2498a7cfa9d8",
+    "meta": "5ecf6cad4daf59077b40c81e30ee8aa8ddae189f0af1240bd6f8df3e53390c27",
+    "reward": "3e185183a28321280d37801a67a92adbe29ac4b5b7a4c598808f103f93808205",
+    "synthesis": "f0ce3d41933821a56646bf7ada73d9b3c8e9976293e1344483b573a44e405893",
+    "table": "0c89b1b9ad3ae23b6293ca474d93822856487ad6148bfee621c4790a76d3af73",
+    "report": "ef05defd85268461697b528264c5c41511e3877292f4b415c36ec033e1ff811e",
+    "meta_protocol": "13f4ff2c2245b8fb82bb08a3d234c5543158eaa05c168e8a2939f33f9bb13043",
+    "reward_protocol": "5d5c7d59eeb2e2bc1d3a4038e5f338ed1a3c43ad3e41e5be3c5233cba9ce927c"
+  },
+  "bytes": {
+    "fixed": 17834,
+    "meta": 18966,
+    "reward": 22473,
+    "synthesis": 19985,
+    "table": 4616,
+    "report": 1639,
+    "meta_protocol": 1226,
+    "reward_protocol": 997
+  }
+}
