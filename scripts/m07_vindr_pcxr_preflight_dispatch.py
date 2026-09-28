@@ -3,8 +3,8 @@ import json, os, pathlib, time, urllib.error, urllib.parse, urllib.request
 
 ACTION_ENDPOINT = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
 READ_ENDPOINT = "https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle"
-ACCOUNT = "kg-05"
-KERNEL_REF = "trickermark/m07-vindr-pcxr-preflight-20260927"
+ACCOUNT = "kg-03"
+KERNEL_REF = "rezanory/m07-vindr-pcxr-mirror-v1-preflight-20260928"
 OWNER, SLUG = KERNEL_REF.split("/", 1)
 ROOT = pathlib.Path(os.environ["RUNNER_TEMP"])
 SCRIPT = pathlib.Path("scripts/m07_vindr_pcxr_preflight.py").read_text(encoding="utf-8")
@@ -33,7 +33,7 @@ action_token = os.environ["CGP_ACTION_OIDC_TOKEN"]
 read_token = os.environ["CGP_READ_OIDC_TOKEN"]
 
 payload = {
-    "request_id": "m07-vindr-pcxr-preflight-kg05-20260927-v2",
+    "request_id": "m07-vindr-pcxr-mirror-v1-preflight-kg03-20260928",
     "provider": "kaggle",
     "operation_class": "compute",
     "account_id": ACCOUNT,
@@ -42,7 +42,7 @@ payload = {
     "method": "SaveKernel",
     "body": {
         "slug": KERNEL_REF,
-        "newTitle": "M07 VinDr-PCXR External Preflight 20260927 V2",
+        "newTitle": "M07 VinDr-PCXR Mirror V1 External Preflight 20260928",
         "text": SCRIPT,
         "language": "python",
         "kernelType": "script",
@@ -52,8 +52,8 @@ payload = {
         "enableTpu": False,
         "enableInternet": True,
         "kernelDataSources": [],
-        "datasetDataSources": [],
-        "competitionDataSources": ["pediatric-cxr-analysis-challenge"],
+        "datasetDataSources": ["cellercity/vindr-pcxr-zipped/versions/1"],
+        "competitionDataSources": [],
         "modelDataSources": [],
     },
 }
@@ -145,5 +145,5 @@ out = ROOT / "M07_VINDR_PCXR_PREFLIGHT.json"
 out.write_bytes(data)
 receipt = json.loads(data.decode("utf-8"))
 print("M07_VINDR_PREFLIGHT_RECEIPT", json.dumps(receipt, sort_keys=True), flush=True)
-if receipt.get("status") != "PASS_DATASET_SCHEMA":
+if receipt.get("status") != "PASS_DATASET_SCHEMA_AND_LABEL_MAP":
     raise SystemExit("VINDR_PREFLIGHT_DATASET_SCHEMA_BLOCKED")
