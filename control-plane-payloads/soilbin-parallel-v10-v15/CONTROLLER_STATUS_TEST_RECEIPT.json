@@ -1,0 +1,17 @@
+{
+  "status": "PASS",
+  "checks_passed": 5,
+  "observed_cancelled_sessions_not_active": true,
+  "unknown_sessions_still_fail_closed": true,
+  "network_calls": 0,
+  "scientific_model_code_changed": false,
+  "source_run": 36440415257,
+  "derived_active_or_unknown": {
+    "kg-02": 0,
+    "kg-06": 0,
+    "kg-07": 0,
+    "kg-08": 1,
+    "kg-09": 0,
+    "kg-11": 0
+  }
+}
