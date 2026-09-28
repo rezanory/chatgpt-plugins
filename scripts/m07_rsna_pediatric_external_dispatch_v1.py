@@ -237,52 +237,119 @@ def main():
     )
     code = preamble + source[len(future):]
 
-    slug = f"m07-rsna-pediatric-r{resolution}-v1-{args.run_id}"
+    slug = f"m07-rsna-pediatric-external-r{resolution}-v1-{args.run_id}"
     kernel_ref = f"{owner}/{slug}"
-    launch_payload = {
-        "request_id": f"m07-rsna-pediatric-r{resolution}-v1-{args.run_id}",
-        "provider": "kaggle",
-        "operation_class": "compute",
-        "account_id": account_id,
-        "purpose": (
-            f"Frozen M07 R{resolution} independent RSNA pediatric external validation. "
-            "Inference only; cohort frozen before inference; no HPO, retraining, "
-            "adaptation, calibration fitting, external threshold tuning, or model selection."
-        ),
-        "service": "kernels.KernelsApiService",
-        "method": "SaveKernel",
-        "body": {
-            "slug": kernel_ref,
-            "newTitle": f"M07 RSNA Pediatric External R{resolution} V1 {args.run_id}",
-            "text": code,
-            "language": "python",
-            "kernelType": "script",
-            "kernelExecutionType": "SAVE_AND_RUN_ALL",
-            "isPrivate": True,
-            "enableGpu": True,
-            "enableTpu": False,
-            "enableInternet": False,
-            "kernelDataSources": [],
-            "datasetDataSources": [state_handle, DATASET_REF],
-            "competitionDataSources": [],
-            "modelDataSources": [],
-        },
-    }
-    launch = post_json(ACTION_ENDPOINT, action_token, launch_payload)
     launch_path = runner_temp / f"m07-rsna-r{resolution}-launch.json"
-    write_json(launch_path, launch)
-    print("M07_RSNA_EXTERNAL_LAUNCH", json.dumps(launch, sort_keys=True), flush=True)
 
-    provider_result = launch.get("result") if isinstance(launch.get("result"), dict) else {}
-    provider_error = str(provider_result.get("error") or launch.get("error") or "")
-    if not launch.get("ok") or provider_error:
-        raise SystemExit("M07_RSNA_EXTERNAL_SUBMISSION_REJECTED")
-
-    provider_ref = normalize_kernel_ref(
-        launch.get("provider_ref") or provider_result.get("ref") or kernel_ref,
-        kernel_ref,
-        owner,
+    # Idempotent recovery gate: reuse the exact run if it already exists.
+    existing = post_json(
+        READ_ENDPOINT,
+        read_token,
+        {
+            "action": "resolved_kernel_status",
+            "account_id": account_id,
+            "kernel_ref": kernel_ref,
+        },
+        timeout=120,
     )
+    existing_status = recursive_status(existing)
+    transient_probe_status = int(existing.get("http_status") or 0)
+    if transient_probe_status in {408, 425, 429, 500, 502, 503, 504}:
+        write_json(
+            launch_path,
+            {
+                "ok": False,
+                "reused_existing": False,
+                "existing_probe": existing,
+                "kernel_ref": kernel_ref,
+            },
+        )
+        raise SystemExit(
+            f"M07_RSNA_EXISTING_KERNEL_PROBE_TRANSIENT_HTTP_{transient_probe_status}"
+        )
+
+    if existing_status in {"ERROR", "CANCELLED"}:
+        write_json(
+            launch_path,
+            {
+                "ok": False,
+                "reused_existing": True,
+                "existing_status": existing_status,
+                "kernel_ref": kernel_ref,
+            },
+        )
+        raise SystemExit("M07_RSNA_EXISTING_KERNEL_TERMINAL_" + existing_status)
+
+    if existing_status in {"QUEUED", "RUNNING", "COMPLETE"}:
+        provider_ref = kernel_ref
+        launch = {
+            "ok": True,
+            "reused_existing": True,
+            "existing_status": existing_status,
+            "provider_ref": provider_ref,
+            "account_id": account_id,
+            "resolution": resolution,
+        }
+        write_json(launch_path, launch)
+        print(
+            "M07_RSNA_EXTERNAL_REUSE",
+            json.dumps(launch, sort_keys=True),
+            flush=True,
+        )
+    else:
+        launch_payload = {
+            "request_id": f"m07-rsna-pediatric-external-r{resolution}-v1-{args.run_id}",
+            "provider": "kaggle",
+            "operation_class": "compute",
+            "account_id": account_id,
+            "purpose": (
+                f"Frozen M07 R{resolution} independent RSNA pediatric external validation. "
+                "Inference only; cohort frozen before inference; no HPO, retraining, "
+                "adaptation, calibration fitting, external threshold tuning, or model selection."
+            ),
+            "service": "kernels.KernelsApiService",
+            "method": "SaveKernel",
+            "body": {
+                "slug": kernel_ref,
+                "newTitle": f"M07 RSNA Pediatric External R{resolution} V1 {args.run_id}",
+                "text": code,
+                "language": "python",
+                "kernelType": "script",
+                "kernelExecutionType": "SAVE_AND_RUN_ALL",
+                "isPrivate": True,
+                "enableGpu": True,
+                "enableTpu": False,
+                "enableInternet": False,
+                "kernelDataSources": [],
+                "datasetDataSources": [state_handle, DATASET_REF],
+                "competitionDataSources": [],
+                "modelDataSources": [],
+            },
+        }
+        launch = post_json(ACTION_ENDPOINT, action_token, launch_payload)
+        write_json(launch_path, launch)
+        print(
+            "M07_RSNA_EXTERNAL_LAUNCH",
+            json.dumps(launch, sort_keys=True),
+            flush=True,
+        )
+
+        provider_result = (
+            launch.get("result")
+            if isinstance(launch.get("result"), dict)
+            else {}
+        )
+        provider_error = str(
+            provider_result.get("error") or launch.get("error") or ""
+        )
+        if not launch.get("ok") or provider_error:
+            raise SystemExit("M07_RSNA_EXTERNAL_SUBMISSION_REJECTED")
+
+        provider_ref = normalize_kernel_ref(
+            launch.get("provider_ref") or provider_result.get("ref") or kernel_ref,
+            kernel_ref,
+            owner,
+        )
 
     history = []
     terminal = ""
