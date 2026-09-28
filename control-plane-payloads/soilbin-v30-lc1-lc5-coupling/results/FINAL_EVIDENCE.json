@@ -1,0 +1,66 @@
+{
+  "schema": "soilbin.v30.final-evidence.v1",
+  "status": "COMPLETE",
+  "program_progress_pct": 100.0,
+  "branch": "feat/soilbin-v30-lc1-lc5-coupling-20260929",
+  "base_commit": "161cd4ea5b8c3f4ef2c0e31dccee5f47e36420d8",
+  "canonical_data_fingerprint": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "waveform_source_sha256": "ea227f412827a962a1876ceb9aeb9946034b435052e9e74115e32bd7dca73cb0",
+  "executed": {
+    "runs": 51,
+    "speed_load_groups": 9,
+    "historical_same_pass_edges_verified": 12,
+    "historical_all_cross_sensor_edges_verified": 72,
+    "ratio_stratifications": [
+      "pass",
+      "speed",
+      "load",
+      "speed×load",
+      "speed×load×pass"
+    ],
+    "adjacent_transition_elasticity": true,
+    "nested_group_oof_ratio_models": true,
+    "waveform_rows": 80958,
+    "waveform_lag_scan": true,
+    "waveform_group_oof_delay_model": true
+  },
+  "guards": {
+    "random_split_used": false,
+    "whole_speed_load_group_holdout_for_predictive_models": true,
+    "future_target_leakage": false,
+    "same_pass_historical_edges_not_relabelled_as_new": true,
+    "delay_interpretation_guard": "observed sensor/channel offset; not soil propagation until geometry/timing verified"
+  },
+  "hashes": {
+    "PROTOCOL.md": "adb54815ef63d65c9810d64d5439ce71aa1dc8e5c85a82a54d7739ca8ffc3696",
+    "analyze.py": "ab9c3d31a745797d0e7b8c46ff21ff3f4eb93ca1a695d17bc45fc1921d12e3fe",
+    "results/RESULTS.json": "c50d05e1817e2ef8f3b60c999895d06d59334e9b615d16480189820788410cfc",
+    "results/SCIENTIFIC_FINDINGS.md": "47a37e811a7fbdb9e1ea745ab496bb551bedf04aa99e3520efe69c0d1c2cbc04",
+    "results/02_ratio_by_pass.csv": "36a2a6ac7f385288b39e04d1e319398a42dd6dff77982e9805a0f3b3b777c98d",
+    "results/03_ratio_by_speed.csv": "871f825c393c1fffeaac4cfe718ab8105d477be702eff0ef2f1a07d50b848cc4",
+    "results/04_ratio_by_load.csv": "01613bc47645c712df1d2c54ed50ab3b17aab7a9fcaffb9268e060170ced9122",
+    "results/06_same_pass_coupling_by_pass.csv": "7993f185f7bd21c97216b264e745e7fcdacc5d50400f0c32bca054d6c1984c0d",
+    "results/08_transition_summary.csv": "2b62cd9f5dac1cf84e8e82115da85176ea94f9c8656fe4b723902e2b65ca0172",
+    "results/09_v27_same_pass_directed_edges.csv": "8c2bac3ee5ea3e0860cef2d94936d8d3eb7824e4b50b124c861871413a7dcc5f",
+    "results/10_v27_all_cross_sensor_directed_edges.csv": "26818846c70fd14d01359441a8fee553ed20e551bcef8055f12b5c5161c05bee",
+    "results/11_ratio_model_group_oof_results.csv": "5ab788987cae6a1a2348a41d2d4f0e108c9d56c1e0f4e06d204d505658b26932",
+    "results/15_waveform_coupling_summary.json": "7e0d02ec7c0862c05a43c2b8ce0f3101abd05ac3e3cf9cd91d06f051d674a808",
+    "results/16_waveform_findings.md": "d847e351cad6446ab0afb99dc93056365b5f5106767aa918acd71f06cfee2953"
+  },
+  "bytes": {
+    "PROTOCOL.md": 1567,
+    "analyze.py": 22852,
+    "results/RESULTS.json": 18346,
+    "results/SCIENTIFIC_FINDINGS.md": 1518,
+    "results/02_ratio_by_pass.csv": 1608,
+    "results/03_ratio_by_speed.csv": 930,
+    "results/04_ratio_by_load.csv": 930,
+    "results/06_same_pass_coupling_by_pass.csv": 1073,
+    "results/08_transition_summary.csv": 1030,
+    "results/09_v27_same_pass_directed_edges.csv": 8206,
+    "results/10_v27_all_cross_sensor_directed_edges.csv": 45928,
+    "results/11_ratio_model_group_oof_results.csv": 1724,
+    "results/15_waveform_coupling_summary.json": 2270,
+    "results/16_waveform_findings.md": 1342
+  }
+}

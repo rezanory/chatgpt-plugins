@@ -1,0 +1,1172 @@
+[
+  {
+    "outer_group": "V1W1",
+    "models": {
+      "COND_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.34103058395733604
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.37449901704249805
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.425279939736395
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5136328241938303
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5397710534189624
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.34194065066536894
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.36766965525382156
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.414652277135543
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5417276349459
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5857072055390035
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO_PREV": {
+        "selected_alpha": 10.0,
+        "inner_scores": [
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.28420774382831004
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3034673497087999
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.32051342175094344
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.43179453799618583
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.48759356039575147
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO": {
+        "selected_alpha": 1.0,
+        "inner_scores": [
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.22836557515987116
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.24449572174844209
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.28120772819923356
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.2930689105946401
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.31057670524858333
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO_PREV": {
+        "selected_alpha": 1.0,
+        "inner_scores": [
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.20647451999052135
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.2162077268826021
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.24838388181973742
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.26435031235640505
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.28086153426578747
+          }
+        ]
+      }
+    }
+  },
+  {
+    "outer_group": "V1W2",
+    "models": {
+      "COND_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3670584787692873
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.3951340010824308
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.4524310403289209
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5198916006317387
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5356404953611946
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3707230863708916
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.3971737401536225
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.41020235605589095
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.4661789294007799
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.4956845256165271
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO_PREV": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3396380183485288
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.3398062638764767
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.3804778451759328
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.439331272020883
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.4721930754993017
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO": {
+        "selected_alpha": 1.0,
+        "inner_scores": [
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.28654948555498744
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.29204599708296153
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.31308350952087305
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3209521206308882
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.3231778240116532
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO_PREV": {
+        "selected_alpha": 1.0,
+        "inner_scores": [
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.2217420620930219
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.24743041305111887
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.2566766076410427
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.27559609559529785
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.2952159222609779
+          }
+        ]
+      }
+    }
+  },
+  {
+    "outer_group": "V1W3",
+    "models": {
+      "COND_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3713493270284657
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.41110667043083104
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.4709691305133383
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5375451580659248
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5565820264497734
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3740031294846761
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.4140446279425184
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.43725094048237606
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.4381230823231031
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.4393906941380535
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO_PREV": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3459463790728221
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.355798067838036
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.40130502603066653
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.4178794817691321
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.4246311210060777
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO": {
+        "selected_alpha": 0.01,
+        "inner_scores": [
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.21228287707712049
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.22046907457519102
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.2774468058917444
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.2996841730090117
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3230333264693041
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO_PREV": {
+        "selected_alpha": 0.01,
+        "inner_scores": [
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.1607499694616054
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.16241002510562746
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.21461511958348772
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.2510837184792166
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.2991949936486829
+          }
+        ]
+      }
+    }
+  },
+  {
+    "outer_group": "V2W1",
+    "models": {
+      "COND_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3052819127170748
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.34257921399411656
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.4086628269607277
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.4653454678482057
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.47790779288785007
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.31164613168562016
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.37854044737041453
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.44494779072813256
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5369296377095525
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5764848543319427
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO_PREV": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.2910950130533315
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.3352722121430439
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.39824075435428646
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.46664465359957186
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.4958515791698272
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO": {
+        "selected_alpha": 10.0,
+        "inner_scores": [
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.2521929899385872
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.26876841692113596
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.2962462740268289
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.35616436499511434
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.3735522607203976
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO_PREV": {
+        "selected_alpha": 10.0,
+        "inner_scores": [
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.24374405833636079
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.2597414792458851
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.2712414297207393
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.3304155778060777
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.3525219468014228
+          }
+        ]
+      }
+    }
+  },
+  {
+    "outer_group": "V2W2",
+    "models": {
+      "COND_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3674912173274003
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.40015792483605395
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.46063666049645535
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5201504660302345
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5356397772791781
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3703430495978121
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.40510643443139516
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.44431635309703366
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5460527591594952
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5818551485986656
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO_PREV": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3433797869414712
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.34500694402336407
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.40036290148407605
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.48442146770362793
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5250101815110928
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO": {
+        "selected_alpha": 10.0,
+        "inner_scores": [
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.291236135881728
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.3009690647038243
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.32067594037872
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.3480716127898146
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.36296308153149925
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO_PREV": {
+        "selected_alpha": 10.0,
+        "inner_scores": [
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.25541133603777977
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.2577633795905525
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.2979175245229821
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.32206261291050353
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.34660514300700285
+          }
+        ]
+      }
+    }
+  },
+  {
+    "outer_group": "V2W3",
+    "models": {
+      "COND_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.38036355995195475
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.42431087422742253
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.49412009624671044
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5667138519510003
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5825207352864574
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.38268844634621885
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.42821420291217416
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.46976510695421275
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5699012542653058
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.6059499136847378
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO_PREV": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.352675757309621
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.3633037631798174
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.41995234581939134
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.49364775525371285
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5285134172980632
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO": {
+        "selected_alpha": 1.0,
+        "inner_scores": [
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.2883685033000297
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.29521336567748446
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3304522392020931
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.3364923902327397
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.35196702042562367
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO_PREV": {
+        "selected_alpha": 1.0,
+        "inner_scores": [
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.24893076931707062
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.25537876732028164
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.3047961742082428
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.30634600453932415
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.3263164225547909
+          }
+        ]
+      }
+    }
+  },
+  {
+    "outer_group": "V3W1",
+    "models": {
+      "COND_RATIO": {
+        "selected_alpha": 0.1,
+        "inner_scores": [
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.24038108324959034
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.24131021033752506
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.26387194793051505
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.29241842666724627
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3225165537773614
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO": {
+        "selected_alpha": 1.0,
+        "inner_scores": [
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.24791160329209233
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.2643411152475661
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.27386768392147653
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.2845212215985935
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3235906713542012
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO_PREV": {
+        "selected_alpha": 10.0,
+        "inner_scores": [
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.2527611833979989
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.25836143293641856
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.29016854840400674
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.30257322792341684
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.30547967643722224
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO": {
+        "selected_alpha": 1.0,
+        "inner_scores": [
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.22926817896462642
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.23767019446204996
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.24321750283467464
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.2478798273613697
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.29070791661568707
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO_PREV": {
+        "selected_alpha": 1.0,
+        "inner_scores": [
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.23587103830256545
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.23980306989290745
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.2513981047882023
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.2604593824592325
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.27459627996898367
+          }
+        ]
+      }
+    }
+  },
+  {
+    "outer_group": "V3W2",
+    "models": {
+      "COND_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.293358184683195
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.3082606993300194
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.336410460205571
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.37458851897847617
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.38641136452660074
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.2959124955361878
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.3119757933173558
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.3296426378670637
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.38727468047799884
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.4136300514036534
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO_PREV": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.28293772072247725
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.2984475443897483
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.3282383399727143
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.38245221285369135
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.41039312581804965
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO": {
+        "selected_alpha": 10.0,
+        "inner_scores": [
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.23647210795005763
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.25969934545127005
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.26456965458147463
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.31592930448357937
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.33054740050592796
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO_PREV": {
+        "selected_alpha": 10.0,
+        "inner_scores": [
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.22259379320356054
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.24901334115792517
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.251411102546221
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.31437176352247925
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.3355887221730964
+          }
+        ]
+      }
+    }
+  },
+  {
+    "outer_group": "V3W3",
+    "models": {
+      "COND_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3546664199458933
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.3939357242296114
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.4392195620707141
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5137005434006068
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5320961729315054
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.35574588941703633
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.403009905257921
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.4592995456010702
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.5649066394556139
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5940771772541511
+          }
+        ]
+      },
+      "LC5_FROM_LC1_RATIO_PREV": {
+        "selected_alpha": 100.0,
+        "inner_scores": [
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.3353091126352151
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.3653421568483491
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.41672336521978315
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.510534402542347
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.5445218047573286
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO": {
+        "selected_alpha": 1.0,
+        "inner_scores": [
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.21170163627099267
+          },
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.22443731870479353
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.2454375416084433
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.2575047832404243
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.29983155072935574
+          }
+        ]
+      },
+      "LC1_FROM_LC5_RATIO_PREV": {
+        "selected_alpha": 10.0,
+        "inner_scores": [
+          {
+            "alpha": 10.0,
+            "inner_group_equal_log_ratio_MAE": 0.20407679305064136
+          },
+          {
+            "alpha": 1.0,
+            "inner_group_equal_log_ratio_MAE": 0.2040985085165705
+          },
+          {
+            "alpha": 0.1,
+            "inner_group_equal_log_ratio_MAE": 0.24539887667565824
+          },
+          {
+            "alpha": 0.01,
+            "inner_group_equal_log_ratio_MAE": 0.2568992707562845
+          },
+          {
+            "alpha": 100.0,
+            "inner_group_equal_log_ratio_MAE": 0.28519798008543396
+          }
+        ]
+      }
+    }
+  }
+]

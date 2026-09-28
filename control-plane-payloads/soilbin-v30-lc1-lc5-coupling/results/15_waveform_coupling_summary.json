@@ -1,0 +1,47 @@
+{
+  "schema": "soilbin.v30.waveform-coupling.v1",
+  "status": "COMPLETE",
+  "source_file": "timeseries_long_lc1_lc5.csv",
+  "source_sha256": "ea227f412827a962a1876ceb9aeb9946034b435052e9e74115e32bd7dca73cb0",
+  "n_rows": 80958,
+  "n_runs": 51,
+  "overall": {
+    "zero_lag_full_pearson_mean": -0.017928913351528058,
+    "zero_lag_active_signed_mean": -0.6142334875421128,
+    "best_lag_xcorr_r_mean": 0.9763880097619099,
+    "best_lag_xcorr_r_median": 0.9860563373645934,
+    "best_lag_ms_median": 1248.0,
+    "peak_delay_ms_median": 1200.0,
+    "xcorr_lag_vs_peak_delay_pearson_r": 0.9952074245316022,
+    "xcorr_vs_peak_delay_abs_diff_median_ms": 30.0,
+    "lag_aligned_waveform_R2_mean": 0.9540500541915443,
+    "lag_aligned_waveform_R2_median": 0.9723071004568735,
+    "lag_aligned_scale_median": 1.53505539994266,
+    "lag_aligned_scale_vs_peak_ratio_pearson_r": 0.9394678109348132,
+    "lag_aligned_scale_vs_impulse_ratio_pearson_r": 0.7576383337601317,
+    "speed_level_times_peak_delay_cv_pct": 5.725898734589241,
+    "peak_delay_vs_inverse_speed_pearson_r": 0.9898419424381666
+  },
+  "lag_group_oof": {
+    "model": "delay = a*(1/Speed_level)+b",
+    "whole_speed_load_group_held_out": true,
+    "MAE_ms": 95.23434353096629,
+    "RMSE_ms": 130.47925794695863,
+    "R2": 0.9625740980789028
+  },
+  "amplitude_scale_group_oof": {
+    "GLOBAL_MEDIAN_SCALE_LC5_peak_MAE_N": 71.12440733282527,
+    "CONDITIONS_SCALE_LC5_peak_MAE_N": 77.15471432778405,
+    "CONDITIONS_PREV_SCALE_LC5_peak_MAE_N": 60.38538958057285
+  },
+  "by_speed": [
+    {"Speed_level":1,"n":17,"peak_delay_median_ms":2337.0,"xcorr_lag_median_ms":2366.0,"xcorr_r_median":0.9779159686583467,"aligned_R2_median":0.9563196417569915,"slope_median":1.53505539994266},
+    {"Speed_level":2,"n":17,"peak_delay_median_ms":1200.0,"xcorr_lag_median_ms":1248.0,"xcorr_r_median":0.9874118599932644,"aligned_R2_median":0.9749821812553517,"slope_median":1.3449530375005438},
+    {"Speed_level":3,"n":17,"peak_delay_median_ms":737.0,"xcorr_lag_median_ms":762.5,"xcorr_r_median":0.9876777734599237,"aligned_R2_median":0.9755073841867542,"slope_median":1.8596931340576728}
+  ],
+  "guards": {
+    "random_split_used": false,
+    "lag_model_whole_speed_load_group_held_out": true,
+    "future_target_used": false
+  }
+}
