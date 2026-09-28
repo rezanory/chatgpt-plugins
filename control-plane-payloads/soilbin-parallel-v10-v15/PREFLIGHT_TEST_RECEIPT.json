@@ -1,0 +1,24 @@
+{
+  "status": "PASS",
+  "checks": [
+    "frozen_input_51_41_9",
+    "all_outer_inner_group_isolation",
+    "predict_ABS_RF_WEIGHTED",
+    "predict_ABS_ET_WEIGHTED",
+    "predict_QRF_MEDIAN_WEIGHTED",
+    "predict_PHYS_EXP",
+    "predict_PHYS_POWER_GP",
+    "leakage_guard_rejects_shared_group",
+    "state_rank1_no_current_or_future_target_leak",
+    "state_rank2_no_current_or_future_target_leak",
+    "quantile_cdf_not_mean_40",
+    "raw_waveform_102_traces_hash_verified",
+    "ensemble_refitted_member_removal_contract"
+  ],
+  "checks_passed": 13,
+  "split_sha256": "ee49e9cbc3962eac2fc1a1fd8c933b6dc9712eea1d4c3cb3670c0b4f13c03a21",
+  "n_runs": 51,
+  "n_transitions": 41,
+  "max_raw_peak_difference_N": 0.0,
+  "not_scientific_performance_run": true
+}
