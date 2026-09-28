@@ -1,0 +1,295 @@
+{
+  "lane": "V18",
+  "summary": [
+    {
+      "candidate": "NONE",
+      "Group_MAE_N": 18.021013665031184
+    },
+    {
+      "candidate": "REWARD_ONLY",
+      "Group_MAE_N": 18.018122268224413
+    },
+    {
+      "candidate": "PENALTY_ONLY",
+      "Group_MAE_N": 18.020960687859972
+    },
+    {
+      "candidate": "BOTH",
+      "Group_MAE_N": 18.02215901361154
+    }
+  ],
+  "champion": {
+    "candidate": "REWARD_ONLY",
+    "Group_MAE_N": 18.018122268224413
+  },
+  "champion_median_eta": 0.1,
+  "selection_audit": [
+    {
+      "outer": "V1W1",
+      "candidate": "NONE",
+      "eta": 0,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.074318820045427
+    },
+    {
+      "outer": "V1W1",
+      "candidate": "REWARD_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.07431882005401
+    },
+    {
+      "outer": "V1W1",
+      "candidate": "PENALTY_ONLY",
+      "eta": 2,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.074318820052213
+    },
+    {
+      "outer": "V1W1",
+      "candidate": "BOTH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.07431882005379
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "NONE",
+      "eta": 0,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.513852024899485
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "REWARD_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.51385202490975
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "PENALTY_ONLY",
+      "eta": 2,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.51385202490926
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "BOTH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.513852024909763
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "NONE",
+      "eta": 0,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339308096
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "REWARD_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339321554
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "PENALTY_ONLY",
+      "eta": 2,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339320467
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "BOTH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339321486
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "NONE",
+      "eta": 0,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.066124589522378
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "REWARD_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.06612458953418
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "PENALTY_ONLY",
+      "eta": 2,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.066124589531537
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "BOTH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.066124589533946
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "NONE",
+      "eta": 0,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.639307918825896
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "REWARD_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.65828814495956
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "PENALTY_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.66085961669961
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "BOTH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.679697607739797
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "NONE",
+      "eta": 0,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.324407059148086
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "REWARD_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.324407059155426
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "PENALTY_ONLY",
+      "eta": 1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.324407059154787
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "BOTH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.32440705915539
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "NONE",
+      "eta": 0,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.661466969851165
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "REWARD_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.67123144893454
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "PENALTY_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.6810453939152
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "BOTH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.690573523813686
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "NONE",
+      "eta": 0,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.840961913432066
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "REWARD_ONLY",
+      "eta": 2,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.776817264568303
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "PENALTY_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.854876858227453
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "BOTH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.85346637884208
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "NONE",
+      "eta": 0,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.706298983083208
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "REWARD_ONLY",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.70629898308828
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "PENALTY_ONLY",
+      "eta": 2,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.706298983086377
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "BOTH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.706298983088082
+    }
+  ],
+  "causal_update_guard": "held-out group weights update only after each observed prior transition; never current/future target",
+  "schema": "soilbin.v17-v25.parallel.v1",
+  "status": "COMPLETE",
+  "campaign": "20260928-v17-v25-adaptive-state-r1",
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "elapsed_seconds": 7.249810457229614,
+  "post_lock_exploratory": true,
+  "does_not_supersede_v5": true,
+  "guardrails": {
+    "random_split_used": false,
+    "targets_modified": false,
+    "current_or_future_target_used_for_prediction": false,
+    "outer_speed_load_group_held_out": true,
+    "independent_new_experiment": false
+  }
+}

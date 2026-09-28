@@ -1,0 +1,76 @@
+{
+  "lane": "V24",
+  "component_ablation": [
+    {
+      "ablation": "FULL",
+      "best_variant": "STATE_FEATURE_RF",
+      "joint_Group_MAE_N": 23.104189837450967,
+      "LC1_Group_MAE_N": 13.009658000484931,
+      "LC5_Group_MAE_N": 33.198721674417,
+      "removal_harm_N": 0
+    },
+    {
+      "ablation": "NO_ENSEMBLE",
+      "best_variant": "STATE_FEATURE_RF",
+      "joint_Group_MAE_N": 23.104189837450967,
+      "LC1_Group_MAE_N": 13.009658000484931,
+      "LC5_Group_MAE_N": 33.198721674417,
+      "removal_harm_N": 0
+    },
+    {
+      "ablation": "NO_REWARD_PENALTY",
+      "best_variant": "STATE_FEATURE_RF",
+      "joint_Group_MAE_N": 23.104189837450967,
+      "LC1_Group_MAE_N": 13.009658000484931,
+      "LC5_Group_MAE_N": 33.198721674417,
+      "removal_harm_N": 0
+    },
+    {
+      "ablation": "FIXED_INTENSITY",
+      "best_variant": "STATE_FEATURE_RF",
+      "joint_Group_MAE_N": 23.104189837450967,
+      "LC1_Group_MAE_N": 13.009658000484931,
+      "LC5_Group_MAE_N": 33.198721674417,
+      "removal_harm_N": 0
+    },
+    {
+      "ablation": "EXP_UPDATE",
+      "best_variant": "STATE_FEATURE_RF",
+      "joint_Group_MAE_N": 23.104189837450967,
+      "LC1_Group_MAE_N": 13.009658000484931,
+      "LC5_Group_MAE_N": 33.198721674417,
+      "removal_harm_N": 0
+    },
+    {
+      "ablation": "NO_TRANSITION_POLICY",
+      "best_variant": "STATE_FEATURE_RF",
+      "joint_Group_MAE_N": 23.104189837450967,
+      "LC1_Group_MAE_N": 13.009658000484931,
+      "LC5_Group_MAE_N": 33.198721674417,
+      "removal_harm_N": 0
+    }
+  ],
+  "full_config": {
+    "arm": "A_QLOG",
+    "mode": "REWARD_ONLY",
+    "law": "STATE_MAG",
+    "shape": "POWER",
+    "policy": "T6_PRIOR",
+    "channel": "SHARED_STATIC"
+  },
+  "question": "Which adaptive components contribute to force-level performance?",
+  "schema": "soilbin.v17-v25.parallel.v1",
+  "status": "COMPLETE",
+  "campaign": "20260928-v17-v25-adaptive-state-r1",
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "elapsed_seconds": 596.6313433647156,
+  "post_lock_exploratory": true,
+  "does_not_supersede_v5": true,
+  "guardrails": {
+    "random_split_used": false,
+    "targets_modified": false,
+    "current_or_future_target_used_for_prediction": false,
+    "outer_speed_load_group_held_out": true,
+    "independent_new_experiment": false
+  }
+}

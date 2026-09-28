@@ -1,0 +1,93 @@
+{
+  "lane": "V17T",
+  "t6_rebound": {
+    "groups": 9,
+    "groups_D6_gt_D5": 8,
+    "groups_D6_gt_2x_D5": 7,
+    "mean_increase_N": 15.78779121266667,
+    "signflip_one_sided_p": 0.037109375,
+    "directional_binomial_p": 0.01953125
+  },
+  "breakpoints": [
+    {
+      "outer": "V1W1",
+      "breakpoint": 5
+    },
+    {
+      "outer": "V1W2",
+      "breakpoint": 5
+    },
+    {
+      "outer": "V1W3",
+      "breakpoint": 5
+    },
+    {
+      "outer": "V2W1",
+      "breakpoint": 5
+    },
+    {
+      "outer": "V2W2",
+      "breakpoint": 5
+    },
+    {
+      "outer": "V2W3",
+      "breakpoint": 5
+    },
+    {
+      "outer": "V3W1",
+      "breakpoint": 5
+    },
+    {
+      "outer": "V3W2",
+      "breakpoint": 5
+    },
+    {
+      "outer": "V3W3",
+      "breakpoint": 5
+    }
+  ],
+  "breakpoint_counts": {
+    "5": 9
+  },
+  "prospective_rebound_models": [
+    {
+      "model": "PASS_ONLY",
+      "balanced_accuracy": 0.75,
+      "brier": 0.19844614112601774,
+      "AUROC": 0.73046875
+    },
+    {
+      "model": "STATE_LOGIT",
+      "balanced_accuracy": 0.78125,
+      "brier": 0.16885196922591816,
+      "AUROC": 0.8359375
+    },
+    {
+      "model": "STATE_RF",
+      "balanced_accuracy": 0.78125,
+      "brier": 0.1852568673776074,
+      "AUROC": 0.76953125
+    }
+  ],
+  "champion": {
+    "model": "STATE_LOGIT",
+    "balanced_accuracy": 0.78125,
+    "brier": 0.16885196922591816,
+    "AUROC": 0.8359375
+  },
+  "guard": "candidate regime transition only; no collapse/fatigue/shakedown class asserted",
+  "schema": "soilbin.v17-v25.parallel.v1",
+  "status": "COMPLETE",
+  "campaign": "20260928-v17-v25-adaptive-state-r1",
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "elapsed_seconds": 2.927945375442505,
+  "post_lock_exploratory": true,
+  "does_not_supersede_v5": true,
+  "guardrails": {
+    "random_split_used": false,
+    "targets_modified": false,
+    "current_or_future_target_used_for_prediction": false,
+    "outer_speed_load_group_held_out": true,
+    "independent_new_experiment": false
+  }
+}

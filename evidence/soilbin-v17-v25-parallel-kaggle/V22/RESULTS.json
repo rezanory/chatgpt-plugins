@@ -1,0 +1,246 @@
+{
+  "lane": "V22",
+  "summary": [
+    {
+      "candidate": "SHARED_STATIC",
+      "joint_Group_MAE_N": 22.882629975570406,
+      "LC1_Group_MAE_N": 12.843021543401699,
+      "LC5_Group_MAE_N": 32.922238407739115
+    },
+    {
+      "candidate": "CHANNEL_STATIC",
+      "joint_Group_MAE_N": 27.53685737428546,
+      "LC1_Group_MAE_N": 13.599105184039308,
+      "LC5_Group_MAE_N": 41.47460956453161
+    },
+    {
+      "candidate": "SHARED_DYNAMIC",
+      "joint_Group_MAE_N": 22.884535337305355,
+      "LC1_Group_MAE_N": 12.84637004479024,
+      "LC5_Group_MAE_N": 32.92270062982047
+    },
+    {
+      "candidate": "CHANNEL_DYNAMIC",
+      "joint_Group_MAE_N": 27.250280644385477,
+      "LC1_Group_MAE_N": 13.5994803997626,
+      "LC5_Group_MAE_N": 40.901080889008355
+    },
+    {
+      "candidate": "HIERARCHICAL_DYNAMIC",
+      "joint_Group_MAE_N": 24.953276748221295,
+      "LC1_Group_MAE_N": 13.222925222276453,
+      "LC5_Group_MAE_N": 36.68362827416614
+    }
+  ],
+  "champion": {
+    "candidate": "SHARED_STATIC",
+    "joint_Group_MAE_N": 22.882629975570406,
+    "LC1_Group_MAE_N": 12.843021543401699,
+    "LC5_Group_MAE_N": 32.922238407739115
+  },
+  "audit": [
+    {
+      "outer": "V1W1",
+      "shared_prior": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "lc1_prior": [
+        0.2,
+        0.8,
+        0,
+        0
+      ],
+      "lc5_prior": [
+        0,
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "outer": "V1W2",
+      "shared_prior": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "lc1_prior": [
+        0,
+        0,
+        1,
+        0
+      ],
+      "lc5_prior": [
+        0.6,
+        0,
+        0.4,
+        0
+      ]
+    },
+    {
+      "outer": "V1W3",
+      "shared_prior": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "lc1_prior": [
+        0,
+        1,
+        0,
+        0
+      ],
+      "lc5_prior": [
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "outer": "V2W1",
+      "shared_prior": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "lc1_prior": [
+        0.2,
+        0.8,
+        0,
+        0
+      ],
+      "lc5_prior": [
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "outer": "V2W2",
+      "shared_prior": [
+        0.6,
+        0.4,
+        0,
+        0
+      ],
+      "lc1_prior": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "lc5_prior": [
+        0.4,
+        0,
+        0,
+        0.6
+      ]
+    },
+    {
+      "outer": "V2W3",
+      "shared_prior": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "lc1_prior": [
+        0,
+        0,
+        1,
+        0
+      ],
+      "lc5_prior": [
+        0,
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "outer": "V3W1",
+      "shared_prior": [
+        0.7,
+        0.3,
+        0,
+        0
+      ],
+      "lc1_prior": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "lc5_prior": [
+        0.4,
+        0,
+        0,
+        0.6
+      ]
+    },
+    {
+      "outer": "V3W2",
+      "shared_prior": [
+        0.9,
+        0.1,
+        0,
+        0
+      ],
+      "lc1_prior": [
+        0,
+        1,
+        0,
+        0
+      ],
+      "lc5_prior": [
+        0,
+        0.8,
+        0.2,
+        0
+      ]
+    },
+    {
+      "outer": "V3W3",
+      "shared_prior": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "lc1_prior": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "lc5_prior": [
+        1,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "schema": "soilbin.v17-v25.parallel.v1",
+  "status": "COMPLETE",
+  "campaign": "20260928-v17-v25-adaptive-state-r1",
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "elapsed_seconds": 7.257794141769409,
+  "post_lock_exploratory": true,
+  "does_not_supersede_v5": true,
+  "guardrails": {
+    "random_split_used": false,
+    "targets_modified": false,
+    "current_or_future_target_used_for_prediction": false,
+    "outer_speed_load_group_held_out": true,
+    "independent_new_experiment": false
+  }
+}

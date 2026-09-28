@@ -1,0 +1,295 @@
+{
+  "lane": "V21",
+  "summary": [
+    {
+      "candidate": "KEEP",
+      "Group_MAE_N": 18.02215901361154
+    },
+    {
+      "candidate": "SOFTEN",
+      "Group_MAE_N": 18.020693167269506
+    },
+    {
+      "candidate": "RESET",
+      "Group_MAE_N": 18.01917554319575
+    },
+    {
+      "candidate": "T6_PRIOR",
+      "Group_MAE_N": 17.960871156072344
+    }
+  ],
+  "champion": {
+    "candidate": "T6_PRIOR",
+    "Group_MAE_N": 17.960871156072344
+  },
+  "champion_median_eta": 0.1,
+  "selection_audit": [
+    {
+      "outer": "V1W1",
+      "candidate": "KEEP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.07431882005379
+    },
+    {
+      "outer": "V1W1",
+      "candidate": "SOFTEN",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.074318820053637
+    },
+    {
+      "outer": "V1W1",
+      "candidate": "RESET",
+      "eta": 0.5,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.07431882005339
+    },
+    {
+      "outer": "V1W1",
+      "candidate": "T6_PRIOR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.074318820053875
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "KEEP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.513852024909763
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "SOFTEN",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.513852024909593
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "RESET",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.513852024909443
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "T6_PRIOR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.51385202490977
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "KEEP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339321486
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "SOFTEN",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.94986433932149
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "RESET",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339321492
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "T6_PRIOR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339321442
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "KEEP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.066124589533946
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "SOFTEN",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.066124589533782
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "RESET",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.066124589533633
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "T6_PRIOR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.0661245895339
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "KEEP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.679697607739797
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "SOFTEN",
+      "eta": 0.1,
+      "threshold": 1.25,
+      "inner_Group_MAE_N": 18.676817632309962
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "RESET",
+      "eta": 0.1,
+      "threshold": 1.25,
+      "inner_Group_MAE_N": 18.673920755923692
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "T6_PRIOR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.35998072195403
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "KEEP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.32440705915539
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "SOFTEN",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.32440705915523
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "RESET",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.324407059155092
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "T6_PRIOR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.324407059155405
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "KEEP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.690573523813686
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "SOFTEN",
+      "eta": 0.1,
+      "threshold": 1.25,
+      "inner_Group_MAE_N": 18.691924767983565
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "RESET",
+      "eta": 0.1,
+      "threshold": 1.25,
+      "inner_Group_MAE_N": 18.69325962327312
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "T6_PRIOR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.27944277428621
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "KEEP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.85346637884208
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "SOFTEN",
+      "eta": 0.1,
+      "threshold": 2,
+      "inner_Group_MAE_N": 13.854159402950227
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "RESET",
+      "eta": 0.1,
+      "threshold": 2,
+      "inner_Group_MAE_N": 13.85483762839081
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "T6_PRIOR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.853466378842096
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "KEEP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.706298983088082
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "SOFTEN",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.706298983087933
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "RESET",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.706298983087795
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "T6_PRIOR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.706298983088097
+    }
+  ],
+  "causal_update_guard": "held-out group weights update only after each observed prior transition; never current/future target",
+  "schema": "soilbin.v17-v25.parallel.v1",
+  "status": "COMPLETE",
+  "campaign": "20260928-v17-v25-adaptive-state-r1",
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "elapsed_seconds": 7.884631395339966,
+  "post_lock_exploratory": true,
+  "does_not_supersede_v5": true,
+  "guardrails": {
+    "random_split_used": false,
+    "targets_modified": false,
+    "current_or_future_target_used_for_prediction": false,
+    "outer_speed_load_group_held_out": true,
+    "independent_new_experiment": false
+  }
+}

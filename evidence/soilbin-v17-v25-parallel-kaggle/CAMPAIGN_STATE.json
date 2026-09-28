@@ -1,0 +1,114 @@
+{
+  "campaign": "20260928-v17-v25-adaptive-state-r1",
+  "started_utc": "2026-09-28T17:35:14Z",
+  "lanes": {
+    "V17E": {
+      "account": "kg-06",
+      "owner": "msdenis",
+      "ref": "msdenis/soilbin-v17e-adaptive-state-20260928-r1",
+      "submitted": true,
+      "state": "COMPLETE",
+      "notebook_sha256": "14d52eb0f01b8dba71ce5ad1fe7f30f227c808a738805d14beb76e3014e3c437",
+      "runner_sha256": "1959cf2923217f2898a24b5a256f705ae24e700c978bab65a8fd56daaf00bcbe",
+      "result_status": "COMPLETE"
+    },
+    "V17T": {
+      "account": "kg-07",
+      "owner": "nisabulutmark",
+      "ref": "nisabulutmark/soilbin-v17t-adaptive-state-20260928-r1",
+      "submitted": true,
+      "state": "COMPLETE",
+      "notebook_sha256": "a33d49f0c792ebc1289526a216344ec9182e8bc97b2553319fc04542ed92d6db",
+      "runner_sha256": "1959cf2923217f2898a24b5a256f705ae24e700c978bab65a8fd56daaf00bcbe",
+      "result_status": "COMPLETE"
+    },
+    "V18": {
+      "account": "kg-09",
+      "owner": "mylovevpn1",
+      "ref": "mylovevpn1/soilbin-v18-adaptive-state-20260928-r1",
+      "submitted": true,
+      "state": "COMPLETE",
+      "notebook_sha256": "1c3a4f4bc5cdd69bb52c233eccba895873f3020c3c8280d64da4ee08593bfbb6",
+      "runner_sha256": "1959cf2923217f2898a24b5a256f705ae24e700c978bab65a8fd56daaf00bcbe",
+      "result_status": "COMPLETE"
+    },
+    "V19": {
+      "account": "kg-11",
+      "owner": "jobreza1",
+      "ref": "jobreza1/soilbin-v19-adaptive-state-20260928-r1",
+      "submitted": true,
+      "state": "COMPLETE",
+      "notebook_sha256": "ea1ef408b6e0876715a18a1cf0982a0df78664a4c9e1bcde26bbea8f49611b81",
+      "runner_sha256": "1959cf2923217f2898a24b5a256f705ae24e700c978bab65a8fd56daaf00bcbe",
+      "result_status": "COMPLETE"
+    },
+    "V20": {
+      "account": "kg-02",
+      "owner": "radlinaradlina",
+      "ref": "radlinaradlina/soilbin-v20-adaptive-state-20260928-r1",
+      "submitted": true,
+      "state": "COMPLETE",
+      "notebook_sha256": "81edb946932348f71e895c4d3fc10901ed3c149cb13eb64f5d439048caa56250",
+      "runner_sha256": "1959cf2923217f2898a24b5a256f705ae24e700c978bab65a8fd56daaf00bcbe",
+      "result_status": "COMPLETE"
+    },
+    "V21": {
+      "account": "kg-08",
+      "owner": "azadkk",
+      "ref": "azadkk/soilbin-v21-adaptive-state-20260928-r1",
+      "submitted": true,
+      "state": "COMPLETE",
+      "notebook_sha256": "4187202d8aec5420bf07b0b835c0f246560f9232812846dfc2d27be2559153ef",
+      "runner_sha256": "1959cf2923217f2898a24b5a256f705ae24e700c978bab65a8fd56daaf00bcbe",
+      "result_status": "COMPLETE"
+    },
+    "V22": {
+      "account": "kg-06",
+      "owner": "msdenis",
+      "ref": "msdenis/soilbin-v22-adaptive-state-20260928-r1",
+      "submitted": true,
+      "state": "COMPLETE",
+      "notebook_sha256": "7525a8de763426d27be9cb705c89b61c4416e64605eed6d44cdbe948c9527c4f",
+      "runner_sha256": "1959cf2923217f2898a24b5a256f705ae24e700c978bab65a8fd56daaf00bcbe",
+      "result_status": "COMPLETE"
+    },
+    "V23": {
+      "account": "kg-09",
+      "owner": "mylovevpn1",
+      "ref": "mylovevpn1/soilbin-v23-adaptive-state-20260928-r1",
+      "submitted": true,
+      "state": "COMPLETE",
+      "notebook_sha256": "049dc5a570e1dc5dc7e00032d41e8687bbe131c72082fdf56dd346b2a4f9861b",
+      "runner_sha256": "1959cf2923217f2898a24b5a256f705ae24e700c978bab65a8fd56daaf00bcbe",
+      "result_status": "COMPLETE"
+    },
+    "V24": {
+      "account": "kg-06",
+      "owner": "msdenis",
+      "ref": "msdenis/soilbin-v24-adaptive-state-20260928-r1",
+      "submitted": true,
+      "state": "COMPLETE",
+      "notebook_sha256": "370c4e370f07aea9600b54bf240953c622b8bab2d7105d608ca3cdaed4fb90bd",
+      "runner_sha256": "1959cf2923217f2898a24b5a256f705ae24e700c978bab65a8fd56daaf00bcbe",
+      "result_status": "COMPLETE"
+    },
+    "V25": {
+      "account": "kg-07",
+      "owner": "nisabulutmark",
+      "ref": "nisabulutmark/soilbin-v25-adaptive-state-20260928-r1",
+      "submitted": true,
+      "state": "COMPLETE",
+      "notebook_sha256": "5e1cce56922a20586a1de491a0a0e40c34150db846d88768733f4ae46c70bfa9",
+      "runner_sha256": "1959cf2923217f2898a24b5a256f705ae24e700c978bab65a8fd56daaf00bcbe",
+      "result_status": "COMPLETE"
+    }
+  },
+  "policy": {
+    "cpu_only": true,
+    "private": true,
+    "cancel_existing": false,
+    "overwrite_existing": false
+  },
+  "status": "EXECUTION_TERMINAL",
+  "finished_utc": "2026-09-28T17:51:08Z"
+}

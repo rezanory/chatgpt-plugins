@@ -1,0 +1,362 @@
+{
+  "lane": "V20",
+  "summary": [
+    {
+      "candidate": "EXP",
+      "Group_MAE_N": 18.02215901361154
+    },
+    {
+      "candidate": "POWER",
+      "Group_MAE_N": 18.02179106294207
+    },
+    {
+      "candidate": "HYPERBOLIC",
+      "Group_MAE_N": 18.022101611745676
+    },
+    {
+      "candidate": "TANH",
+      "Group_MAE_N": 18.022143652552934
+    },
+    {
+      "candidate": "LINEAR",
+      "Group_MAE_N": 18.022147862497736
+    }
+  ],
+  "champion": {
+    "candidate": "POWER",
+    "Group_MAE_N": 18.02179106294207
+  },
+  "champion_median_eta": 0.1,
+  "selection_audit": [
+    {
+      "outer": "V1W1",
+      "candidate": "EXP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.07431882005379
+    },
+    {
+      "outer": "V1W1",
+      "candidate": "POWER",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.07431882005368
+    },
+    {
+      "outer": "V1W1",
+      "candidate": "HYPERBOLIC",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.07431882005377
+    },
+    {
+      "outer": "V1W1",
+      "candidate": "TANH",
+      "eta": 2,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.074318820052525
+    },
+    {
+      "outer": "V1W1",
+      "candidate": "LINEAR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.074318820053747
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "EXP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.513852024909763
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "POWER",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.513852024909625
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "HYPERBOLIC",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.51385202490974
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "TANH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.513852024909735
+    },
+    {
+      "outer": "V1W2",
+      "candidate": "LINEAR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 16.51385202490974
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "EXP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339321486
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "POWER",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339321415
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "HYPERBOLIC",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339321472
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "TANH",
+      "eta": 2,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339321119
+    },
+    {
+      "outer": "V1W3",
+      "candidate": "LINEAR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 14.949864339321469
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "EXP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.066124589533946
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "POWER",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.06612458953378
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "HYPERBOLIC",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.066124589533917
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "TANH",
+      "eta": 2,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.06612458953242
+    },
+    {
+      "outer": "V2W1",
+      "candidate": "LINEAR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 17.0661245895339
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "EXP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.679697607739797
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "POWER",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.670112504834577
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "HYPERBOLIC",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.67834613020961
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "TANH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.679965673232275
+    },
+    {
+      "outer": "V2W2",
+      "candidate": "LINEAR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.680045180845262
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "EXP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.32440705915539
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "POWER",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.324407059155213
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "HYPERBOLIC",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.324407059155362
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "TANH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.324407059155355
+    },
+    {
+      "outer": "V2W3",
+      "candidate": "LINEAR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 19.324407059155355
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "EXP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.690573523813686
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "POWER",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.68289611836587
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "HYPERBOLIC",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.6894410524192
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "TANH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.691257190391244
+    },
+    {
+      "outer": "V3W1",
+      "candidate": "LINEAR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.691340824120587
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "EXP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.85346637884208
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "POWER",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.849994321909996
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "HYPERBOLIC",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.85287183440704
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "TANH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.854379576420154
+    },
+    {
+      "outer": "V3W2",
+      "candidate": "LINEAR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 13.854457857188077
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "EXP",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.706298983088082
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "POWER",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.70629898308794
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "HYPERBOLIC",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.70629898308806
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "TANH",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.70629898308803
+    },
+    {
+      "outer": "V3W3",
+      "candidate": "LINEAR",
+      "eta": 0.1,
+      "threshold": 1.5,
+      "inner_Group_MAE_N": 18.70629898308803
+    }
+  ],
+  "causal_update_guard": "held-out group weights update only after each observed prior transition; never current/future target",
+  "schema": "soilbin.v17-v25.parallel.v1",
+  "status": "COMPLETE",
+  "campaign": "20260928-v17-v25-adaptive-state-r1",
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "elapsed_seconds": 7.807377815246582,
+  "post_lock_exploratory": true,
+  "does_not_supersede_v5": true,
+  "guardrails": {
+    "random_split_used": false,
+    "targets_modified": false,
+    "current_or_future_target_used_for_prediction": false,
+    "outer_speed_load_group_held_out": true,
+    "independent_new_experiment": false
+  }
+}
