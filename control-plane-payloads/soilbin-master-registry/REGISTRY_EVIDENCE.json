@@ -1,0 +1,18 @@
+{
+  "schema": "soilbin.master-registry.v1",
+  "status": "COMPLETE",
+  "coverage": {
+    "main_versions_expected": 30,
+    "main_versions_missing": [],
+    "matrix_rows": 36,
+    "subversions_explicitly_separated": ["V6.1","V17E","V17T","V27-probabilistic","V28.1","V29.1","V29.2"]
+  },
+  "canonical_data_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "files": {
+    "SOILBIN_V1_V30_MASTER_REGISTRY.md": "5646a68c82d4166a167ca1be5f4a484bb26afefe6d9d99d6e97fabd4d581b05f",
+    "VERSION_MATRIX_V1_V30.csv": "a36c11af43b5333c0aa1e3fa83da93ef30096aeff3537ecd17f0f01f98da037a",
+    "V31_PROBLEM_DEFINITION.md": "1a81c41dc47ef86884299eb04bb52bbcaae7687d6a48556b7e05d4534d19342d",
+    "EXPERIMENT_PREFLIGHT_V31_PLUS.md": "afeebaf3aad3a099080d2a81c21c9e7a73a53e514ad925dd3d64adacef8a229a"
+  },
+  "rule_for_future_versions": "Read registry + matrix + preflight before proposing or executing V31+; classify overlap and novelty delta; stop unchanged duplicates."
+}

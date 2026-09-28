@@ -1,0 +1,37 @@
+version,subversion,category,evidence,status,primary_question,key_result_N,key_result_note,repeat_unchanged
+V1,,baseline,CHECKPOINT_VERIFIED,historical,"Does prior-pass state predict next-pass force?",23.087705,"Different 82-observation metric; not directly rankable vs V2+",NO
+V2,,waveform,CURRENT_ARTIFACT,negative,"Do engineered previous-pass waveform features help?",26.735896,"Joint 41-pair Group-MAE",NO
+V3,,compact_state,CURRENT_ARTIFACT,positive,"Can previous peaks beat waveform morphology?",24.288784,"LC1 12.7854; LC5 35.7921",NO
+V4,,raw_spectral_waveform,CURRENT_ARTIFACT,negative,"Can raw/spectral prior waveform beat V3?",25.068462,"Best SPECTRAL; worse than V3",NO
+V5,,scientific_lock,CURRENT_ARTIFACT,LOCK_ONLY,"Freeze model/claims/evidence",24.288784,"No retraining",NO
+V6,,structural_extension,CHECKPOINT_VERIFIED,exploratory,"Exhaust memory/pass-pair/graph/spectral/design ideas",29.89,"Representative best spectral-Ridge class; none beat V5",NO
+V6,1,virtual_synthetic,PROTOCOL_PLUS_CHECKPOINT,negative,"Do virtual channels or train-only synthetic data help?",24.7841,"VS Core; V5 remained best",NO
+V7,,memory_fusion_spectral,CHECKPOINT_VERIFIED,negative,"Do deeper memory/fusion/spectral combinations help?",24.367,"LC fusion challenger; V5 better",NO
+V8,,state_error,CHECKPOINT_VERIFIED,negative_diagnostic,"Can generic state descriptors correct errors?",24.772,"Best EWMA state",NO
+V9,,ensemble_moe,CHECKPOINT_VERIFIED,mixed,"Can expert combinations exploit complementarity?",24.0492,"Small V5+STATE_PATH blend gain; complex MoE worse",NO
+V10,,signal_audit,CHECKPOINT_VERIFIED,diagnostic,"Are signal-processing/data defects the bottleneck?",,"No nonfinite/timestamp/force reproduction defects",NO
+V11,,loss_weight_capacity,CHECKPOINT_VERIFIED,positive,Can regularization/group weighting help?,23.860441,"LC1 ~12.902; LC5 ~34.819",NO
+V12,,tabpfn,CHECKPOINT_VERIFIED,negative,Can TabPFN improve small-tabular prediction?,25.4226,"Delta better than direct but worse than trees",NO
+V13,,latent_state,CHECKPOINT_VERIFIED,negative,Can low-rank probabilistic state filtering help?,29.1082,"Rank-2 log best",NO
+V14,,physics_gp,CHECKPOINT_VERIFIED,negative_blocked,Can physics relaxation + GP discrepancy help?,25.4975,"Multifidelity claim blocked pending metadata",NO
+V15,,heterogeneous_ensemble,CHECKPOINT_VERIFIED,negative,Can V5+TabPFN+state+physics ensemble help?,25.3329,"Predeclared anchored ensemble",NO
+V16,,pass_dynamics,CURRENT_PROTOCOL_PLUS_CHECKPOINT,positive_different_endpoint,Does transition magnitude require regime-changing dynamics?,17.3137,"QLOG dynamics endpoint; not comparable to force MAE",NO
+V17,E,dynamics_ensemble,CHECKPOINT_VERIFIED,negative,Can QLOG dynamics be improved by ensembles/gates?,17.3137,"QLOG remained best",NO
+V17,T,transition_classifier,CHECKPOINT_VERIFIED,positive_diagnostic,Can pre-target history predict T6 transition?,,"AUROC .83594; balanced acc .78125; Brier .16885",NO
+V18,,reward_penalty,CHECKPOINT_VERIFIED,minor,Does online reward/penalty improve dynamics?,18.0181,"Tiny effect",NO
+V19,,intensity_law,CHECKPOINT_VERIFIED,minor,Does state-dependent adaptation intensity help?,17.9830,"STATE_MAG",NO
+V20,,update_form,CHECKPOINT_VERIFIED,minor,Does reward update law matter?,18.0218,"POWER",NO
+V21,,transition_policy,CHECKPOINT_VERIFIED,minor,Should adaptive memory change after rebound?,17.9609,"T6_PRIOR",NO
+V22,,channel_policy,CHECKPOINT_VERIFIED,diagnostic,"Shared or channel-specific adaptive policy?",22.88263,"Protocol guard: V23 is comparable force integration",NO
+V23,,state_force_integration,CHECKPOINT_VERIFIED,positive,Can QLOG state features improve original force endpoint?,23.104190,"LC1 13.0097; LC5 33.1987",NO
+V24,,component_ablation,CHECKPOINT_VERIFIED,diagnostic,Which V23 components actually matter?,23.104190,"Adaptive machinery removal ~0 effect; state features drive gain",NO
+V25,,robustness_external,CHECKPOINT_VERIFIED,diagnostic,How uncertain/externally corroborated is V23?,,"Bootstrap CI 19.647–26.296 N; external trend only",NO
+V26,,lc5_residual,CURRENT_PROTOCOL_PLUS_CHECKPOINT,negative,Can LC5-specific residual/regime experts beat V23?,23.104190,"All challengers worse; V23 retained",NO
+V27,,bidirectional_multihistory,CURRENT_ARTIFACT,major_map,"What is the full directionality/memory/fusion map?",23.104190,"132 directed edges; 1116 history tasks; V23 retained",NO
+V27,probabilistic,probabilistic_lc5,CURRENT_ARTIFACT,negative,Can occurrence/amplitude probabilistic separation improve LC5?,24.214078,"Best challenger mixture; V23 retained",NO
+V28,,hierarchical_reverse,CURRENT_ARTIFACT,positive,"Can pass/sensor-specific hierarchy + legal reverse help?",22.739405,"Predeclared HIER_SELECTIVE",NO
+V28,1,targeted_reverse_stack,CURRENT_ARTIFACT,positive_posthoc,"Can targeted LC5 T2/T6 reverse stack help?",22.105659,"Post-hoc exploratory; LC5 31.2017",NO
+V29,,fixed_routing,CURRENT_ARTIFACT,positive_repeated_development,Can frozen pass/sensor routing improve V28?,21.657328,"Fixed routing; T2+T6 observed arm 20.970434",NO
+V29,1,meta_reliability,CURRENT_ARTIFACT,negative,"Can Error/Winner/Gap meta-models learn expert reliability?",27.603148,"Meta-router; three-expert oracle 14.922985",NO_WITHOUT_MORE_DATA
+V29,2,relative_reward,CURRENT_ARTIFACT,negative,Can relative rank/pairwise/trend reward help?,23.919537,"Best Pairwise+Historical; worse than V18/V23",NO
+V30,,lc1_lc5_coupling,CURRENT_ARTIFACT,major_discovery,"What is the actual LC1↔LC5 timing/shape/amplitude relation?",,"Median shifted corr .9861; aligned waveform R2 .9723; delay model R2 .9626",NO_FIXED_RATIO
