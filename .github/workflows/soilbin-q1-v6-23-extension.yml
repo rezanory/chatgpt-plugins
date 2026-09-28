@@ -1266,3 +1266,41 @@ jobs:
           path: ${{ runner.temp }}/soilbin-v17-v25
           if-no-files-found: warn
           retention-days: 30
+
+
+  v17-v25-status-probe:
+    if: ${{ github.event.issue.number == 134 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_V17_V25_STATUS_PROBE' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe V23 V24 V25 read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.parse,urllib.request,urllib.error
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']; sep='&' if '?' in base else '?'
+          target=base+sep+'audience='+urllib.parse.quote('cgp-control-plane-v3',safe='')
+          req=urllib.request.Request(target,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
+          with urllib.request.urlopen(req,timeout=30) as r: token=json.load(r)['value']
+          print('::add-mask::'+token)
+          endpoint='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
+          rows=[
+            ('V23','kg-09','mylovevpn1','soilbin-v23-adaptive-state-20260928-r1'),
+            ('V24','kg-02','radlinaradlina','soilbin-v24-adaptive-state-20260928-r1'),
+            ('V25','kg-06','msdenis','soilbin-v25-adaptive-state-20260928-r1'),
+          ]
+          def call(payload):
+              q=urllib.request.Request(endpoint,data=json.dumps(payload,separators=(',',':')).encode(),method='POST',
+                  headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json','User-Agent':'soilbin-v17-v25-status/1.0'})
+              try:
+                  with urllib.request.urlopen(q,timeout=60) as r:return json.loads(r.read().decode('utf-8','replace') or '{}')
+              except urllib.error.HTTPError as e:
+                  return {'http':e.code,'error':e.read(2500).decode('utf-8','replace')}
+          out=[]
+          for lane,aid,owner,slug in rows:
+              v=call({'action':'raw_read','account_id':aid,'service':'kernels.KernelsApiService',
+                      'method':'GetKernelSessionStatus','body':{'userName':owner,'kernelSlug':slug}})
+              out.append({'lane':lane,'account':aid,'kernel_ref':owner+'/'+slug,'result':v})
+          print('SOILBIN_V17_V25_STATUS',json.dumps(out,ensure_ascii=False),flush=True)
+          PY
