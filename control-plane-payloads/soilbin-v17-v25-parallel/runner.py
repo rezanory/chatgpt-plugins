@@ -433,10 +433,19 @@ def dyn_predict_split(data,outer,metric,cfg):
     if key in _DYN_CACHE:
         test,p,meta=_DYN_CACHE[key]
         return test.copy(),p.copy(),dict(meta)
-    train,test,Pin,Pte=expert_bundle(data,outer,metric)
-    # base functional ensemble arm
     arm=cfg.get("arm","E_STATE_GATE")
     if arm not in ("A_QLOG","B_EQUAL","C_CONVEX","D_PASS_GATE","E_STATE_GATE"):arm="E_STATE_GATE"
+    train=data[data.Group!=outer].copy();test=data[data.Group==outer].copy()
+    # If QLOG won the upstream nested challenge, there is only one active expert.
+    # Reward/penalty cannot change a one-hot expert distribution, so avoid fitting unused experts.
+    if arm=="A_QLOG":
+        p,_=fit_predict(train,test,"QLOG",metric)
+        W=np.zeros((len(test),len(EXPERTS)));W[:,EXPERTS.index("QLOG")]=1.0
+        meta={"eta":0.0,"W":W,"single_expert":True}
+        _DYN_CACHE[key]=(test.copy(),p.copy(),dict(meta))
+        return test,p,meta
+    train,test,Pin,Pte=expert_bundle(data,outer,metric)
+    # base functional ensemble arm
     Wte,Wtr,_=arm_weights(train,test,Pin,Pte,arm,metric)
     mode=cfg.get("mode","BOTH");mode=mode if mode in ("NONE","REWARD_ONLY","PENALTY_ONLY","BOTH") else "BOTH"
     law=cfg.get("law","CONST");law=law if law in ("CONST","PASS_INC","PASS_DEC","HISTORY_RATIO","STATE_MAG","HYBRID") else "CONST"
@@ -486,6 +495,11 @@ def scale_force(pred,hrows,dhat,lam):
     return out
 def force_inner_oof(train_h,train_dyn,cfg,aug=True):
     pred=np.full((len(train_h),2),np.nan);feat=np.zeros((len(train_h),5))
+    if not aug:
+        for vg in sorted(train_h.Group.unique()):
+            th=train_h[train_h.Group!=vg];vh=train_h[train_h.Group==vg]
+            pred[train_h.Group.to_numpy()==vg]=fit_force_rf(th,vh)
+        return pred,feat
     for vg in sorted(train_h.Group.unique()):
         th=train_h[train_h.Group!=vg];vh=train_h[train_h.Group==vg]
         dd=train_dyn[train_dyn.Group.isin(train_h.Group.unique())]
