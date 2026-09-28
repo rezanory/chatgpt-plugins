@@ -20,6 +20,10 @@ const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
     new Set(["issue_comment", "workflow_dispatch"]),
   ],
   [
+    "rezanory/chatgpt-plugins/.github/workflows/soilbin-q1-v6-1-evidence-recovery.yml@refs/heads/main",
+    new Set(["issue_comment", "workflow_dispatch"]),
+  ],
+  [
     "rezanory/chatgpt-plugins/.github/workflows/control-plane-v3-query.yml@refs/heads/main",
     new Set(["issue_comment", "workflow_dispatch"]),
   ],
