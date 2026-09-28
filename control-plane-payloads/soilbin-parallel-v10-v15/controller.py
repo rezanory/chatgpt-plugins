@@ -13,7 +13,9 @@ ACCOUNT_POOL={'kg-02':'radlinaradlina','kg-03':'rezanory','kg-04':'reyhanehazad'
 # kg-05/M07 and kg-10/M11 are deliberately not used in this campaign.
 NAMES={'V10':'quality-audit','V11':'mae-quantile','V12':'tabpfn-v2','V13':'latent-state','V14':'physics-prior','V15':'ensemble-ablation'}
 ACTIVE={'RUNNING','QUEUED','PENDING','INITIALIZING','STARTING','UNKNOWN'}
-TERMINAL={'COMPLETE','COMPLETED','ERROR','FAILED','CANCELLED','CANCELED'}
+# Kaggle acknowledges a completed cancellation with CANCEL_ACKNOWLEDGED.
+# This is terminal failure, never scientific success; UNKNOWN remains unsafe.
+TERMINAL={'COMPLETE','COMPLETED','ERROR','FAILED','CANCELLED','CANCELED','CANCEL_ACKNOWLEDGED'}
 EVIDENCE=Path(os.environ.get('RUNNER_TEMP','.'))/'soilbin-parallel-v10-v15'
 EVIDENCE.mkdir(parents=True,exist_ok=True)
 TOKENS={}; LOCK=threading.Lock(); STATE_LOCK=threading.Lock()
