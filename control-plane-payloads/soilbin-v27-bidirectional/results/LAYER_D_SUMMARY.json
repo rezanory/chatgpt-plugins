@@ -1,0 +1,28 @@
+{
+  "status": "COMPLETE",
+  "tasks_executed": 1116,
+  "skipped": 0,
+  "kind_counts": {
+    "SMOOTHING": 432,
+    "RECONSTRUCTION": 342,
+    "FORECAST": 342
+  },
+  "n_groups_distribution": {
+    "6": 384,
+    "7": 282,
+    "8": 282,
+    "9": 168
+  },
+  "fixed_model": "Ridge(alpha=10.0)",
+  "hyperparameter_selected_on_test": false,
+  "forward_median_MAE_N": 37.65262125123034,
+  "reconstruction_median_MAE_N": 37.406088781253544,
+  "smoothing_median_MAE_N": 28.02449777625311,
+  "LC1_target_median_MAE_N": 23.649698475011835,
+  "LC5_target_median_MAE_N": 53.84940814759964,
+  "fusion_tasks": 372,
+  "fusion_helped_count": 71,
+  "memory_depth_rows": 90,
+  "missing_reconstruction_rows": 84,
+  "elapsed_seconds": 109.14690399169922
+}

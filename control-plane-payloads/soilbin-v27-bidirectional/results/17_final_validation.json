@@ -1,0 +1,20 @@
+{
+  "schema": "soilbin.v27.final-validation.v1",
+  "program_progress_pct": 100.0,
+  "V27_parallel_result_sha256": "2c58b6fe6a885baf15d95720927761c0fb3300e42562916a36402b4038d42aef",
+  "V27_copied_result_sha256": "2c58b6fe6a885baf15d95720927761c0fb3300e42562916a36402b4038d42aef",
+  "V27_parallel_equals_copied": true,
+  "final_scientific_findings_sha256": "b1f79c4d65a38777e18dbed10b8377d700b062774ee6a11dd0a2cad777fad06f",
+  "next_version_recommendation_sha256": "721658d3592013c5d7020e4683edab866fb617f9aa9bc2a3bb5ced20a4ae25a7",
+  "runtime_cleanup": {
+    "serial_duplicate_local_V27": "terminated only after 9-fold parallel fan-in had completed and exact V23 locks passed",
+    "kaggle_runs_cancelled": false,
+    "worker_processes_remaining": 0
+  },
+  "validated_counts": {
+    "directed_edges": 132,
+    "bidirectional_pairs": 66,
+    "multi_history_tasks": 1116,
+    "figures": 18
+  }
+}

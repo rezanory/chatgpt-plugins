@@ -1,0 +1,6 @@
+model_id,scope,joint_Group_MAE_N,LC1_Group_MAE_N,LC5_Group_MAE_N,status,note
+V5,historical frozen force endpoint,24.28878365273039,,,reference,Historical frozen reference; channel metrics not inserted here without same-source evidence.
+V11 RF_SHALLOW_WEIGHTED,historical frozen force endpoint,23.86044078619803,12.9017,34.8192,reference,Historical V11 reference from locked project lineage.
+V23 STATE_FEATURE_RF,force endpoint,23.104189837450967,13.009658000484931,33.198721674417,frozen baseline,Exact lock reproduced in V26 and V27.
+V26 champion,force endpoint,23.104189837450967,13.009658000484931,33.198721674417,V23_BASE,V26 transition-aware challenge.
+V27 champion,force endpoint,23.104189837450967,13.009658000484931,33.198721674417,V23_BASE,V27 two-stage probabilistic challenge; LC1 frozen to V23.

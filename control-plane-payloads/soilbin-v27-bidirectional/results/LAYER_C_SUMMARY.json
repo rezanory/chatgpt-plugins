@@ -1,0 +1,159 @@
+{
+  "status": "COMPLETE",
+  "pooled_rows": 1062,
+  "edges": 132,
+  "outer_groups": 9,
+  "mean_global_MAE_N": 58.6337359848961,
+  "median_global_MAE_N": 52.036488604492824,
+  "mean_edge_specific_MAE_N": 47.98161412563184,
+  "global_better_edges": 20,
+  "global_worse_edges": 112,
+  "mean_improvement_vs_edge_specific_N": -10.652121859264248,
+  "selection_audit": [
+    {
+      "outer_group": "V1W1",
+      "selected": "EXTRATREES",
+      "candidate_scores": [
+        {
+          "model": "EXTRATREES",
+          "inner_Group_MAE_N": 55.593872370413024
+        },
+        {
+          "model": "RIDGE",
+          "inner_Group_MAE_N": 61.738288977270656
+        }
+      ],
+      "train_rows": 972,
+      "test_rows": 90
+    },
+    {
+      "outer_group": "V1W2",
+      "selected": "EXTRATREES",
+      "candidate_scores": [
+        {
+          "model": "EXTRATREES",
+          "inner_Group_MAE_N": 55.63605448112854
+        },
+        {
+          "model": "RIDGE",
+          "inner_Group_MAE_N": 58.801980527743254
+        }
+      ],
+      "train_rows": 930,
+      "test_rows": 132
+    },
+    {
+      "outer_group": "V1W3",
+      "selected": "RIDGE",
+      "candidate_scores": [
+        {
+          "model": "RIDGE",
+          "inner_Group_MAE_N": 48.1484615574851
+        },
+        {
+          "model": "EXTRATREES",
+          "inner_Group_MAE_N": 59.63695956868659
+        }
+      ],
+      "train_rows": 930,
+      "test_rows": 132
+    },
+    {
+      "outer_group": "V2W1",
+      "selected": "RIDGE",
+      "candidate_scores": [
+        {
+          "model": "RIDGE",
+          "inner_Group_MAE_N": 57.65494290196517
+        },
+        {
+          "model": "EXTRATREES",
+          "inner_Group_MAE_N": 58.76061770951833
+        }
+      ],
+      "train_rows": 930,
+      "test_rows": 132
+    },
+    {
+      "outer_group": "V2W2",
+      "selected": "RIDGE",
+      "candidate_scores": [
+        {
+          "model": "RIDGE",
+          "inner_Group_MAE_N": 59.49874807619926
+        },
+        {
+          "model": "EXTRATREES",
+          "inner_Group_MAE_N": 59.71412730073269
+        }
+      ],
+      "train_rows": 930,
+      "test_rows": 132
+    },
+    {
+      "outer_group": "V2W3",
+      "selected": "EXTRATREES",
+      "candidate_scores": [
+        {
+          "model": "EXTRATREES",
+          "inner_Group_MAE_N": 50.95384117776005
+        },
+        {
+          "model": "RIDGE",
+          "inner_Group_MAE_N": 54.521055583053304
+        }
+      ],
+      "train_rows": 972,
+      "test_rows": 90
+    },
+    {
+      "outer_group": "V3W1",
+      "selected": "EXTRATREES",
+      "candidate_scores": [
+        {
+          "model": "EXTRATREES",
+          "inner_Group_MAE_N": 40.02091244250675
+        },
+        {
+          "model": "RIDGE",
+          "inner_Group_MAE_N": 46.63009059904984
+        }
+      ],
+      "train_rows": 930,
+      "test_rows": 132
+    },
+    {
+      "outer_group": "V3W2",
+      "selected": "EXTRATREES",
+      "candidate_scores": [
+        {
+          "model": "EXTRATREES",
+          "inner_Group_MAE_N": 54.91777437546371
+        },
+        {
+          "model": "RIDGE",
+          "inner_Group_MAE_N": 66.31214690466358
+        }
+      ],
+      "train_rows": 972,
+      "test_rows": 90
+    },
+    {
+      "outer_group": "V3W3",
+      "selected": "EXTRATREES",
+      "candidate_scores": [
+        {
+          "model": "EXTRATREES",
+          "inner_Group_MAE_N": 57.33912370055124
+        },
+        {
+          "model": "RIDGE",
+          "inner_Group_MAE_N": 67.79343223219297
+        }
+      ],
+      "train_rows": 930,
+      "test_rows": 132
+    }
+  ],
+  "elapsed_seconds": 156.26077008247375
+}

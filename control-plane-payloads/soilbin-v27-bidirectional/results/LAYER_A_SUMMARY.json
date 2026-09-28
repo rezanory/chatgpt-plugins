@@ -1,0 +1,265 @@
+{
+  "status": "COMPLETE",
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "edge_count": 132,
+  "pair_count": 66,
+  "n_groups_min": 6,
+  "n_groups_max": 9,
+  "edges_source_improved_count": 70,
+  "edges_source_worsened_count": 62,
+  "median_gain_MAE_N": 0.15292057040710816,
+  "mean_gain_MAE_N": 2.6276119008102827,
+  "LC5_target_mean_A1_MAE_N": 71.1776843171561,
+  "LC1_target_mean_A1_MAE_N": 24.785543934107604,
+  "best_gain_edges": [
+    {
+      "edge_id": "T5-LC5__TO__T3-LC5",
+      "A0_MAE_N": 92.60854470144399,
+      "A1_MAE_N": 13.155028327026239,
+      "gain_MAE_N": 79.45351637441775,
+      "A1_NMAE_sd": 0.1752161366962622
+    },
+    {
+      "edge_id": "T3-LC5__TO__T5-LC5",
+      "A0_MAE_N": 81.73951892832993,
+      "A1_MAE_N": 11.026431308030373,
+      "gain_MAE_N": 70.71308762029956,
+      "A1_NMAE_sd": 0.18555149201226495
+    },
+    {
+      "edge_id": "T6-LC5__TO__T2-LC5",
+      "A0_MAE_N": 93.17728946368132,
+      "A1_MAE_N": 38.74646714726793,
+      "gain_MAE_N": 54.43082231641339,
+      "A1_NMAE_sd": 0.41849146348042543
+    },
+    {
+      "edge_id": "T4-LC5__TO__T3-LC5",
+      "A0_MAE_N": 92.60854470144399,
+      "A1_MAE_N": 40.97390695833469,
+      "gain_MAE_N": 51.6346377431093,
+      "A1_NMAE_sd": 0.5457449048469222
+    },
+    {
+      "edge_id": "T6-LC5__TO__T3-LC5",
+      "A0_MAE_N": 92.60854470144399,
+      "A1_MAE_N": 47.28452562197481,
+      "gain_MAE_N": 45.32401907946918,
+      "A1_NMAE_sd": 0.6297981044994617
+    },
+    {
+      "edge_id": "T3-LC5__TO__T2-LC5",
+      "A0_MAE_N": 93.17728946368132,
+      "A1_MAE_N": 53.517611404628425,
+      "gain_MAE_N": 39.659678059052894,
+      "A1_NMAE_sd": 0.5780311127095591
+    },
+    {
+      "edge_id": "T5-LC5__TO__T2-LC5",
+      "A0_MAE_N": 93.17728946368132,
+      "A1_MAE_N": 56.10275005737792,
+      "gain_MAE_N": 37.0745394063034,
+      "A1_NMAE_sd": 0.6059525862719619
+    },
+    {
+      "edge_id": "T6-LC5__TO__T1-LC5",
+      "A0_MAE_N": 118.2636151642224,
+      "A1_MAE_N": 83.3989731727883,
+      "gain_MAE_N": 34.8646419914341,
+      "A1_NMAE_sd": 0.6957782060751098
+    },
+    {
+      "edge_id": "T4-LC5__TO__T5-LC5",
+      "A0_MAE_N": 81.73951892832993,
+      "A1_MAE_N": 47.18474681533222,
+      "gain_MAE_N": 34.55477211299771,
+      "A1_NMAE_sd": 0.7940193819036979
+    },
+    {
+      "edge_id": "T6-LC5__TO__T5-LC5",
+      "A0_MAE_N": 81.73951892832993,
+      "A1_MAE_N": 50.984997107133985,
+      "gain_MAE_N": 30.754521821195944,
+      "A1_NMAE_sd": 0.8579695478245901
+    }
+  ],
+  "worst_gain_edges": [
+    {
+      "edge_id": "T1-LC1__TO__T2-LC5",
+      "A0_MAE_N": 79.37502344751597,
+      "A1_MAE_N": 144.622188284224,
+      "gain_MAE_N": -65.24716483670802,
+      "A1_NMAE_sd": 2.1075425132475996
+    },
+    {
+      "edge_id": "T2-LC1__TO__T1-LC5",
+      "A0_MAE_N": 111.98491902585799,
+      "A1_MAE_N": 176.88241095677085,
+      "gain_MAE_N": -64.89749193091286,
+      "A1_NMAE_sd": 1.411534862376479
+    },
+    {
+      "edge_id": "T4-LC1__TO__T1-LC1",
+      "A0_MAE_N": 18.217861462790516,
+      "A1_MAE_N": 41.90338279178619,
+      "gain_MAE_N": -23.685521328995677,
+      "A1_NMAE_sd": 1.6292703863433153
+    },
+    {
+      "edge_id": "T5-LC1__TO__T2-LC5",
+      "A0_MAE_N": 93.17728946368132,
+      "A1_MAE_N": 116.78520254678062,
+      "gain_MAE_N": -23.607913083099305,
+      "A1_NMAE_sd": 1.2613694595922995
+    },
+    {
+      "edge_id": "T3-LC1__TO__T2-LC5",
+      "A0_MAE_N": 93.17728946368132,
+      "A1_MAE_N": 115.94991999671457,
+      "gain_MAE_N": -22.77263053303325,
+      "A1_NMAE_sd": 1.252347769551032
+    },
+    {
+      "edge_id": "T1-LC1__TO__T2-LC1",
+      "A0_MAE_N": 26.250038262289873,
+      "A1_MAE_N": 41.960629247127905,
+      "gain_MAE_N": -15.710590984838031,
+      "A1_NMAE_sd": 1.7441300057535891
+    },
+    {
+      "edge_id": "T4-LC1__TO__T2-LC5",
+      "A0_MAE_N": 93.17728946368132,
+      "A1_MAE_N": 107.39703940263456,
+      "gain_MAE_N": -14.219749938953242,
+      "A1_NMAE_sd": 1.1599701212047813
+    },
+    {
+      "edge_id": "T4-LC1__TO__T6-LC5",
+      "A0_MAE_N": 54.24590869587675,
+      "A1_MAE_N": 67.02832758443614,
+      "gain_MAE_N": -12.782418888559391,
+      "A1_NMAE_sd": 0.8896318009354075
+    },
+    {
+      "edge_id": "T6-LC1__TO__T1-LC5",
+      "A0_MAE_N": 118.2636151642224,
+      "A1_MAE_N": 130.95660220352926,
+      "gain_MAE_N": -12.692987039306857,
+      "A1_NMAE_sd": 1.0925404269197072
+    },
+    {
+      "edge_id": "T4-LC1__TO__T3-LC5",
+      "A0_MAE_N": 92.60854470144399,
+      "A1_MAE_N": 104.24437530368095,
+      "gain_MAE_N": -11.635830602236965,
+      "A1_NMAE_sd": 1.3884650233326548
+    }
+  ],
+  "largest_asymmetry_pairs": [
+    {
+      "node_A": "T1-LC1",
+      "node_B": "T2-LC5",
+      "forward_edge": "T1-LC1__TO__T2-LC5",
+      "reverse_edge": "T2-LC5__TO__T1-LC1",
+      "forward_MAE_N": 144.622188284224,
+      "reverse_MAE_N": 15.428363057745216,
+      "asymmetry_forward_minus_reverse_N": 129.1938252264788,
+      "asymmetry_normalized": 1.6144127482627546
+    },
+    {
+      "node_A": "T1-LC5",
+      "node_B": "T3-LC1",
+      "forward_edge": "T1-LC5__TO__T3-LC1",
+      "reverse_edge": "T3-LC1__TO__T1-LC5",
+      "forward_MAE_N": 14.801774228306508,
+      "reverse_MAE_N": 119.40245465551266,
+      "asymmetry_forward_minus_reverse_N": -104.60068042720614,
+      "asymmetry_normalized": -1.5588283811497348
+    },
+    {
+      "node_A": "T1-LC5",
+      "node_B": "T4-LC1",
+      "forward_edge": "T1-LC5__TO__T4-LC1",
+      "reverse_edge": "T4-LC1__TO__T1-LC5",
+      "forward_MAE_N": 15.68721006394398,
+      "reverse_MAE_N": 103.84705385634354,
+      "asymmetry_forward_minus_reverse_N": -88.15984379239956,
+      "asymmetry_normalized": -1.475055618382186
+    },
+    {
+      "node_A": "T1-LC5",
+      "node_B": "T5-LC1",
+      "forward_edge": "T1-LC5__TO__T5-LC1",
+      "reverse_edge": "T5-LC1__TO__T1-LC5",
+      "forward_MAE_N": 18.45205086156806,
+      "reverse_MAE_N": 115.87617380673852,
+      "asymmetry_forward_minus_reverse_N": -97.42412294517047,
+      "asymmetry_normalized": -1.450538383660433
+    },
+    {
+      "node_A": "T1-LC1",
+      "node_B": "T1-LC5",
+      "forward_edge": "T1-LC1__TO__T1-LC5",
+      "reverse_edge": "T1-LC5__TO__T1-LC1",
+      "forward_MAE_N": 103.98429737368814,
+      "reverse_MAE_N": 19.06445167399382,
+      "asymmetry_forward_minus_reverse_N": 84.91984569969432,
+      "asymmetry_normalized": 1.3802634542312575
+    },
+    {
+      "node_A": "T1-LC5",
+      "node_B": "T2-LC1",
+      "forward_edge": "T1-LC5__TO__T2-LC1",
+      "reverse_edge": "T2-LC1__TO__T1-LC5",
+      "forward_MAE_N": 32.66895794234038,
+      "reverse_MAE_N": 176.88241095677085,
+      "asymmetry_forward_minus_reverse_N": -144.21345301443048,
+      "asymmetry_normalized": -1.3764019177928848
+    },
+    {
+      "node_A": "T2-LC5",
+      "node_B": "T3-LC1",
+      "forward_edge": "T2-LC5__TO__T3-LC1",
+      "reverse_edge": "T3-LC1__TO__T2-LC5",
+      "forward_MAE_N": 21.845397997522557,
+      "reverse_MAE_N": 115.94991999671457,
+      "asymmetry_forward_minus_reverse_N": -94.10452199919202,
+      "asymmetry_normalized": -1.365859498987152
+    },
+    {
+      "node_A": "T2-LC5",
+      "node_B": "T5-LC1",
+      "forward_edge": "T2-LC5__TO__T5-LC1",
+      "reverse_edge": "T5-LC1__TO__T2-LC5",
+      "forward_MAE_N": 24.683200648432354,
+      "reverse_MAE_N": 116.78520254678062,
+      "asymmetry_forward_minus_reverse_N": -92.10200189834828,
+      "asymmetry_normalized": -1.3020858342658503
+    },
+    {
+      "node_A": "T1-LC5",
+      "node_B": "T6-LC1",
+      "forward_edge": "T1-LC5__TO__T6-LC1",
+      "reverse_edge": "T6-LC1__TO__T1-LC5",
+      "forward_MAE_N": 28.918095401621915,
+      "reverse_MAE_N": 130.95660220352926,
+      "asymmetry_forward_minus_reverse_N": -102.03850680190735,
+      "asymmetry_normalized": -1.2764809983117635
+    },
+    {
+      "node_A": "T3-LC1",
+      "node_B": "T3-LC5",
+      "forward_edge": "T3-LC1__TO__T3-LC5",
+      "reverse_edge": "T3-LC5__TO__T3-LC1",
+      "forward_MAE_N": 87.08700129105621,
+      "reverse_MAE_N": 20.345972208072258,
+      "asymmetry_forward_minus_reverse_N": 66.74102908298396,
+      "asymmetry_normalized": 1.242468246185616
+    }
+  ],
+  "structural_tasks_verified": 1128,
+  "structural_tasks_layerA_executed": 132,
+  "structural_coverage_pct": 11.702127659574469,
+  "integrated_program_progress_pct": 20,
+  "elapsed_seconds": 420.90114641189575
+}

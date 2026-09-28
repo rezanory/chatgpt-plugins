@@ -1,0 +1,12 @@
+{
+  "status": "COMPLETE",
+  "pairs": 66,
+  "joint_better_than_independent_pairs": 27,
+  "cycle_better_than_joint_pairs": 33,
+  "cycle_better_than_independent_pairs": 26,
+  "mean_joint_gain_vs_independent_N": -4.756693614261523,
+  "mean_cycle_gain_vs_independent_N": -3.3006497907094405,
+  "median_cycle_gain_vs_independent_N": -2.196523585735717,
+  "method": "shared bidirectional Ridge + training-only cycle-discrepancy calibrator",
+  "elapsed_seconds": 207.91886591911316
+}
