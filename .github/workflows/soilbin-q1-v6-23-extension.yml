@@ -1219,7 +1219,7 @@ jobs:
       - name: Checkout frozen V17-V25 campaign source
         uses: actions/checkout@v4
         with:
-          ref: 5095657
+          ref: 5095657203e65ec39996e95565db7b2eee289425
 
       - name: Validate campaign payload
         shell: bash
@@ -1263,6 +1263,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: soilbin-v17-v25-parallel-evidence
-          path: ${{ env.SOILBIN_V17_V25_EVIDENCE_DIR }}
+          path: ${{ runner.temp }}/soilbin-v17-v25
           if-no-files-found: warn
           retention-days: 30
