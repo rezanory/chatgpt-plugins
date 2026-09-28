@@ -1,0 +1,33 @@
+{
+  "schema": "soilbin.q1.v16.run-manifest",
+  "finished_utc": "2026-09-28T16:18:22.041048+00:00",
+  "seed": 20260928,
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "families": [
+    "PERSISTENCE",
+    "LINEAR",
+    "LOGARITHMIC",
+    "POWER_FREE",
+    "EXPONENTIAL_FREE",
+    "EXPONENTIAL_DECAY",
+    "HYPERBOLIC_DECAY",
+    "SATURATING_EXP_DECAY",
+    "STRETCHED_EXP_DECAY",
+    "QUADRATIC_LOG",
+    "PIECEWISE_LOG",
+    "DECAY_REBOUND"
+  ],
+  "primary_contract": "ONE_STEP_D_joint",
+  "secondary_contract": "ANCHOR_D_joint plus channel sensitivities",
+  "output_files": [
+    "RESULTS_V16.json",
+    "state/progress_v16.json",
+    "tables/breakpoint_selections_v16.csv",
+    "tables/functional_family_oof_predictions_v16.csv",
+    "tables/functional_family_summary_v16.csv",
+    "tables/nested_family_selections_v16.csv",
+    "tables/observed_pass_dynamics_v16.csv",
+    "tables/one_step_pass_error_v16.csv",
+    "tables/t6_rebound_by_group_v16.csv"
+  ]
+}

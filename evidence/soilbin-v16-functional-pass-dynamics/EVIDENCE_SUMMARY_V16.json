@@ -1,0 +1,69 @@
+{
+  "kernel_ref": "mylovevpn1/soilbin-v16-functional-pass-dynamics-20260928",
+  "kaggle_terminal_complete": true,
+  "primary_decision": {
+    "primary_contract": "ONE_STEP conditional transition-magnitude forecast using only the previous observed transition magnitude.",
+    "best_fixed_family_descriptive": {
+      "family": "QUADRATIC_LOG",
+      "Group_MAE_N": 17.313739435905248
+    },
+    "nested_selected_family": {
+      "Group_MAE_N": 17.313739435905248,
+      "selection_counts": {
+        "QUADRATIC_LOG": 9
+      }
+    },
+    "best_monotone_decay_family": {
+      "family": "SATURATING_EXP_DECAY",
+      "Group_MAE_N": 20.960824459341794
+    },
+    "decay_rebound": {
+      "Group_MAE_N": 19.7902646755894,
+      "delta_vs_best_monotone_N": -1.1705597837523953,
+      "outer_breakpoint_counts": {
+        "5": 9
+      }
+    },
+    "piecewise_log": {
+      "Group_MAE_N": 19.790264656368496,
+      "outer_breakpoint_counts": {
+        "5": 9
+      }
+    },
+    "t6_rebound": {
+      "groups_total": 9,
+      "groups_D6_gt_D5": 8,
+      "groups_D6_gt_2x_D5": 7,
+      "mean_D5_N": 16.2146093095,
+      "mean_D6_N": 32.00240052216666,
+      "mean_increase_N": 15.78779121266667,
+      "mean_ratio_D6_over_D5": 3.342249839454214,
+      "median_ratio_D6_over_D5": 2.7994362311609002,
+      "bootstrap_95CI_mean_increase_N": [
+        0.49492528108334394,
+        26.95221549027779
+      ],
+      "exact_signflip_one_sided_p": 0.037109375,
+      "exact_directional_binomial_one_sided_p": 0.01953125,
+      "interpretation_guard": "Exploratory candidate regime transition only; not proof of structural collapse, fatigue failure, permanent strain, or shakedown class."
+    }
+  },
+  "t6_candidate_transition_evidence": {
+    "groups_total": 9,
+    "groups_D6_gt_D5": 8,
+    "groups_D6_gt_2x_D5": 7,
+    "mean_D5_N": 16.2146093095,
+    "mean_D6_N": 32.00240052216666,
+    "mean_increase_N": 15.78779121266667,
+    "mean_ratio_D6_over_D5": 3.342249839454214,
+    "median_ratio_D6_over_D5": 2.7994362311609002,
+    "bootstrap_95CI_mean_increase_N": [
+      0.49492528108334394,
+      26.95221549027779
+    ],
+    "exact_signflip_one_sided_p": 0.037109375,
+    "exact_directional_binomial_one_sided_p": 0.01953125,
+    "interpretation_guard": "Exploratory candidate regime transition only; not proof of structural collapse, fatigue failure, permanent strain, or shakedown class."
+  },
+  "source_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059"
+}
