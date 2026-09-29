@@ -2,8 +2,10 @@ const GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const GITHUB_OIDC_JWKS = "https://token.actions.githubusercontent.com/.well-known/jwks";
 const READ_AUDIENCE = "cgp-control-plane-v3";
 const ACTION_AUDIENCE = "cgp-control-plane-v3-action";
-const TRUSTED_REPOSITORY = "rezanory/chatgpt-plugins";
-const TRUSTED_REPOSITORY_ID = "1337215097";
+const TRUSTED_REPOSITORIES = new Map<string, string>([
+  ["rezanory/chatgpt-plugins", "1337215097"],
+  ["rezanory/soilbin", "1394009486"],
+]);
 const TRUSTED_OWNER_ID = "62356000";
 const TRUSTED_HUMAN_ACTOR_ID = "62356000";
 const GITHUB_ACTIONS_BOT_ACTOR_ID = "41898282";
@@ -11,6 +13,10 @@ const TRUSTED_REF = "refs/heads/main";
 const PHASE2_WORKFLOW_REF =
   "rezanory/chatgpt-plugins/.github/workflows/pneumonia-v17-m07-continuation-20260914.yml@refs/heads/main";
 const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
+  [
+    "rezanory/soilbin/.github/workflows/soilbin-v31-v50-parallel.yml@refs/heads/main",
+    new Set(["workflow_dispatch"]),
+  ],
   [
     "rezanory/chatgpt-plugins/.github/workflows/soilbin-q1-v6-23-extension.yml@refs/heads/main",
     new Set(["issue_comment"]),
@@ -45,6 +51,10 @@ const READ_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
   ],
 ]);
 const ACTION_WORKFLOW_EVENTS = new Map<string, ReadonlySet<string>>([
+  [
+    "rezanory/soilbin/.github/workflows/soilbin-v31-v50-parallel.yml@refs/heads/main",
+    new Set(["workflow_dispatch"]),
+  ],
   [
     "rezanory/chatgpt-plugins/.github/workflows/soilbin-q1-v6-23-extension.yml@refs/heads/main",
     new Set(["issue_comment"]),
@@ -208,7 +218,8 @@ async function verifyBrokerOidc(
   const runId = claimString(claims, "run_id");
   const sha = claimString(claims, "sha");
 
-  if (repository !== TRUSTED_REPOSITORY || repositoryId !== TRUSTED_REPOSITORY_ID) {
+  const trustedRepositoryId = TRUSTED_REPOSITORIES.get(repository);
+  if (!trustedRepositoryId || repositoryId !== trustedRepositoryId) {
     throw new Error("GitHub OIDC repository identity mismatch");
   }
   if (ownerId !== TRUSTED_OWNER_ID) {
