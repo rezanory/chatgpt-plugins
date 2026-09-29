@@ -31,6 +31,11 @@ concurrency:
         (github.event.inputs.recovery == 'M07_EXTERNAL_VINDR_R320_V2' ||
          github.event.inputs.recovery == 'M07_EXTERNAL_VINDR_R384_V2') &&
         'pneumonia-v17-m07-vindr-kg05' ||
+        github.event.inputs.recovery == 'M07_EXTERNAL_RSNA_R224_V1' &&
+        'pneumonia-v17-m07-rsna-kg03' ||
+        (github.event.inputs.recovery == 'M07_EXTERNAL_RSNA_R320_V1' ||
+         github.event.inputs.recovery == 'M07_EXTERNAL_RSNA_R384_V1') &&
+        'pneumonia-v17-m07-rsna-kg05' ||
         'pneumonia-v17-d260914d-m07-continuation-v1' }}
   cancel-in-progress: false
 
