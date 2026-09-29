@@ -13,9 +13,9 @@ RECEIPT = ROOT / "evidence" / "m07_external" / "rsna_pediatric_v1" / "manifest_r
 
 EXPECTED_MANIFEST_SHA256 = "3450a101e626a09535d98e5aa9ca52dbf64ded584c2952f7613e3c22981cf5cd"
 TOKENS = (
-    "M07_EXTERNAL_RSNA_PEDS_R224_V1",
-    "M07_EXTERNAL_RSNA_PEDS_R320_V1",
-    "M07_EXTERNAL_RSNA_PEDS_R384_V1",
+    "M07_EXTERNAL_RSNA_R224_V1",
+    "M07_EXTERNAL_RSNA_R320_V1",
+    "M07_EXTERNAL_RSNA_R384_V1",
 )
 
 
@@ -52,15 +52,16 @@ def test_rsna_manifest_is_frozen_before_inference():
 
 def test_rsna_external_script_is_inference_only_and_not_vindr_loader():
     text = EXTERNAL.read_text(encoding="utf-8")
-    assert "EXPECTED_MANIFEST_SHA256 = " in text
+    assert "EXPECTED_RSNA_MANIFEST_SHA256 = " in text
     assert EXPECTED_MANIFEST_SHA256 in text
-    assert 'EXPECTED_PRIMARY_N = 282' in text
-    assert 'EXPECTED_EXPANDED_N = 1099' in text
+    assert "EXPECTED_RSNA_COUNTS = {" in text
+    assert '"primary_images": 282' in text
+    assert '"expanded_images": 1099' in text
     assert '"training_performed": False' in text
     assert '"hpo_performed": False' in text
     assert '"external_threshold_tuning": False' in text
     assert '"external_adaptation": False' in text
-    assert '"calibration_fitting_on_external": False' in text
+    assert '"external_calibration_fitting": False' in text
     assert "model.fit(" not in text
     assert ".fit(" not in text
     assert "tune_threshold" not in text
@@ -69,7 +70,8 @@ def test_rsna_external_script_is_inference_only_and_not_vindr_loader():
     assert "dicom_to_png" not in text
     assert "EXPECTED_DIAGNOSIS_COUNTS" not in text
     assert "Pneumonia Detection Challenge" in text
-    assert "endpoint_semantics_differ" in text
+    assert 'RSNA_POSITIVE_LABEL = "Adjudicated Lung Opacity"' in text
+    assert "not an exact pneumonia diagnosis label" in text
 
 
 def test_rsna_dispatch_uses_frozen_states_and_no_competition_source():
@@ -86,7 +88,7 @@ def test_rsna_dispatch_uses_frozen_states_and_no_competition_source():
     assert '"competitionDataSources": []' in text
     assert '"enableGpu": True' in text
     assert '"external_threshold_tuning": False' in text
-    assert '"calibration_fitting_on_external": False' in text
+    assert '"external_calibration_fitting": False' in text
     assert EXPECTED_MANIFEST_SHA256 in text
 
 

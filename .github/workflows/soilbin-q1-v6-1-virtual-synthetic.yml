@@ -1,0 +1,332 @@
+name: soilbin-q1-v6-1-virtual-synthetic
+
+on:
+  workflow_dispatch:
+  issue_comment:
+    types: [created]
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: soilbin-q1-v6-1-virtual-synthetic-kg09
+  cancel-in-progress: false
+
+jobs:
+  launch-and-collect:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.number == 134 && github.event.comment.user.id == 62356000 && github.event.comment.body == 'SOILBIN_Q1_V6_1_VIRTUAL_SYNTHETIC_LAUNCH_KG09') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout triggering revision
+        uses: actions/checkout@v4
+
+      - name: Validate V6.1 payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='control-plane-payloads/soilbin-q1-v6-1-virtual-synthetic'
+          python -m py_compile "$ROOT/soilbin_v6_1_runner.py" "$ROOT/launch_soilbin_v6_1_cloudflare.py"
+          python - <<'PY'
+          import base64
+          import gzip
+          import hashlib
+          import pathlib
+
+          root = pathlib.Path('control-plane-payloads/soilbin-q1-v6-1-virtual-synthetic')
+          runner = (root / 'soilbin_v6_1_runner.py').read_text(encoding='utf-8')
+          required = [
+              'BASELINE_REAL_ONLY',
+              'VS_FULL_LOCAL_MIXUP_100',
+              'V61_NESTED_SELECTED',
+              'SYNTHETIC_SOURCE_LEAKAGE',
+              'RESULTS_V6_1.json',
+              'RUN_MANIFEST_V6_1.json',
+              'LEAKAGE_AUDIT_V6_1.json',
+              'does_not_supersede_v5',
+              'evaluation_row_is_real',
+          ]
+          for token in required:
+              if token not in runner:
+                  raise SystemExit('missing V6.1 guard: ' + token)
+          encoded = (root / 'all_features_51.csv.gz.b64').read_text(encoding='utf-8').strip()
+          raw = gzip.decompress(base64.b64decode(encoded, validate=True))
+          actual = hashlib.sha256(raw).hexdigest()
+          expected = 'dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059'
+          if actual != expected:
+              raise SystemExit(f'model fingerprint mismatch: {actual}')
+          print('SOILBIN_V6_1_PAYLOAD_OK', hashlib.sha256(runner.encode()).hexdigest())
+          PY
+
+      - name: Request trusted write OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          base = os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          separator = '&' if '?' in base else '?'
+          target = base + separator + 'audience=' + urllib.parse.quote('cgp-control-plane-v3-action', safe='')
+          request = urllib.request.Request(
+              target,
+              headers={'Authorization': 'Bearer ' + os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']},
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              token = json.load(response)['value']
+          if len(token) < 100:
+              raise SystemExit('write OIDC unavailable')
+          print('::add-mask::' + token)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as handle:
+              handle.write('CGP_ACTION_OIDC_TOKEN=' + token + '\n')
+          PY
+
+      - name: Launch V6.1 on Kaggle kg-09
+        shell: bash
+        run: |
+          set -euo pipefail
+          python control-plane-payloads/soilbin-q1-v6-1-virtual-synthetic/launch_soilbin_v6_1_cloudflare.py
+
+      - name: Request trusted read OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          base = os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          separator = '&' if '?' in base else '?'
+          target = base + separator + 'audience=' + urllib.parse.quote('cgp-control-plane-v3', safe='')
+          request = urllib.request.Request(
+              target,
+              headers={'Authorization': 'Bearer ' + os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']},
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              token = json.load(response)['value']
+          if len(token) < 100:
+              raise SystemExit('read OIDC unavailable')
+          print('::add-mask::' + token)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as handle:
+              handle.write('CGP_READ_OIDC_TOKEN=' + token + '\n')
+          PY
+
+      - name: Poll V6.1 and collect evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          endpoint = 'https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle'
+
+          def request_read_oidc():
+              base = os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+              separator = '&' if '?' in base else '?'
+              target = base + separator + 'audience=' + urllib.parse.quote('cgp-control-plane-v3', safe='')
+              request = urllib.request.Request(
+                  target,
+                  headers={
+                      'Authorization': 'Bearer ' + os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN'],
+                      'Accept': 'application/json',
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  fresh = str(json.load(response).get('value') or '').strip()
+              if len(fresh) < 100:
+                  raise RuntimeError('fresh read OIDC unavailable')
+              print('::add-mask::' + fresh)
+              return fresh
+
+          token = os.environ['CGP_READ_OIDC_TOKEN']
+          account = 'kg-09'
+          raw_ref = os.environ.get('SOILBIN_V61_KERNEL_REF', '').strip()
+          ref = raw_ref.removeprefix('/code/')
+          if '/' not in ref:
+              raise SystemExit('invalid launched V6.1 kernel ref: ' + raw_ref)
+          owner, slug = ref.split('/', 1)
+
+          def call(payload, timeout=120):
+              global token
+              for refresh_attempt in range(2):
+                  request = urllib.request.Request(
+                      endpoint,
+                      data=json.dumps(payload, separators=(',', ':')).encode(),
+                      method='POST',
+                      headers={
+                          'Authorization': 'Bearer ' + token,
+                          'Content-Type': 'application/json',
+                          'Accept': 'application/json',
+                          'User-Agent': 'soilbin-v6-1-evidence/1.1',
+                      },
+                  )
+                  try:
+                      with urllib.request.urlopen(request, timeout=timeout) as response:
+                          value = json.loads(response.read().decode('utf-8', 'replace') or '{}')
+                  except urllib.error.HTTPError as exc:
+                      detail = exc.read(4000).decode('utf-8', 'replace')
+                      if exc.code == 403 and 'OIDC JWT expired' in detail and refresh_attempt == 0:
+                          token = request_read_oidc()
+                          continue
+                      raise RuntimeError(f'read broker HTTP {exc.code}: {detail}') from exc
+                  if value.get('ok') is not True or value.get('read_only') is not True:
+                      raise RuntimeError('read broker rejected: ' + json.dumps(value)[:1500])
+                  return value.get('result') or {}
+              raise RuntimeError('read broker OIDC refresh exhausted')
+
+          terminal = None
+          for attempt in range(360):
+              terminal = call(
+                  {
+                      'action': 'raw_read',
+                      'account_id': account,
+                      'service': 'kernels.KernelsApiService',
+                      'method': 'GetKernelSessionStatus',
+                      'body': {'userName': owner, 'kernelSlug': slug},
+                  },
+                  60,
+              )
+              text = json.dumps(terminal, ensure_ascii=False, sort_keys=True).upper()
+              print('V61_KAGGLE_STATUS', attempt, text[:1200], flush=True)
+              if 'COMPLETE' in text:
+                  break
+              if any(marker in text for marker in ['ERROR', 'FAILED', 'CANCELLED']):
+                  raise SystemExit('V6.1 Kaggle terminal failure: ' + text[:2200])
+              time.sleep(20)
+          else:
+              raise SystemExit('V6.1 Kaggle status polling timed out')
+
+          output = call(
+              {
+                  'action': 'output_json_files',
+                  'account_id': account,
+                  'kernel_ref': ref,
+                  'file_names': [
+                      'RESULTS_V6_1.json',
+                      'RUN_MANIFEST_V6_1.json',
+                      'LEAKAGE_AUDIT_V6_1.json',
+                  ],
+                  'max_bytes_per_file': 524288,
+              },
+              180,
+          )
+          files = output.get('files') or []
+          if len(files) != 3:
+              raise SystemExit(
+                  'expected 3 V6.1 evidence files, got '
+                  + str(len(files))
+                  + ' :: '
+                  + json.dumps(output)[:1800]
+              )
+
+          destination = pathlib.Path(os.environ['RUNNER_TEMP']) / 'soilbin-v6-1-evidence'
+          destination.mkdir(parents=True, exist_ok=True)
+          by_name = {}
+          for item in files:
+              name = str(item.get('file_name') or '')
+              value = item.get('json')
+              if not isinstance(value, dict):
+                  raise SystemExit('missing JSON for ' + name)
+              by_name[name] = value
+              (destination / name).write_text(
+                  json.dumps(value, ensure_ascii=False, indent=2),
+                  encoding='utf-8',
+              )
+
+          results = by_name['RESULTS_V6_1.json']
+          manifest = by_name['RUN_MANIFEST_V6_1.json']
+          leakage = by_name['LEAKAGE_AUDIT_V6_1.json']
+          reproduction = results.get('baseline_reproduction') or {}
+          if results.get('schema') != 'soilbin.q1.v6.1.virtual-synthetic':
+              raise SystemExit('unexpected V6.1 results schema')
+          if results.get('does_not_supersede_v5') is not True:
+              raise SystemExit('V6.1 V5-lock guard missing')
+          if reproduction.get('within_2pct_of_frozen_v5') is not True:
+              raise SystemExit('V6.1 baseline reproduction drift gate failed')
+          if leakage.get('passed') is not True:
+              raise SystemExit('V6.1 leakage audit did not pass')
+          if int(leakage.get('forbidden_source_intersections', -1)) != 0:
+              raise SystemExit('V6.1 forbidden source intersection detected')
+          if int(leakage.get('synthetic_rows_in_evaluation', -1)) != 0:
+              raise SystemExit('V6.1 synthetic evaluation row detected')
+          if manifest.get('baseline_reproduction_within_2pct') is not True:
+              raise SystemExit('V6.1 manifest reproduction gate failed')
+
+          summary = {
+              'kernel_ref': ref,
+              'kaggle_terminal_complete': True,
+              'baseline_reproduction': reproduction,
+              'primary_nested_selected': results.get('primary_nested_selected'),
+              'pre_registered_flagship': results.get('pre_registered_flagship'),
+              'best_descriptive_only': results.get('best_descriptive_only'),
+              'selection_counts': results.get('selection_counts'),
+              'leakage_audit': leakage,
+          }
+          (destination / 'EVIDENCE_SUMMARY_V6_1.json').write_text(
+              json.dumps(summary, ensure_ascii=False, indent=2),
+              encoding='utf-8',
+          )
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as handle:
+              handle.write('SOILBIN_V61_EVIDENCE_DIR=' + str(destination) + '\n')
+              handle.write('SOILBIN_V61_COMPLETE=1\n')
+              handle.write('SOILBIN_V61_KERNEL_REF_NORMALIZED=' + ref + '\n')
+          print('SOILBIN_V6_1_KAGGLE_COMPLETE', json.dumps(summary, ensure_ascii=False), flush=True)
+          PY
+
+      - name: Upload V6.1 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: soilbin-v6-1-virtual-synthetic-evidence
+          path: ${{ env.SOILBIN_V61_EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish V6.1 receipt
+        if: always()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          complete = os.environ.get('SOILBIN_V61_COMPLETE') == '1'
+          title = 'COMPLETE' if complete else 'FAILED_OR_INCOMPLETE'
+          body = (
+              f"SOILBIN V6.1 virtual sensing / synthetic augmentation {title}\n\n"
+              f"- GitHub run: `{os.environ['GITHUB_RUN_ID']}`\n"
+              "- Kaggle account: `kg-09` / `mylovevpn1`\n"
+              f"- Kernel: `{os.environ.get('SOILBIN_V61_KERNEL_REF_NORMALIZED', os.environ.get('SOILBIN_V61_KERNEL_REF', 'unknown'))}`\n"
+              f"- V5 reproduction + leakage gates: `{'PASS' if complete else 'not verified'}`\n"
+              "- V6.1 remains post-lock exploratory; frozen V5 is not overwritten.\n"
+          )
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/134/comments",
+              data=json.dumps({'body': body}).encode(),
+              method='POST',
+              headers={
+                  'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN'],
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'soilbin-v6-1/1.0',
+              },
+          )
+          with urllib.request.urlopen(request, timeout=30):
+              pass
+          PY

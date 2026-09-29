@@ -17,7 +17,7 @@ if IMAGE_SIZE not in {224, 320, 384}:
 OUT = WORK / f"M07_RSNA_PEDIATRIC_EXTERNAL_R{IMAGE_SIZE}_V1"
 OUT.mkdir(parents=True, exist_ok=True)
 BOOTSTRAPS = 2000
-BOOTSTRAP_SEED = 260928
+BOOTSTRAP_SEED = 260927
 STATE_HANDLES = {
     224: "rezanory/m07-final-5fold-fix2-d260914d",
     320: "trickermark/m07-gate-r320-state-v1-7",
@@ -38,23 +38,28 @@ if EVAL_BATCH_SIZE < 1:
     raise RuntimeError("M07_EXTERNAL_BATCH_SIZE_INVALID")
 EXPECTED_SPLIT = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
 EXPECTED_RECIPE = "02c77dd257612e866756b16270f71816e61fb9f2403e14126aaacb9f01a8da0b"
-
-EXPECTED_MANIFEST_SHA256 = "3450a101e626a09535d98e5aa9ca52dbf64ded584c2952f7613e3c22981cf5cd"
-EXPECTED_PRIMARY_COUNTS = {0: 146, 1: 136}
-EXPECTED_PRIMARY_N = 282
-EXPECTED_EXPANDED_COUNTS = {0: 578, 1: 521}
-EXPECTED_EXPANDED_N = 1099
-EXPECTED_PRIMARY_PATIENTS = 158
-EXPECTED_EXPANDED_PATIENTS = 553
-EXTERNAL_DATASET_REF = "nih-chest-xrays/data"
+EXPECTED_RSNA_MANIFEST_SHA256 = "3450a101e626a09535d98e5aa9ca52dbf64ded584c2952f7613e3c22981cf5cd"
+EXPECTED_RSNA_COUNTS = {
+    "expanded_images": 1099,
+    "expanded_patients": 553,
+    "expanded_negative": 578,
+    "expanded_positive": 521,
+    "primary_images": 282,
+    "primary_patients": 158,
+    "primary_negative": 146,
+    "primary_positive": 136,
+}
+RSNA_DATASET_REF = "nih-chest-xrays/data"
+RSNA_POSITIVE_LABEL = "Adjudicated Lung Opacity"
+RSNA_NEGATIVE_LABEL = "Normal"
 
 print("CGP_PHASE:M07_RSNA_EXTERNAL_BOOT", flush=True)
 print(json.dumps({
     "data_root": str(DATA_ROOT),
+    "external_dataset": RSNA_DATASET_REF,
     "state_input_root": str(STATE_INPUT_ROOT),
     "work_root": str(WORK),
     "resolution": IMAGE_SIZE,
-    "manifest_sha256": EXPECTED_MANIFEST_SHA256,
 }, sort_keys=True), flush=True)
 
 
@@ -151,108 +156,87 @@ def locate_state_root():
     return roots[0]
 
 
-def _decode_embedded_manifest():
-    encoded = globals().get("EMBEDDED_MANIFEST_B64")
-    if not isinstance(encoded, str) or len(encoded) < 100:
+def build_manifest(state_root):
+    if "EMBEDDED_MANIFEST_B64" not in globals():
         raise RuntimeError("RSNA_EMBEDDED_MANIFEST_MISSING")
     try:
-        raw = zlib.decompress(base64.b64decode(encoded.encode("ascii")))
-        rows = json.loads(raw.decode("utf-8"))
+        payload = zlib.decompress(base64.b64decode(EMBEDDED_MANIFEST_B64.encode("ascii")))
+        rows = json.loads(payload.decode("utf-8"))
     except Exception as exc:
-        raise RuntimeError(f"RSNA_EMBEDDED_MANIFEST_DECODE_FAILED={type(exc).__name__}") from exc
+        raise RuntimeError(f"RSNA_MANIFEST_DECODE_FAILED={type(exc).__name__}") from exc
+
     canonical = json.dumps(
         rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")
-    digest = hashlib.sha256(canonical).hexdigest()
-    if digest != EXPECTED_MANIFEST_SHA256:
-        raise RuntimeError(f"RSNA_MANIFEST_SHA_MISMATCH={digest}")
-    if not isinstance(rows, list) or len(rows) != EXPECTED_EXPANDED_N:
-        raise RuntimeError(f"RSNA_MANIFEST_N={len(rows) if isinstance(rows, list) else -1}")
-    return rows
+    manifest_sha = hashlib.sha256(canonical).hexdigest()
+    if manifest_sha != EXPECTED_RSNA_MANIFEST_SHA256:
+        raise RuntimeError("RSNA_MANIFEST_SHA_MISMATCH")
 
-
-def build_manifest(state_root):
-    rows = _decode_embedded_manifest()
     manifest = pd.DataFrame(rows)
     required_columns = {
-        "img_id", "subset_img_id", "StudyInstanceUID", "SOPInstanceUID",
-        "patient_id", "age", "sex", "view", "label", "class_name",
-        "primary_peds_lt10", "expanded_peds_le18",
+        "img_id", "StudyInstanceUID", "SOPInstanceUID", "patient_id", "age",
+        "sex", "view", "label", "class_name", "primary_peds_lt10",
+        "expanded_peds_le18",
     }
     if not required_columns.issubset(set(manifest.columns)):
         raise RuntimeError(
             "RSNA_MANIFEST_COLUMNS_MISSING="
             + json.dumps(sorted(required_columns - set(manifest.columns)))
         )
+    if len(manifest) != EXPECTED_RSNA_COUNTS["expanded_images"]:
+        raise RuntimeError(f"RSNA_MANIFEST_N={len(manifest)}")
     if manifest.img_id.astype(str).duplicated().any():
         raise RuntimeError("RSNA_MANIFEST_DUPLICATE_IMAGE_ID")
-    manifest["label"] = manifest.label.astype(int)
-    manifest["age"] = manifest.age.astype(int)
-    manifest["patient_id"] = manifest.patient_id.astype(int)
-    manifest["primary_peds_lt10"] = manifest.primary_peds_lt10.astype(bool)
-    manifest["expanded_peds_le18"] = manifest.expanded_peds_le18.astype(bool)
 
-    expanded_counts = {
-        int(k): int(v)
-        for k, v in manifest.label.value_counts().sort_index().to_dict().items()
+    manifest["label"] = manifest["label"].astype(int)
+    manifest["age"] = manifest["age"].astype(int)
+    manifest["patient_id"] = manifest["patient_id"].astype(int)
+    manifest["primary_peds_lt10"] = manifest["primary_peds_lt10"].astype(bool)
+    manifest["expanded_peds_le18"] = manifest["expanded_peds_le18"].astype(bool)
+    manifest["image_id"] = manifest["img_id"].astype(str)
+
+    counts = {
+        "expanded_images": int(len(manifest)),
+        "expanded_patients": int(manifest.patient_id.nunique()),
+        "expanded_negative": int((manifest.label == 0).sum()),
+        "expanded_positive": int((manifest.label == 1).sum()),
+        "primary_images": int(manifest.primary_peds_lt10.sum()),
+        "primary_patients": int(
+            manifest.loc[manifest.primary_peds_lt10, "patient_id"].nunique()
+        ),
+        "primary_negative": int(
+            ((manifest.primary_peds_lt10) & (manifest.label == 0)).sum()
+        ),
+        "primary_positive": int(
+            ((manifest.primary_peds_lt10) & (manifest.label == 1)).sum()
+        ),
     }
-    primary = manifest[manifest.primary_peds_lt10].copy()
-    primary_counts = {
-        int(k): int(v)
-        for k, v in primary.label.value_counts().sort_index().to_dict().items()
-    }
-    if len(manifest) != EXPECTED_EXPANDED_N or expanded_counts != EXPECTED_EXPANDED_COUNTS:
+    if counts != EXPECTED_RSNA_COUNTS:
         raise RuntimeError(
-            f"RSNA_EXPANDED_COHORT_MISMATCH n={len(manifest)} counts={expanded_counts}"
-        )
-    if len(primary) != EXPECTED_PRIMARY_N or primary_counts != EXPECTED_PRIMARY_COUNTS:
-        raise RuntimeError(
-            f"RSNA_PRIMARY_COHORT_MISMATCH n={len(primary)} counts={primary_counts}"
-        )
-    if manifest.patient_id.nunique() != EXPECTED_EXPANDED_PATIENTS:
-        raise RuntimeError(
-            f"RSNA_EXPANDED_PATIENT_COUNT={manifest.patient_id.nunique()}"
-        )
-    if primary.patient_id.nunique() != EXPECTED_PRIMARY_PATIENTS:
-        raise RuntimeError(
-            f"RSNA_PRIMARY_PATIENT_COUNT={primary.patient_id.nunique()}"
-        )
-    if not manifest.age.between(1, 18).all():
-        raise RuntimeError("RSNA_AGE_RANGE_DRIFT")
-    if not primary.age.between(1, 9).all():
-        raise RuntimeError("RSNA_PRIMARY_AGE_RANGE_DRIFT")
-    if set(manifest.class_name.astype(str)) != {"NORMAL", "POS"}:
-        raise RuntimeError(
-            "RSNA_CLASS_DRIFT=" + json.dumps(sorted(set(manifest.class_name.astype(str))))
+            "RSNA_MANIFEST_COUNTS_MISMATCH=" + json.dumps(counts, sort_keys=True)
         )
 
-    required = set(manifest.img_id.astype(str))
-    path_map = {}
-    for p in DATA_ROOT.rglob("*.png"):
-        rp = p.resolve()
+    required_ids = set(manifest.image_id.astype(str))
+    image_paths = {}
+    for path in DATA_ROOT.rglob("*.png"):
+        if path.name not in required_ids:
+            continue
+        rp = path.resolve()
         if state_root in rp.parents:
             continue
-        if p.name in required:
-            path_map.setdefault(p.name, []).append(rp)
-    missing = sorted(required - set(path_map))
-    bad = {k: len(v) for k, v in path_map.items() if len(v) != 1}
-    if missing or bad or len(path_map) != len(required):
+        image_paths.setdefault(path.name, []).append(rp)
+    missing = sorted(required_ids - set(image_paths))
+    ambiguous = {
+        key: len(value) for key, value in image_paths.items() if len(value) != 1
+    }
+    if missing or ambiguous:
         raise RuntimeError(
             "RSNA_IMAGE_RESOLUTION_MISMATCH="
             + json.dumps(
-                {"resolved": len(path_map), "missing": missing[:25], "bad": bad},
+                {"resolved": len(image_paths), "missing": missing[:25], "ambiguous": ambiguous},
                 sort_keys=True,
             )
         )
-
-    manifest["filepath"] = [
-        str(path_map[str(image_id)][0]) for image_id in manifest.img_id.astype(str)
-    ]
-    manifest["sha256_external_image"] = [
-        sha256_file(Path(p)) for p in manifest.filepath
-    ]
-    if manifest.sha256_external_image.duplicated().any():
-        raise RuntimeError("RSNA_EXTERNAL_EXACT_DUPLICATE_IMAGE_SHA")
 
     metadata_files = [
         p.resolve()
@@ -261,40 +245,45 @@ def build_manifest(state_root):
     ]
     if len(metadata_files) != 1:
         raise RuntimeError(f"RSNA_NIH_METADATA_COUNT={len(metadata_files)}")
-    metadata = pd.read_csv(metadata_files[0])
-    cols = {str(c).strip(): c for c in metadata.columns}
-    needed = {
-        "Image Index", "Patient Age", "Patient ID", "Patient Gender", "View Position"
+    metadata_path = metadata_files[0]
+    metadata = pd.read_csv(metadata_path)
+    rename = {
+        "Image Index": "img_id",
+        "Patient Age": "age",
+        "Patient ID": "patient_id",
+        "View Position": "view",
+        "Patient Gender": "sex",
     }
-    if not needed.issubset(set(cols)):
-        raise RuntimeError(
-            "RSNA_NIH_METADATA_COLUMNS_MISSING="
-            + json.dumps(sorted(needed - set(cols)))
-        )
-    metadata = metadata[
-        metadata[cols["Image Index"]].astype(str).isin(required)
-    ].copy()
-    if len(metadata) != EXPECTED_EXPANDED_N:
-        raise RuntimeError(f"RSNA_NIH_METADATA_MATCH_N={len(metadata)}")
-    meta_by_image = {
-        str(row[cols["Image Index"]]): {
-            "age": int(float(row[cols["Patient Age"]])),
-            "patient_id": int(float(row[cols["Patient ID"]])),
-            "sex": str(row[cols["Patient Gender"]]),
-            "view": str(row[cols["View Position"]]),
-        }
-        for _, row in metadata.iterrows()
-    }
-    for row in manifest.itertuples(index=False):
-        actual = meta_by_image[str(row.img_id)]
-        expected = {
-            "age": int(row.age),
-            "patient_id": int(row.patient_id),
-            "sex": str(row.sex),
-            "view": str(row.view),
-        }
-        if actual != expected:
-            raise RuntimeError(f"RSNA_NIH_METADATA_DRIFT={row.img_id}")
+    if not set(rename).issubset(set(metadata.columns)):
+        raise RuntimeError("RSNA_NIH_METADATA_SCHEMA_INVALID")
+    metadata = metadata.rename(columns=rename)
+    metadata = metadata[metadata.img_id.astype(str).isin(required_ids)].copy()
+    if len(metadata) != len(manifest) or metadata.img_id.astype(str).duplicated().any():
+        raise RuntimeError(f"RSNA_NIH_METADATA_MATCH_COUNT={len(metadata)}")
+
+    check = manifest[
+        ["img_id", "age", "patient_id", "view", "sex"]
+    ].merge(
+        metadata[["img_id", "age", "patient_id", "view", "sex"]],
+        on="img_id",
+        how="left",
+        suffixes=("_manifest", "_nih"),
+        validate="one_to_one",
+    )
+    for key in ("age", "patient_id", "view", "sex"):
+        left = check[f"{key}_manifest"].astype(str)
+        right = check[f"{key}_nih"].astype(str)
+        if not left.equals(right):
+            raise RuntimeError(f"RSNA_NIH_METADATA_DRIFT={key}")
+
+    manifest["filepath"] = [
+        str(image_paths[image_id][0]) for image_id in manifest.image_id.astype(str)
+    ]
+    manifest["sha256_external_image"] = [
+        sha256_file(Path(path)) for path in manifest.filepath
+    ]
+    if manifest.sha256_external_image.duplicated().any():
+        raise RuntimeError("RSNA_EXTERNAL_DUPLICATE_IMAGE_SHA")
 
     internal_hashes = set()
     oof_files = list(state_root.rglob("M07_OOF_PREDICTIONS.csv"))
@@ -307,52 +296,45 @@ def build_manifest(state_root):
         raise RuntimeError(f"RSNA_INTERNAL_EXTERNAL_SHA_OVERLAP={len(overlap)}")
 
     meta = {
-        "dataset_ref": EXTERNAL_DATASET_REF,
-        "manifest_sha256": EXPECTED_MANIFEST_SHA256,
-        "expanded_n": int(len(manifest)),
-        "expanded_counts": {str(k): int(v) for k, v in expanded_counts.items()},
-        "expanded_patients": int(manifest.patient_id.nunique()),
-        "primary_n": int(len(primary)),
-        "primary_counts": {str(k): int(v) for k, v in primary_counts.items()},
-        "primary_patients": int(primary.patient_id.nunique()),
-        "age_range_expanded": [int(manifest.age.min()), int(manifest.age.max())],
-        "age_range_primary": [int(primary.age.min()), int(primary.age.max())],
-        "view_counts": {
-            str(k): int(v) for k, v in manifest.view.value_counts().to_dict().items()
-        },
-        "sex_counts": {
-            str(k): int(v) for k, v in manifest.sex.value_counts().to_dict().items()
-        },
-        "metadata_file": metadata_files[0].relative_to(DATA_ROOT).as_posix(),
-        "metadata_sha256": sha256_file(metadata_files[0]),
-        "unique_external_image_sha256": int(manifest.sha256_external_image.nunique()),
+        "dataset_ref": RSNA_DATASET_REF,
+        "manifest_sha256": manifest_sha,
+        "metadata_file": metadata_path.relative_to(DATA_ROOT).as_posix(),
+        "metadata_sha256": sha256_file(metadata_path),
+        "counts": counts,
         "exact_internal_external_sha_overlap": 0,
+        "unique_external_image_sha256": int(manifest.sha256_external_image.nunique()),
         "label_policy": {
             "source": "RSNA Pneumonia Detection Challenge calculated/adjudicated labels",
-            "negative": "Normal",
-            "positive": "Lung Opacity (radiographic possible pneumonia endpoint)",
+            "negative": RSNA_NEGATIVE_LABEL,
+            "positive": RSNA_POSITIVE_LABEL,
             "excluded": ["No Lung Opacity / Not Normal", "Unlabeled"],
-            "primary_age": "1-9 years, prespecified before inference",
-            "expanded_age": "1-18 years, prespecified secondary sensitivity cohort",
+            "primary_age": "1-9 years",
+            "expanded_age": "1-18 years",
+            "frozen_before_inference": True,
+            "phenotype_note": (
+                "RSNA positive endpoint is adjudicated lung opacity, a pneumonia-related "
+                "radiographic phenotype; it is not an exact pneumonia diagnosis label."
+            ),
         },
     }
-    return manifest.sort_values("img_id").reset_index(drop=True), meta
+    return manifest.sort_values("image_id").reset_index(drop=True), meta
 
 
 def preprocess_manifest(manifest):
     out = manifest.copy()
-    if not all(Path(p).is_file() for p in out.filepath):
-        raise RuntimeError("RSNA_RESOLVED_IMAGE_MISSING")
+    patient_nonempty = int(out.patient_id.notna().sum())
+    study_nonempty = int(out.StudyInstanceUID.astype(str).str.strip().ne("").sum())
     return out, {
         "policy": (
-            "Native NIH/RSNA PNG -> canonical M07 tf.io.decode_image(channels=3) -> "
-            f"resize_with_pad {IMAGE_SIZE} bilinear antialias; no external adaptation"
+            "NIH ChestX-ray14 PNG as distributed by nih-chest-xrays/data -> "
+            f"canonical M07 resize_with_pad {IMAGE_SIZE} bilinear antialias; no "
+            "external calibration, enhancement fitting, or label-dependent preprocessing"
         ),
         "identity_evidence": {
-            "patient_id_nonempty": int(out.patient_id.notna().sum()),
+            "patient_id_nonempty": patient_nonempty,
             "patient_id_unique_nonempty": int(out.patient_id.nunique()),
-            "study_instance_uid_nonempty": int(out.StudyInstanceUID.astype(str).str.len().gt(0).sum()),
-            "study_instance_uid_unique_nonempty": int(out.StudyInstanceUID.astype(str).nunique()),
+            "study_instance_uid_nonempty": study_nonempty,
+            "study_instance_uid_unique_nonempty": int(out.StudyInstanceUID.nunique()),
             "total": int(len(out)),
         },
     }
@@ -605,13 +587,13 @@ def metrics(y, pred, score):
         "precision_normal": float(precision_score(y, pred, pos_label=0, zero_division=0)),
         "recall_normal": float(recall_score(y, pred, pos_label=0, zero_division=0)),
         "f1_normal": float(f1_score(y, pred, pos_label=0, zero_division=0)),
-        "precision_pneumonia": float(precision_score(y, pred, pos_label=1, zero_division=0)),
-        "recall_pneumonia": float(recall_score(y, pred, pos_label=1, zero_division=0)),
-        "f1_pneumonia": float(f1_score(y, pred, pos_label=1, zero_division=0)),
+        "precision_positive": float(precision_score(y, pred, pos_label=1, zero_division=0)),
+        "recall_positive": float(recall_score(y, pred, pos_label=1, zero_division=0)),
+        "f1_positive": float(f1_score(y, pred, pos_label=1, zero_division=0)),
         "f2": float(fbeta_score(y, pred, beta=2, pos_label=1, zero_division=0)),
         "mcc": float(matthews_corrcoef(y, pred)),
         "auroc": float(roc_auc_score(y, score)),
-        "auprc_pneumonia": float(average_precision_score(y, score)),
+        "auprc_positive": float(average_precision_score(y, score)),
         "tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp),
         "confusion_matrix": [[int(tn), int(fp)], [int(fn), int(tp)]],
     }
@@ -624,8 +606,8 @@ def bootstrap(frame):
     rng = np.random.default_rng(BOOTSTRAP_SEED)
     keys = [
         "accuracy", "balanced_accuracy", "macro_precision", "macro_recall",
-        "macro_f1", "f2", "mcc", "auroc", "auprc_pneumonia",
-        "precision_normal", "recall_normal", "precision_pneumonia", "recall_pneumonia",
+        "macro_f1", "f2", "mcc", "auroc", "auprc_positive",
+        "precision_normal", "recall_normal", "precision_positive", "recall_positive",
     ]
     vals = {k: [] for k in keys}
 
@@ -691,7 +673,7 @@ def ece15(y, p):
     return float(total), rows
 
 
-def evaluate(frame, name, positive_label_name="Pneumonia"):
+def evaluate(frame, name, positive_label_name="Positive"):
     y = frame.label.to_numpy(int)
     pred = frame.prediction_primary_normalized.to_numpy(int)
     score = frame.normalized_ensemble_score.to_numpy(float)
@@ -717,8 +699,8 @@ def evaluate(frame, name, positive_label_name="Pneumonia"):
     cm = np.asarray(result["confusion_matrix"])
     fig, ax = plt.subplots(figsize=(5, 5))
     im = ax.imshow(cm)
-    ax.set_xticks([0, 1], ["Normal", positive_label_name])
-    ax.set_yticks([0, 1], ["Normal", positive_label_name])
+    ax.set_xticks([0, 1], [RSNA_NEGATIVE_LABEL, positive_label_name])
+    ax.set_yticks([0, 1], [RSNA_NEGATIVE_LABEL, positive_label_name])
     ax.set_xlabel("Predicted"); ax.set_ylabel("True"); ax.set_title(name)
     for i in range(2):
         for j in range(2):
@@ -734,7 +716,7 @@ def evaluate(frame, name, positive_label_name="Pneumonia"):
     fig.savefig(OUT / f"{name}_ROC.png", dpi=180); plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(5.5, 5))
-    ax.plot(recall, precision, label=f"AUPRC={result['auprc_pneumonia']:.4f}")
+    ax.plot(recall, precision, label=f"AUPRC={result['auprc_positive']:.4f}")
     ax.set_xlabel("Recall"); ax.set_ylabel("Precision")
     ax.set_title(f"{name} Precision-Recall"); ax.legend(); fig.tight_layout()
     fig.savefig(OUT / f"{name}_PR.png", dpi=180); plt.close(fig)
@@ -745,7 +727,7 @@ state_root = locate_state_root()
 params, thresholds, weights, fold_receipts = load_folds(state_root)
 manifest, manifest_meta = build_manifest(state_root)
 manifest, presentation = preprocess_manifest(manifest)
-manifest.to_csv(OUT / "M07_RSNA_EXPANDED_INFERENCE_MANIFEST.csv", index=False)
+manifest.to_csv(OUT / "M07_RSNA_PEDIATRIC_INFERENCE_MANIFEST.csv", index=False)
 
 primary_manifest = manifest[manifest.primary_peds_lt10].copy()
 primary_counts = {
@@ -756,27 +738,36 @@ expanded_counts = {
     int(k): int(v)
     for k, v in manifest.label.value_counts().sort_index().to_dict().items()
 }
-if len(primary_manifest) != EXPECTED_PRIMARY_N or primary_counts != EXPECTED_PRIMARY_COUNTS:
+if (
+    len(primary_manifest) != EXPECTED_RSNA_COUNTS["primary_images"]
+    or primary_counts != {
+        0: EXPECTED_RSNA_COUNTS["primary_negative"],
+        1: EXPECTED_RSNA_COUNTS["primary_positive"],
+    }
+):
     raise RuntimeError(
-        f"RSNA_PRIMARY_MANIFEST_MISMATCH n={len(primary_manifest)} counts={primary_counts}"
+        "RSNA_PRIMARY_MANIFEST_MISMATCH="
+        + json.dumps({"n": len(primary_manifest), "counts": primary_counts}, sort_keys=True)
     )
-if len(manifest) != EXPECTED_EXPANDED_N or expanded_counts != EXPECTED_EXPANDED_COUNTS:
+if (
+    len(manifest) != EXPECTED_RSNA_COUNTS["expanded_images"]
+    or expanded_counts != {
+        0: EXPECTED_RSNA_COUNTS["expanded_negative"],
+        1: EXPECTED_RSNA_COUNTS["expanded_positive"],
+    }
+):
     raise RuntimeError(
-        f"RSNA_EXPANDED_MANIFEST_MISMATCH n={len(manifest)} counts={expanded_counts}"
+        "RSNA_EXPANDED_MANIFEST_MISMATCH="
+        + json.dumps({"n": len(manifest), "counts": expanded_counts}, sort_keys=True)
     )
-primary_manifest.to_csv(OUT / "M07_RSNA_PRIMARY_AGE_1_9_MANIFEST.csv", index=False)
+primary_manifest.to_csv(OUT / "M07_RSNA_PEDIATRIC_PRIMARY_LT10_MANIFEST.csv", index=False)
 
 integrity_receipt = {
     "schema": "m07.external.rsna_pediatric.pre_inference_integrity.v1",
     "status": "PASS_PREINFERENCE_INTEGRITY",
-    "dataset_ref": EXTERNAL_DATASET_REF,
-    "manifest_sha256": EXPECTED_MANIFEST_SHA256,
-    "expanded_n": int(len(manifest)),
-    "expanded_counts": {str(k): int(v) for k, v in expanded_counts.items()},
-    "expanded_patients": int(manifest.patient_id.nunique()),
-    "primary_n": int(len(primary_manifest)),
-    "primary_counts": {str(k): int(v) for k, v in primary_counts.items()},
-    "primary_patients": int(primary_manifest.patient_id.nunique()),
+    "resolution": IMAGE_SIZE,
+    "manifest_sha256": manifest_meta["manifest_sha256"],
+    "counts": manifest_meta["counts"],
     "external_exact_duplicate_image_sha": 0,
     "internal_external_exact_sha_overlap": manifest_meta["exact_internal_external_sha_overlap"],
     "metadata_sha256": manifest_meta["metadata_sha256"],
@@ -796,8 +787,7 @@ ds = build_eval_dataset(manifest, EVAL_BATCH_SIZE)
 probs = []
 for fold in range(1, 6):
     print(f"CGP_PHASE:M07_RSNA_FOLD {fold}/5", flush=True)
-    tf.keras.backend.clear_session()
-    gc.collect()
+    tf.keras.backend.clear_session(); gc.collect()
     model = build_m07(params, SEED + fold)
     model.load_weights(weights[fold])
     p = model.predict(ds, verbose=0).reshape(-1).astype(float)
@@ -808,65 +798,40 @@ for fold in range(1, 6):
     manifest[f"threshold_fold_{fold}"] = thresholds[fold]
     manifest[f"vote_fold_{fold}"] = (p >= thresholds[fold]).astype(int)
     del model
-    tf.keras.backend.clear_session()
-    gc.collect()
+    tf.keras.backend.clear_session(); gc.collect()
 
 P = np.vstack(probs)
-scores = np.vstack(
-    [logit_np(P[i]) - logit_np(thresholds[i + 1]) for i in range(5)]
-)
-votes = np.vstack(
-    [(P[i] >= thresholds[i + 1]).astype(int) for i in range(5)]
-)
+scores = np.vstack([logit_np(P[i]) - logit_np(thresholds[i + 1]) for i in range(5)])
+votes = np.vstack([(P[i] >= thresholds[i + 1]).astype(int) for i in range(5)])
 manifest["mean_probability"] = P.mean(axis=0)
 manifest["normalized_ensemble_score"] = scores.mean(axis=0)
 manifest["prediction_primary_normalized"] = (
     manifest.normalized_ensemble_score >= 0
 ).astype(int)
 manifest["prediction_majority_vote"] = (votes.sum(axis=0) >= 3).astype(int)
-manifest.to_csv(OUT / "M07_RSNA_EXTERNAL_PREDICTIONS.csv", index=False)
+manifest.to_csv(OUT / "M07_RSNA_PEDIATRIC_EXTERNAL_PREDICTIONS.csv", index=False)
 
 primary_frame = manifest[manifest.primary_peds_lt10].copy()
-primary_counts = {
-    int(k): int(v)
-    for k, v in primary_frame.label.value_counts().sort_index().to_dict().items()
-}
-if len(primary_frame) != EXPECTED_PRIMARY_N or primary_counts != EXPECTED_PRIMARY_COUNTS:
-    raise RuntimeError(
-        f"RSNA_PRIMARY_COHORT_MISMATCH n={len(primary_frame)} counts={primary_counts}"
-    )
+expanded_frame = manifest.copy()
 primary = evaluate(
-    primary_frame,
-    "PRIMARY_PEDS_AGE_1_9",
-    "RSNA Lung Opacity",
+    primary_frame, "PRIMARY_RSNA_PEDIATRIC_LT10", RSNA_POSITIVE_LABEL
+)
+expanded = evaluate(
+    expanded_frame, "EXPANDED_RSNA_PEDIATRIC_LE18", RSNA_POSITIVE_LABEL
 )
 primary_frame.to_csv(
-    OUT / "M07_RSNA_PRIMARY_AGE_1_9_PREDICTIONS.csv", index=False
+    OUT / "M07_RSNA_PEDIATRIC_PRIMARY_LT10_PREDICTIONS.csv", index=False
 )
-
-expanded = evaluate(
-    manifest,
-    "SENSITIVITY_PEDS_AGE_1_18",
-    "RSNA Lung Opacity",
-)
-manifest.to_csv(
-    OUT / "M07_RSNA_EXPANDED_AGE_1_18_PREDICTIONS.csv", index=False
+expanded_frame.to_csv(
+    OUT / "M07_RSNA_PEDIATRIC_EXPANDED_LE18_PREDICTIONS.csv", index=False
 )
 
 oof_metrics = None
 oof_files = list(state_root.rglob("M07_OOF_PRIMARY_METRICS.json"))
 if oof_files:
     oof_metrics = json.loads(
-        sorted(oof_files, key=lambda p: len(str(p)))[0].read_text()
+        sorted(oof_files, key=lambda p: len(str(p)))[0].read_text(encoding="utf-8")
     )
-gaps = {}
-if isinstance(oof_metrics, dict):
-    for key in [
-        "accuracy", "balanced_accuracy", "macro_precision", "macro_recall",
-        "macro_f1", "mcc", "auroc", "auprc_pneumonia",
-    ]:
-        if key in oof_metrics and key in primary["metrics"]:
-            gaps[key] = float(oof_metrics[key]) - float(primary["metrics"][key])
 
 report = {
     "schema": "m07.external.rsna_pediatric.resolution.v1",
@@ -874,64 +839,67 @@ report = {
     "model": "M07 Final Gate - ConvNeXt-Tiny + EdgeBlock + CBAM + FLSD-53",
     "resolution": IMAGE_SIZE,
     "source_state": STATE_HANDLE,
-    "external_dataset": EXTERNAL_DATASET_REF,
-    "external_manifest_sha256": EXPECTED_MANIFEST_SHA256,
     "eval_batch_size": EVAL_BATCH_SIZE,
     "split_fingerprint": EXPECTED_SPLIT,
     "hpo_recipe_fingerprint": EXPECTED_RECIPE,
+    "external_dataset": RSNA_DATASET_REF,
+    "external_manifest_sha256": EXPECTED_RSNA_MANIFEST_SHA256,
     "training_performed": False,
     "hpo_performed": False,
     "external_threshold_tuning": False,
     "external_adaptation": False,
-    "calibration_fitting_on_external": False,
+    "external_calibration_fitting": False,
     "aggregation_primary": (
         "mean(logit(p_fold)-logit(validation_threshold_fold)); decision >= 0"
     ),
     "aggregation_secondary": (
-        "majority vote using the same five frozen internal validation thresholds"
+        "majority vote using the same five frozen internal-validation thresholds"
     ),
     "fold_thresholds": {str(k): float(v) for k, v in thresholds.items()},
     "fold_receipts": fold_receipts,
     "manifest": manifest_meta,
     "presentation": presentation,
-    "primary_age_1_9": primary,
-    "sensitivity_age_1_18": expanded,
-    "internal_external_comparison": {
-        "oof_internal": oof_metrics,
-        "external_primary_age_1_9": primary["metrics"],
-        "oof_minus_external": gaps,
-        "endpoint_semantics_differ": True,
-    },
+    "primary_pediatric_lt10": primary,
+    "expanded_pediatric_le18": expanded,
+    "internal_training_oof_reference": oof_metrics,
     "limitations": [
         (
-            "RSNA positive ground truth is expert-adjudicated radiographic Lung Opacity "
-            "consistent with possible pneumonia, not an exact disease diagnosis label."
+            "The RSNA positive endpoint is adjudicated Lung Opacity rather than an exact "
+            "pneumonia diagnosis. This is a prespecified independent radiographic "
+            "domain-shift validation and must not be described as exact pneumonia-label "
+            "replication."
         ),
         (
-            "The prespecified primary cohort is age 1-9 to approximate the pediatric age "
-            "domain of VinDr-PCXR; the expanded age 1-18 cohort is secondary."
+            "Primary cohort (age 1-9) and expanded cohort (age 1-18) were frozen before "
+            "inference using official RSNA mappings/adjudicated calculated labels plus "
+            "NIH age metadata."
         ),
         (
-            "RSNA/NIH acquisition domain differs from the Guangzhou development dataset; "
-            "this is intentionally a domain-shift robustness validation."
+            "No external labels are used for training, model selection, threshold "
+            "selection, adaptation, or calibration fitting."
         ),
         (
-            "All external labels were frozen before inference and were not used for training, "
-            "model selection, threshold selection, calibration fitting, or adaptation."
-        ),
-        (
-            "Metric field names retaining the word 'pneumonia' represent the frozen model's "
-            "positive-class metric schema; the actual RSNA endpoint is Lung Opacity."
+            "All five frozen fold weights and their original internal validation "
+            "thresholds are reused unchanged."
         ),
     ],
 }
-(OUT / "M07_RSNA_EXTERNAL_REPORT.json").write_text(
-    json.dumps(safe_json(report), indent=2, ensure_ascii=False),
-    encoding="utf-8",
+(OUT / "M07_RSNA_PEDIATRIC_EXTERNAL_REPORT.json").write_text(
+    json.dumps(safe_json(report), indent=2, ensure_ascii=False), encoding="utf-8"
 )
-(OUT / "M07_RSNA_INTERNAL_EXTERNAL_COMPARISON.json").write_text(
+(OUT / "M07_INTERNAL_RSNA_EXTERNAL_COMPARISON.json").write_text(
     json.dumps(
-        safe_json(report["internal_external_comparison"]),
+        safe_json(
+            {
+                "internal_training_oof_reference": oof_metrics,
+                "external_primary_pediatric_lt10": primary["metrics"],
+                "comparison_warning": (
+                    "Do not interpret metric differences as a same-endpoint generalization "
+                    "gap because RSNA uses adjudicated Lung Opacity rather than exact "
+                    "pneumonia diagnosis."
+                ),
+            }
+        ),
         indent=2,
         ensure_ascii=False,
     ),
@@ -939,16 +907,19 @@ report = {
 )
 
 model_card = (
-    "# M07 External Validation Addendum - RSNA Pediatric Subset\n\n"
+    "# M07 External Validation Addendum - RSNA Pediatric Cohort\n\n"
     f"Resolution: {IMAGE_SIZE}\n\n"
     f"Frozen recipe fingerprint: {EXPECTED_RECIPE}\n\n"
-    f"Frozen external manifest: {EXPECTED_MANIFEST_SHA256}\n\n"
+    f"External dataset: {RSNA_DATASET_REF}\n\n"
     "Training/HPO/adaptation/calibration/threshold tuning on external: NO\n\n"
-    "Primary endpoint: age 1-9, Normal vs expert-adjudicated RSNA Lung Opacity\n\n"
-    f"Primary N: {len(primary_frame)} (146 Normal, 136 Lung Opacity)\n\n"
-    "Secondary endpoint: age 1-18, same label policy\n\n"
-    f"Expanded N: {len(manifest)} (578 Normal, 521 Lung Opacity)\n\n"
-    f"Confidence intervals: {BOOTSTRAPS} patient-cluster bootstrap resamples.\n\n"
+    "Primary prespecified cohort: age 1-9, adjudicated Lung Opacity vs Normal\n\n"
+    f"Primary N: {len(primary_frame)} "
+    f"({primary_counts[0]} Normal, {primary_counts[1]} Lung Opacity)\n\n"
+    "Expanded prespecified cohort: age 1-18, adjudicated Lung Opacity vs Normal\n\n"
+    f"Expanded N: {len(expanded_frame)} "
+    f"({expanded_counts[0]} Normal, {expanded_counts[1]} Lung Opacity)\n\n"
+    "Important: Lung Opacity is a pneumonia-related radiographic phenotype, not an "
+    "exact pneumonia diagnosis label.\n\n"
     "Primary metrics:\n\n"
     + json.dumps(safe_json(primary["metrics"]), indent=2)
     + "\n"
@@ -966,31 +937,27 @@ receipt = {
     "schema": "m07.external.rsna_pediatric.terminal.v1",
     "status": "SCIENTIFIC_RECEIPT_PASS",
     "resolution": IMAGE_SIZE,
-    "dataset_ref": EXTERNAL_DATASET_REF,
-    "manifest_sha256": EXPECTED_MANIFEST_SHA256,
     "primary_n": len(primary_frame),
-    "primary_negative": int(primary_counts[0]),
-    "primary_positive": int(primary_counts[1]),
-    "primary_patients": int(primary_frame.patient_id.nunique()),
-    "expanded_n": len(manifest),
-    "expanded_negative": int(expanded_counts[0]),
-    "expanded_positive": int(expanded_counts[1]),
-    "expanded_patients": int(manifest.patient_id.nunique()),
+    "primary_normal": int(primary_counts[0]),
+    "primary_lung_opacity": int(primary_counts[1]),
+    "expanded_n": len(expanded_frame),
+    "expanded_normal": int(expanded_counts[0]),
+    "expanded_lung_opacity": int(expanded_counts[1]),
     "training_performed": False,
     "hpo_performed": False,
     "external_threshold_tuning": False,
     "external_adaptation": False,
-    "calibration_fitting_on_external": False,
+    "external_calibration_fitting": False,
     "source_state": STATE_HANDLE,
     "split_fingerprint": EXPECTED_SPLIT,
     "hpo_recipe_fingerprint": EXPECTED_RECIPE,
+    "external_dataset": RSNA_DATASET_REF,
+    "external_manifest_sha256": EXPECTED_RSNA_MANIFEST_SHA256,
     "artifact_sha256": hashes,
 }
-body = json.dumps(
-    safe_json(receipt), sort_keys=True, separators=(",", ":")
-).encode()
+body = json.dumps(safe_json(receipt), sort_keys=True, separators=(",", ":")).encode()
 receipt["receipt_sha256"] = hashlib.sha256(body).hexdigest()
-(OUT / "M07_RSNA_EXTERNAL_TERMINAL_RECEIPT.json").write_text(
+(OUT / "M07_RSNA_PEDIATRIC_EXTERNAL_TERMINAL_RECEIPT.json").write_text(
     json.dumps(receipt, indent=2), encoding="utf-8"
 )
 
@@ -1008,7 +975,7 @@ print(
             "status": "SCIENTIFIC_RECEIPT_PASS",
             "resolution": IMAGE_SIZE,
             "primary_n": len(primary_frame),
-            "expanded_n": len(manifest),
+            "expanded_n": len(expanded_frame),
             "zip": str(zip_path),
             "zip_sha256": sha256_file(zip_path),
             "receipt_sha256": receipt["receipt_sha256"],

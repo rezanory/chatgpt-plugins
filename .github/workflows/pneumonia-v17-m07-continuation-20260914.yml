@@ -1601,7 +1601,7 @@ jobs:
           github.ref == 'refs/heads/main' &&
           startsWith(github.event.inputs.recovery, 'PHASE2_UNIT_') }}
     runs-on: [self-hosted, windows, x64, v622]
-    timeout-minutes: 240
+    timeout-minutes: 480
     env:
       PHASE2_UNIT_TOKEN: ${{ github.event.inputs.recovery }}
       PHASE2_EXPECTED_KERNEL_REF: ${{ needs.launch-m07-continuation.outputs.runtime_kernel_ref }}
@@ -3163,12 +3163,13 @@ jobs:
           retention-days: 30
 
 
+
   m07-rsna-pediatric-external-resolution-v1:
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
-          (github.event.inputs.recovery == 'M07_EXTERNAL_RSNA_PEDS_R224_V1' ||
-           github.event.inputs.recovery == 'M07_EXTERNAL_RSNA_PEDS_R320_V1' ||
-           github.event.inputs.recovery == 'M07_EXTERNAL_RSNA_PEDS_R384_V1') }}
+          (github.event.inputs.recovery == 'M07_EXTERNAL_RSNA_R224_V1' ||
+           github.event.inputs.recovery == 'M07_EXTERNAL_RSNA_R320_V1' ||
+           github.event.inputs.recovery == 'M07_EXTERNAL_RSNA_R384_V1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
@@ -3185,13 +3186,11 @@ jobs:
           import json, os, urllib.parse, urllib.request
           base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
           bearer=os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']
-
           def issue(audience):
               sep='&' if '?' in base else '?'
               url=base+sep+urllib.parse.urlencode({'audience':audience})
               request=urllib.request.Request(
-                  url,
-                  headers={'Authorization':'Bearer '+bearer},
+                  url,headers={'Authorization':'Bearer '+bearer}
               )
               with urllib.request.urlopen(request,timeout=30) as response:
                   token=json.load(response)['value']
@@ -3199,7 +3198,6 @@ jobs:
                   raise SystemExit('OIDC_TOKEN_UNAVAILABLE:'+audience)
               print('::add-mask::'+token)
               return token
-
           action=issue('cgp-control-plane-v3-action')
           read=issue('cgp-control-plane-v3')
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as handle:
@@ -3213,9 +3211,7 @@ jobs:
           M07_EXTERNAL_TOKEN: ${{ github.event.inputs.recovery }}
         run: |
           set -euo pipefail
-          python scripts/m07_rsna_pediatric_external_dispatch_v1.py \
-            --token "$M07_EXTERNAL_TOKEN" \
-            --run-id "$GITHUB_RUN_ID"
+          python scripts/m07_rsna_pediatric_external_dispatch_v1.py             --token "$M07_EXTERNAL_TOKEN"             --run-id "$GITHUB_RUN_ID"
 
       - name: Preserve M07 RSNA pediatric scientific evidence
         if: always()
@@ -3230,7 +3226,6 @@ jobs:
             ${{ runner.temp }}/M07_RSNA_R*_GITHUB_HANDOFF.json
           if-no-files-found: warn
           retention-days: 30
-
 
   m07-vindr-pcxr-external-resolution-v2:
     if: >-
