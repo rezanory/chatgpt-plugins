@@ -278,6 +278,7 @@ jobs:
           github.event.comment.user.id == 62356000 &&
           github.event.comment.body == 'M07_RSNA_R224_AGE_AUDIT_V1' }}
     runs-on: ubuntu-latest
+    environment: cloudflare-production
     timeout-minutes: 15
     steps:
       - name: Checkout main age-audit implementation
@@ -302,7 +303,7 @@ jobs:
               raise SystemExit('READ_OIDC_UNAVAILABLE')
           print('::add-mask::'+token)
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as handle:
-              handle.write('CGP_READ_OIDC_TOKEN='+token+'\\n')
+              print('CGP_READ_OIDC_TOKEN='+token, file=handle)
           PY
 
       - name: Run frozen R224 age audit through authorized read identity
