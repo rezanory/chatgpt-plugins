@@ -79,5 +79,6 @@ def test_authorized_control_plane_routes_exact_age_audit_marker():
     )
     assert "m07_rsna_r224_age_audit:" in text
     assert "M07_RSNA_R224_AGE_AUDIT_V1" in text
+    assert "environment: cloudflare-production" in text
     assert "python scripts/m07_rsna_age_audit_v1.py" in text
     assert "--bootstraps 1000" in text
