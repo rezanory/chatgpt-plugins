@@ -71,3 +71,13 @@ def test_workflow_is_read_only_and_uses_frozen_source():
     assert '"model_weights_changed": False' in source
     assert '"thresholds_changed": False' in source
     assert "SaveKernel" not in source
+
+
+def test_authorized_control_plane_routes_exact_age_audit_marker():
+    text = (ROOT / ".github" / "workflows" / "control-plane-v3-query.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "m07_rsna_r224_age_audit:" in text
+    assert "M07_RSNA_R224_AGE_AUDIT_V1" in text
+    assert "python scripts/m07_rsna_age_audit_v1.py" in text
+    assert "--bootstraps 1000" in text
