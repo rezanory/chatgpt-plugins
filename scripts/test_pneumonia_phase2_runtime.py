@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import pathlib
@@ -215,6 +216,22 @@ class Phase2RuntimeTests(unittest.TestCase):
             broker = runtime.OidcReadBroker()
             self.assertEqual(broker.refresh(), "r" * 120)
             self.assertEqual(urlopen.call_count, 3)
+
+    def test_read_broker_treats_wrapped_kaggle_525_as_transient(self):
+        detail = b'{"ok":false,"read_only":true,"error":"Kaggle returned non-JSON HTTP 525"}'
+        error = runtime.urllib.error.HTTPError(
+            runtime.READ_ENDPOINT,
+            403,
+            "Forbidden",
+            {},
+            io.BytesIO(detail),
+        )
+        with (
+            mock.patch.dict(os.environ, {"CGP_READ_OIDC_TOKEN": "i" * 120}, clear=False),
+            mock.patch.object(runtime.urllib.request, "urlopen", side_effect=error),
+            self.assertRaisesRegex(runtime.BrokerTransientError, "wrapped Kaggle transport transient"),
+        ):
+            runtime.OidcReadBroker().read({"action": "raw_read"})
 
     def test_exact_provider_ref_matches_kaggle_savekernel_canonicalization(self):
         contract = {
