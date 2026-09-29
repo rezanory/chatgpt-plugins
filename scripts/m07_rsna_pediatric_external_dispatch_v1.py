@@ -282,6 +282,7 @@ def main():
 
     if existing_status in {"QUEUED", "RUNNING", "COMPLETE"}:
         provider_ref = kernel_ref
+        compute_mode = "REUSED_EXISTING"
         launch = {
             "ok": True,
             "reused_existing": True,
@@ -289,6 +290,7 @@ def main():
             "provider_ref": provider_ref,
             "account_id": account_id,
             "resolution": resolution,
+            "cgp_compute_mode": compute_mode,
         }
         write_json(launch_path, launch)
         print(
@@ -326,14 +328,8 @@ def main():
                 "modelDataSources": [],
             },
         }
+        compute_mode = "GPU"
         launch = post_json(ACTION_ENDPOINT, action_token, launch_payload)
-        write_json(launch_path, launch)
-        print(
-            "M07_RSNA_EXTERNAL_LAUNCH",
-            json.dumps(launch, sort_keys=True),
-            flush=True,
-        )
-
         provider_result = (
             launch.get("result")
             if isinstance(launch.get("result"), dict)
@@ -342,6 +338,36 @@ def main():
         provider_error = str(
             provider_result.get("error") or launch.get("error") or ""
         )
+        quota_error = "maximum weekly gpu quota" in provider_error.casefold()
+        if quota_error:
+            launch_payload["request_id"] += "-cpu-fallback"
+            launch_payload["body"]["enableGpu"] = False
+            compute_mode = "CPU_FALLBACK_GPU_QUOTA"
+            launch = post_json(ACTION_ENDPOINT, action_token, launch_payload)
+            provider_result = (
+                launch.get("result")
+                if isinstance(launch.get("result"), dict)
+                else {}
+            )
+            provider_error = str(
+                provider_result.get("error") or launch.get("error") or ""
+            )
+            print(
+                "M07_RSNA_EXTERNAL_CPU_FALLBACK",
+                json.dumps(
+                    {"resolution": resolution, "reason": "GPU_QUOTA", "accepted": not bool(provider_error)},
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+        launch["cgp_compute_mode"] = compute_mode
+        write_json(launch_path, launch)
+        print(
+            "M07_RSNA_EXTERNAL_LAUNCH",
+            json.dumps(launch, sort_keys=True),
+            flush=True,
+        )
+
         if not launch.get("ok") or provider_error:
             raise SystemExit("M07_RSNA_EXTERNAL_SUBMISSION_REJECTED")
 
@@ -487,6 +513,7 @@ def main():
         "owner": owner,
         "kernel_ref": provider_ref,
         "state_handle": state_handle,
+        "compute_mode": compute_mode,
         "external_dataset": DATASET_REF,
         "external_manifest_sha256": EXPECTED_MANIFEST_SHA256,
         "terminal_receipt_sha256": receipt["receipt_sha256"],
