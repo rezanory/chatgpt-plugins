@@ -1,0 +1,77 @@
+{
+  "schema": "soilbin.v31-v50.campaign.v1",
+  "campaign": "20260929-v31-v50-state-geometry-r1",
+  "branch": "feat/soilbin-v30-lc1-lc5-coupling-20260929",
+  "canonical_data_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "runner_sha256": "f47518c166d88e86e841f99bf37bba5a8993c678b9fa6800b56028faed9664ea",
+  "waves": {
+    "wave1": [
+      "V32",
+      "V33",
+      "V34",
+      "V35",
+      "V36",
+      "V37",
+      "V38",
+      "V39",
+      "V40",
+      "V41",
+      "V42",
+      "V43",
+      "V44",
+      "V45",
+      "V46",
+      "V47",
+      "V48"
+    ],
+    "wave2": [
+      "V31",
+      "V49",
+      "V50"
+    ]
+  },
+  "accounts": {
+    "usable": [
+      "kg-02",
+      "kg-03",
+      "kg-04",
+      "kg-06",
+      "kg-07",
+      "kg-08",
+      "kg-09",
+      "kg-11"
+    ],
+    "reserved": [
+      "kg-05",
+      "kg-10"
+    ],
+    "master_control": [
+      "kg-01"
+    ]
+  },
+  "references": {
+    "V23": 23.104189837450967,
+    "V29_FIXED_ROUTING": 21.657327708415846,
+    "V29_T2_T6_UNCONDITIONAL": 20.970434406316773,
+    "V29_ORACLE_DESCRIPTIVE": 14.923
+  },
+  "guards": {
+    "private": true,
+    "cpu_only": true,
+    "internet": false,
+    "random_row_split": false,
+    "whole_speed_load_outer_holdout_for_predictive_lanes": true,
+    "target_pass_waveform_prohibited_for_scored_prediction": true,
+    "cancel_existing": false,
+    "overwrite_existing": false
+  },
+  "controller_sha256": "8d423e3d7ff4015f104f52e9e33b776b37986d5de941e6d520ce6e97fd9739e5",
+  "wave_feature_b64_sha256": "cea6d2194986f4796085676a49690d3958fe388e5377db7aa7fb7847107a6abb",
+  "wave_feature_csv_sha256": "579711d5433e71a43d6f753d7adbe797c3ee6758523a6d1eff8d94408ef2554f",
+  "wave_alignment_preflight": {
+    "rows": 51,
+    "median_xcorr_r": 0.9852372587254548,
+    "median_aligned_r2": 0.9674950670146214,
+    "median_lag_ms": 1248.0
+  }
+}

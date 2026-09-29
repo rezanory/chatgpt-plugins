@@ -1,0 +1,21 @@
+version,title,primary_question,closest_prior,scientific_status,execution_class
+V31,Lag-Aligned Cross-Sensor Expert,Can leakage-safe lag-aligned prior waveform morphology improve force prediction beyond compact history?,V2|V4|V27|V29|V30,REPEATED_DEVELOPMENT,PREDICTIVE
+V32,Reducible vs Irreducible Error Decomposition,How much current error is model-reducible versus residual/noise-like under grouped OOF?,V25|V29,DIAGNOSTIC_ONLY,DIAGNOSTIC
+V33,Latent Predictive Soil State Discovery,Can a low-dimensional state summarize history for future LC1/LC5 prediction?,V13|V23|V27,REPEATED_DEVELOPMENT,PREDICTIVE
+V34,State Sufficiency and Markov Test,After conditioning on learned state does older history still improve prediction?,V7|V13|V27|V33,REPEATED_DEVELOPMENT,PREDICTIVE
+V35,Minimum Sufficient Memory,What is the minimum history depth that preserves grouped predictive performance?,V6|V7|V27,REPEATED_DEVELOPMENT,PREDICTIVE
+V36,Cross-Depth Observability,Are LC1 and LC5 better explained as two observations of shared state than separate states?,V27|V30|V33,REPEATED_DEVELOPMENT,PREDICTIVE
+V37,Conditional Directional Information Flow,After controlling conditions and own history does the other sensor add asymmetric information?,V27|V30,REPEATED_DEVELOPMENT,PREDICTIVE
+V38,Hysteresis and Path Dependence,Does the path used to reach an apparent current state retain predictive information?,V16|V19|V21|V27,REPEATED_DEVELOPMENT,PREDICTIVE
+V39,Predictability Profile,How does normalized predictability vary by depth sensor pass and condition?,V25|V26|V29,DIAGNOSTIC_ONLY,DIAGNOSTIC
+V40,Pass-Blind State and Soil-Age Test,Can history-derived state encode evolution without observing pass number?,V8|V13|V33,REPEATED_DEVELOPMENT,PREDICTIVE
+V41,Invariant Discovery,Do stable combinations of load speed and two-sensor response exist across groups?,V30,DESCRIPTIVE_PLUS_GROUP_OOF,DISCOVERY
+V42,Dimensionless Collapse,Can normalization collapse heterogeneous Speed×Load trajectories onto a common law?,V6|V30|V41,DESCRIPTIVE_PLUS_GROUP_OOF,DISCOVERY
+V43,Counterfactual State Transition,Can a held-out-group state-transition model estimate interventions on load and speed?,V14|V16|V33,REPEATED_DEVELOPMENT,PREDICTIVE
+V44,Koopman Operator Dynamics,Does an operator-space representation simplify repeated-pass dynamics?,V13|V16|V20,REPEATED_DEVELOPMENT,PREDICTIVE
+V45,Symbolic State-Transition Law Discovery,Can a sparse interpretable transition equation match black-box grouped prediction?,V14|V16|V20,REPEATED_DEVELOPMENT,PREDICTIVE
+V46,VASI-SNSR Native State Representation,Does a learned native state representation generalize better than conventional or raw history representations?,V13|V23|V33|V40,REPEATED_DEVELOPMENT,PREDICTIVE
+V47,3D Response-Surface Geometry,How do response-surface area volume slope and curvature evolve from T1 to T6?,V30,DESCRIPTIVE_ONLY,GEOMETRIC
+V48,3D State-Trajectory and Phase-Space,What geometric trajectories do groups follow through repeated passes?,V16|V27|V30,DESCRIPTIVE_ONLY,GEOMETRIC
+V49,3D Waveform Geometry,Do time-force-force geometry descriptors expose structured depth/pass effects?,V2|V4|V30,DESCRIPTIVE_ONLY,GEOMETRIC
+V50,Geometric Feature Predictive Ablation,Do pre-target geometric descriptors improve grouped force prediction beyond compact history?,V31|V47|V48|V49,REPEATED_DEVELOPMENT,PREDICTIVE

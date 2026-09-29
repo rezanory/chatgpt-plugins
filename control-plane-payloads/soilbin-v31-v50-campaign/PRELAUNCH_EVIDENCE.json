@@ -1,0 +1,50 @@
+{
+  "schema": "soilbin.v31-v50.prelaunch.v1",
+  "canonical_data_sha256": "dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059",
+  "checks": {
+    "python_compile": "3/3 PASS",
+    "canonical_v32_smoke": "PASS",
+    "v31_compact_smoke": "PASS",
+    "waveform_rows": 51,
+    "waveform_feature_csv_sha256": "579711d5433e71a43d6f753d7adbe797c3ee6758523a6d1eff8d94408ef2554f",
+    "waveform_b64_file_sha256": "cea6d2194986f4796085676a49690d3958fe388e5377db7aa7fb7847107a6abb",
+    "waveform_median_xcorr_r": 0.9852372587254548,
+    "waveform_median_aligned_r2": 0.9674950670146214,
+    "waveform_median_lag_ms": 1248
+  },
+  "v31_smoke": {
+    "n_shape_features": 27,
+    "baseline_simple_joint_mae_n": 31.361157068861992,
+    "base_plus_geometry_joint_mae_n": 31.337477258666418,
+    "improvement_n": 0.023679810195569456,
+    "groups_improved": 4,
+    "exact_signflip_one_sided_p": 0.49609375,
+    "bootstrap_95ci_n": [
+      -4.013404904236472,
+      4.259111712255335
+    ],
+    "interpretation": "prelaunch mechanism smoke only; not comparable as a replacement for locked V23/V29 routing"
+  },
+  "operational": {
+    "private": true,
+    "cpu_only": true,
+    "internet": false,
+    "reserved_accounts": [
+      "kg-05",
+      "kg-10"
+    ],
+    "master_control": "kg-01",
+    "usable_pool": [
+      "kg-02",
+      "kg-03",
+      "kg-04",
+      "kg-06",
+      "kg-07",
+      "kg-08",
+      "kg-09",
+      "kg-11"
+    ],
+    "cancel_existing": false,
+    "overwrite_existing": false
+  }
+}

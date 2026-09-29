@@ -1,0 +1,43 @@
+name: soilbin-v31-v50-campaign
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/soilbin-v30-lc1-lc5-coupling-20260929
+    paths:
+      - 'control-plane-payloads/soilbin-v31-v50-campaign/**'
+      - '.github/workflows/soilbin-v31-v50-campaign.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: soilbin-v31-v50-campaign-r1
+  cancel-in-progress: false
+
+jobs:
+  campaign:
+    runs-on: [self-hosted, windows, x64, v622-r1]
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Canonical preflight
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m py_compile control-plane-payloads/soilbin-v31-v50-campaign/campaign_runner.py
+          python -m py_compile control-plane-payloads/soilbin-v31-v50-campaign/controller.py
+          python -c "import base64,gzip,hashlib,pathlib; p=pathlib.Path(r'control-plane-payloads/soilbin-v27-probabilistic/all_features_51.csv.gz.b64'); b=gzip.decompress(base64.b64decode(p.read_text().strip())); h=hashlib.sha256(b).hexdigest(); print('DATA_SHA='+h); assert h=='dc96ffd8d48f6cc861c2ecbfbc95b95fa809c24c55688fbccba6cd8f61ce6059'"
+      - name: Run parallel Kaggle campaign
+        shell: powershell
+        run: python control-plane-payloads/soilbin-v31-v50-campaign/controller.py
+      - name: Upload campaign evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soilbin-v31-v50-campaign-evidence
+          path: ${{ runner.temp }}\\soilbin-v31-v50
+          if-no-files-found: warn
+          retention-days: 30
