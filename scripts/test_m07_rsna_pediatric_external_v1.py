@@ -97,6 +97,8 @@ def test_workflow_routes_exact_rsna_external_tokens():
     assert "m07-rsna-pediatric-external-resolution-v1:" in text
     for token in TOKENS:
         assert token in text
+    assert "'pneumonia-v17-m07-rsna-kg03'" in text
+    assert "'pneumonia-v17-m07-rsna-kg05'" in text
     assert "scripts/m07_rsna_pediatric_external_dispatch_v1.py" in text
 
 
