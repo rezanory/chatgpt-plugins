@@ -96,3 +96,22 @@ def test_workflow_routes_exact_rsna_external_tokens():
     for token in TOKENS:
         assert token in text
     assert "scripts/m07_rsna_pediatric_external_dispatch_v1.py" in text
+
+
+def test_rsna_real_preflight_receipt_is_pass_and_pre_inference():
+    path = (
+        ROOT / "evidence" / "m07_external" / "rsna_pediatric_v1"
+        / "preflight_receipt.json"
+    )
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    assert receipt["status"] == "PASS_RSNA_PEDIATRIC_SCHEMA"
+    assert receipt["manifest_sha256"] == EXPECTED_MANIFEST_SHA256
+    assert receipt["resolved_image_count"] == 1099
+    assert receipt["unique_image_sha256_count"] == 1099
+    assert receipt["duplicate_image_sha256_count"] == 0
+    assert receipt["training_performed"] is False
+    assert receipt["hpo_performed"] is False
+    assert receipt["inference_started"] is False
+    assert receipt["external_threshold_tuning"] is False
+    assert receipt["external_adaptation"] is False
+    assert receipt["evidence_lineage"]["github_preflight_run_id"] == 36416421566

@@ -1,0 +1,32 @@
+{
+  "schema": "m07.external.rsna_pediatric.preflight.v1",
+  "status": "PASS_RSNA_PEDIATRIC_SCHEMA",
+  "dataset_ref": "nih-chest-xrays/data",
+  "manifest_sha256": "3450a101e626a09535d98e5aa9ca52dbf64ded584c2952f7613e3c22981cf5cd",
+  "counts": {
+    "expanded_images": 1099,
+    "expanded_patients": 553,
+    "expanded_negative": 578,
+    "expanded_positive": 521,
+    "primary_images": 282,
+    "primary_patients": 158,
+    "primary_negative": 146,
+    "primary_positive": 136
+  },
+  "metadata_file": "/kaggle/input/datasets/nih-chest-xrays/data/Data_Entry_2017.csv",
+  "resolved_image_count": 1099,
+  "unique_image_sha256_count": 1099,
+  "duplicate_image_sha256_count": 0,
+  "training_performed": false,
+  "hpo_performed": false,
+  "inference_started": false,
+  "external_threshold_tuning": false,
+  "external_adaptation": false,
+  "receipt_sha256": "c5e63bd5b28ddda701bb11ad6c3a8d6f52fc4d531d56371117aaccaf9c814ba8",
+  "evidence_lineage": {
+    "github_preflight_run_id": 36416421566,
+    "kaggle_kernel_ref": "rezanory/m07-rsna-pediatric-external-preflight-36416421566",
+    "control_plane_read_run_id": 36417194342,
+    "control_plane_broker_sha": "0b45fe7ec969d70d20ac99ca8514d04f6a05d1df"
+  }
+}
