@@ -89,6 +89,9 @@ def test_rsna_dispatch_uses_frozen_states_and_no_competition_source():
     assert '"enableGpu": True' in text
     assert '"external_threshold_tuning": False' in text
     assert '"external_calibration_fitting": False' in text
+    assert '"maximum weekly gpu quota" in provider_error.casefold()' in text
+    assert 'launch_payload["body"]["enableGpu"] = False' in text
+    assert '"CPU_FALLBACK_GPU_QUOTA"' in text
     assert EXPECTED_MANIFEST_SHA256 in text
 
 
