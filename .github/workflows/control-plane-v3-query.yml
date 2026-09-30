@@ -572,3 +572,52 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  phase2_historical_matrix_audit_v2:
+    if: >-
+      ${{ github.event_name == 'issue_comment' &&
+          github.event.issue.number == 126 &&
+          github.event.comment.user.id == 62356000 &&
+          github.event.comment.body == 'PHASE2_HISTORICAL_MATRIX_AUDIT_V2_AUTHORIZED' }}
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    timeout-minutes: 15
+    steps:
+      - name: Checkout main historical matrix implementation
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Request trusted read OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          bearer=os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']
+          sep='&' if '?' in base else '?'
+          url=base+sep+urllib.parse.urlencode({'audience':'cgp-control-plane-v3'})
+          req=urllib.request.Request(url,headers={'Authorization':'Bearer '+bearer})
+          with urllib.request.urlopen(req,timeout=30) as response:
+              token=json.load(response)['value']
+          if len(token)<100:
+              raise SystemExit('READ_OIDC_UNAVAILABLE')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as handle:
+              print('CGP_READ_OIDC_TOKEN='+token, file=handle)
+          PY
+
+      - name: Audit all 33 historical Phase-2 states
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/phase2_historical_matrix_audit_v2.py
+
+      - name: Upload exhaustive historical matrix evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: PHASE2_HISTORICAL_MATRIX_AUDIT_V2-${{ github.run_id }}
+          path: ${{ runner.temp }}/PHASE2_HISTORICAL_MATRIX_AUDIT_V2.json
+          if-no-files-found: error
+          retention-days: 30
+
