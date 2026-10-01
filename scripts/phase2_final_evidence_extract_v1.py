@@ -495,6 +495,97 @@ def _listing_status(item: dict) -> str:
     return ""
 
 
+def _extractor_output_name(account_id: str) -> str:
+    return "PHASE2_FINAL_EVIDENCE_" + account_id.replace("-", "_").upper() + ".json"
+
+
+def probe_extractor_status(
+    read_token: str,
+    account_id: str,
+    kernel_ref: str,
+    listing_item: dict | None = None,
+) -> str:
+    owner, slug = kernel_ref.split("/", 1)
+
+    status_response = post_json(
+        READ_ENDPOINT,
+        read_token,
+        {
+            "action": "raw_read",
+            "account_id": account_id,
+            "service": "kernels.KernelsApiService",
+            "method": "GetKernelSessionStatus",
+            "body": {"userName": owner, "kernelSlug": slug},
+        },
+        timeout=120,
+    )
+    if status_response.get("ok"):
+        status = recursive_status(status_response)
+        if status in TERMINAL | ACTIVE:
+            return status
+
+    receipt_response = post_json(
+        READ_ENDPOINT,
+        read_token,
+        {
+            "action": "output_json_files",
+            "account_id": account_id,
+            "kernel_ref": kernel_ref,
+            "file_names": [_extractor_output_name(account_id)],
+            "max_bytes_per_file": 262144,
+        },
+        timeout=120,
+    )
+    if receipt_response.get("ok"):
+        receipt_result = receipt_response.get("result") or {}
+        receipt_files = receipt_result.get("files") or []
+        if (
+            len(receipt_files) == 1
+            and isinstance(receipt_files[0], dict)
+            and isinstance(receipt_files[0].get("json"), dict)
+            and receipt_files[0]["json"].get("status") == "PASS"
+        ):
+            return "COMPLETE"
+
+    output_response = post_json(
+        READ_ENDPOINT,
+        read_token,
+        {
+            "action": "raw_read",
+            "account_id": account_id,
+            "service": "kernels.KernelsApiService",
+            "method": "ListKernelSessionOutput",
+            "body": {
+                "userName": owner,
+                "kernelSlug": slug,
+                "page": 1,
+                "pageSize": 200,
+            },
+        },
+        timeout=120,
+    )
+    if output_response.get("ok"):
+        output_result = output_response.get("result") or {}
+        names = {
+            str(item.get("fileName") or "").split("/")[-1]
+            for item in (output_result.get("files") or [])
+            if isinstance(item, dict)
+        }
+        if _extractor_output_name(account_id) in names:
+            return "COMPLETE"
+        log = str(output_result.get("log") or "")
+        if "PHASE2_FINAL_EVIDENCE_EXTRACT_PASS" in log:
+            return "COMPLETE"
+        if "Traceback (most recent call last)" in log or "RuntimeError:" in log:
+            return "ERROR"
+
+    if listing_item is not None:
+        listed = _listing_status(listing_item)
+        if listed in TERMINAL | ACTIVE:
+            return listed
+    return "UNKNOWN"
+
+
 def reusable_extractor(
     read_token: str,
     account_id: str,
@@ -547,19 +638,12 @@ def reusable_extractor(
     if not candidates:
         return None
     run_number, ref, item = max(candidates, key=lambda row: row[0])
-    status_response = post_json(
-        READ_ENDPOINT,
+    status = probe_extractor_status(
         read_token,
-        {
-            "action": "resolved_kernel_status",
-            "account_id": account_id,
-            "kernel_ref": ref,
-        },
-        timeout=120,
+        account_id,
+        ref,
+        listing_item=item,
     )
-    status = recursive_status(status_response) if status_response.get("ok") else ""
-    if not status:
-        status = _listing_status(item)
     if status in ACTIVE | {"COMPLETE"}:
         return {
             "kernel_ref": ref,
@@ -569,7 +653,7 @@ def reusable_extractor(
     if status in {"ERROR", "CANCELLED"}:
         return None
     raise RuntimeError(
-        f"EXTRACTOR_LATEST_STATUS_UNCERTAIN:{account_id}:{ref}:{status_response}"
+        f"EXTRACTOR_LATEST_STATUS_UNCERTAIN:{account_id}:{ref}"
     )
 
 
@@ -698,7 +782,7 @@ def launch_account(action_token: str, read_token: str, run_id: str, account_id: 
 
 def fetch_account_result(read_token: str, item: dict) -> dict:
     account_id = item["account_id"]
-    name = "PHASE2_FINAL_EVIDENCE_" + account_id.replace("-", "_").upper() + ".json"
+    name = _extractor_output_name(account_id)
     response = post_json(
         READ_ENDPOINT,
         read_token,
@@ -752,18 +836,16 @@ def main() -> None:
         with concurrent.futures.ThreadPoolExecutor(max_workers=11) as pool:
             futures = {
                 pool.submit(
-                    post_json,
-                    READ_ENDPOINT,
+                    probe_extractor_status,
                     read_token,
-                    {"action": "resolved_kernel_status", "account_id": row["account_id"], "kernel_ref": row["kernel_ref"]},
-                    120,
+                    row["account_id"],
+                    row["kernel_ref"],
                 ): row
                 for row in active_rows
             }
             for future in concurrent.futures.as_completed(futures):
                 row = futures[future]
-                status_response = future.result()
-                status = recursive_status(status_response)
+                status = future.result()
                 print("PHASE2_FINAL_EXTRACT_STATUS", json.dumps({"account_id": row["account_id"], "status": status or "UNKNOWN"}, sort_keys=True), flush=True)
                 if status in TERMINAL:
                     terminal[row["account_id"]] = status
