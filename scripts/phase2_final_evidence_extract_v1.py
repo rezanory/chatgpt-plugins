@@ -465,6 +465,127 @@ def normalize_provider_ref(value: str, expected: str, owner: str) -> str:
     return raw
 
 
+def _listed_kernel_ref(item: dict, owner: str) -> str | None:
+    raw = str(item.get("ref") or "").strip()
+    if raw:
+        raw = raw.strip("/")
+        if raw.startswith("code/"):
+            raw = raw[5:]
+        if raw.count("/") == 1 and raw.split("/", 1)[0].casefold() == owner.casefold():
+            return raw
+    item_owner = str(
+        item.get("ownerRef")
+        or item.get("ownerUser")
+        or item.get("owner")
+        or item.get("userName")
+        or ""
+    ).strip()
+    item_slug = str(item.get("kernelSlug") or item.get("slug") or "").strip()
+    if item_owner.casefold() == owner.casefold() and item_slug:
+        return f"{owner}/{item_slug}"
+    return None
+
+
+def _listing_status(item: dict) -> str:
+    status = recursive_status(item)
+    if status:
+        return status
+    if item.get("isRunning") is True or item.get("is_running") is True:
+        return "RUNNING"
+    return ""
+
+
+def reusable_extractor(
+    read_token: str,
+    account_id: str,
+    owner: str,
+) -> dict | None:
+    search = f"phase2-final-evidence-{account_id}"
+    listing = post_json(
+        READ_ENDPOINT,
+        read_token,
+        {
+            "action": "raw_read",
+            "account_id": account_id,
+            "service": "kernels.KernelsApiService",
+            "method": "ListKernels",
+            "body": {
+                "group": "PROFILE",
+                "user": owner,
+                "search": "phase2-final-evidence",
+                "sortBy": "DATE_RUN",
+                "page": 1,
+                "pageSize": 100,
+            },
+        },
+        timeout=120,
+    )
+    if not listing.get("ok"):
+        raise RuntimeError(f"EXTRACTOR_HISTORY_LIST_FAILED:{account_id}:{listing}")
+    result = listing.get("result") or {}
+    kernels = result.get("kernels") or []
+    account_tokens = {account_id.casefold(), account_id.replace("-", "").casefold()}
+    candidates = []
+    for item in kernels:
+        if not isinstance(item, dict):
+            continue
+        ref = _listed_kernel_ref(item, owner)
+        if not ref:
+            continue
+        slug = ref.split("/", 1)[1]
+        match = None
+        for token in account_tokens:
+            prefix = f"phase2-final-evidence-{token}-"
+            if slug.casefold().startswith(prefix):
+                suffix = slug[len(prefix):]
+                if suffix.isdigit():
+                    match = int(suffix)
+                    break
+        if match is None:
+            continue
+        candidates.append((match, ref, item))
+    if not candidates:
+        return None
+    run_number, ref, item = max(candidates, key=lambda row: row[0])
+    status_response = post_json(
+        READ_ENDPOINT,
+        read_token,
+        {
+            "action": "resolved_kernel_status",
+            "account_id": account_id,
+            "kernel_ref": ref,
+        },
+        timeout=120,
+    )
+    status = recursive_status(status_response) if status_response.get("ok") else ""
+    if not status:
+        status = _listing_status(item)
+    if status in ACTIVE | {"COMPLETE"}:
+        return {
+            "kernel_ref": ref,
+            "status": status,
+            "source_run_id": str(run_number),
+        }
+    if status in {"ERROR", "CANCELLED"}:
+        return None
+    raise RuntimeError(
+        f"EXTRACTOR_LATEST_STATUS_UNCERTAIN:{account_id}:{ref}:{status_response}"
+    )
+
+
+def _action_envelope(result: dict) -> tuple[dict, dict]:
+    if (
+        result.get("provider") == "kaggle"
+        and result.get("operation_class") is not None
+    ):
+        broker = result
+    else:
+        nested = result.get("result")
+        broker = nested if isinstance(nested, dict) else {}
+    provider = broker.get("result") if isinstance(broker.get("result"), dict) else {}
+    return broker, provider
+
+
 def launch_account(action_token: str, read_token: str, run_id: str, account_id: str, plan: dict) -> dict:
     owner = plan["owner"]
     resolved = []
@@ -485,25 +606,21 @@ def launch_account(action_token: str, read_token: str, run_id: str, account_id: 
                 "campaign_completed_folds": resolved_state["campaign_completed_folds"],
             }
         )
-    slug = f"phase2-final-evidence-{account_id.replace('-', '')}-{run_id}"
-    expected_ref = f"{owner}/{slug}"
-    existing = post_json(
-        READ_ENDPOINT,
-        read_token,
-        {"action": "resolved_kernel_status", "account_id": account_id, "kernel_ref": expected_ref},
-    )
-    existing_status = recursive_status(existing)
-    if existing_status in ACTIVE | {"COMPLETE"}:
+    reusable = reusable_extractor(read_token, account_id, owner)
+    if reusable is not None:
         return {
             "account_id": account_id,
             "owner": owner,
-            "kernel_ref": expected_ref,
-            "status": existing_status,
+            "kernel_ref": reusable["kernel_ref"],
+            "status": reusable["status"],
             "reused": True,
+            "source_run_id": reusable["source_run_id"],
             "targets": resolved,
         }
-    if existing_status in {"ERROR", "CANCELLED"}:
-        raise RuntimeError(f"EXISTING_EXTRACTOR_TERMINAL:{account_id}:{existing_status}")
+
+    slug_token = "master" if account_id == "master" else account_id
+    slug = f"phase2-final-evidence-{slug_token}-{run_id}"
+    expected_ref = f"{owner}/{slug}"
 
     payload = {
         "request_id": f"phase2-final-evidence-{account_id}-{run_id}",
@@ -534,8 +651,7 @@ def launch_account(action_token: str, read_token: str, run_id: str, account_id: 
         },
     }
     result = post_json(ACTION_ENDPOINT, action_token, payload, timeout=240)
-    broker = result.get("result") if isinstance(result.get("result"), dict) else {}
-    provider = broker.get("result") if isinstance(broker.get("result"), dict) else {}
+    broker, provider = _action_envelope(result)
     error = str(
         broker.get("error")
         or provider.get("error")
@@ -575,6 +691,7 @@ def launch_account(action_token: str, read_token: str, run_id: str, account_id: 
         "kernel_ref": ref,
         "status": "SUBMITTED",
         "reused": False,
+        "source_run_id": str(run_id),
         "targets": resolved,
     }
 
