@@ -155,45 +155,10 @@ def recursive_status(value) -> str:
 
 
 def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> int:
+    # Historical Phase-2 completion was established through account-scoped
+    # ListDatasets inventory.  Keep that same proven read path here: some private
+    # state datasets return 403 to GetDataset even for their owner account.
     owner, slug = dataset_ref.split("/", 1)
-    result = post_json(
-        READ_ENDPOINT,
-        read_token,
-        {
-            "action": "raw_read",
-            "account_id": account_id,
-            "service": "datasets.DatasetApiService",
-            "method": "GetDataset",
-            "body": {"ownerSlug": owner, "datasetSlug": slug},
-        },
-    )
-    if not result.get("ok"):
-        raise RuntimeError(f"DATASET_LOOKUP_FAILED:{dataset_ref}:{result}")
-    body = result.get("result") or {}
-
-    def find_version(value):
-        if isinstance(value, dict):
-            for key in ("currentVersionNumber", "current_version_number", "versionNumber"):
-                raw = value.get(key)
-                if isinstance(raw, int) and raw > 0:
-                    return raw
-            for child in value.values():
-                found = find_version(child)
-                if found:
-                    return found
-        elif isinstance(value, list):
-            for child in value:
-                found = find_version(child)
-                if found:
-                    return found
-        return None
-
-    version = find_version(body)
-    if isinstance(version, int):
-        return version
-
-    # Some Kaggle GetDataset variants omit currentVersionNumber. Fall back to
-    # exact-owner ListDatasets inventory, which is the historical Phase-2 audit path.
     listing = post_json(
         READ_ENDPOINT,
         read_token,
@@ -202,20 +167,32 @@ def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> int:
             "account_id": account_id,
             "service": "datasets.DatasetApiService",
             "method": "ListDatasets",
-            "body": {"group": "MY", "search": slug, "page": 1, "pageSize": 100},
+            "body": {
+                "group": "MY",
+                "search": slug,
+                "page": 1,
+                "pageSize": 100,
+            },
         },
     )
     if not listing.get("ok"):
-        raise RuntimeError(f"DATASET_LIST_FALLBACK_FAILED:{dataset_ref}:{listing}")
+        raise RuntimeError(f"DATASET_LIST_FAILED:{dataset_ref}:{listing}")
     rows = (listing.get("result") or {}).get("datasets") or []
-    exact = [row for row in rows if isinstance(row, dict) and str(row.get("ref") or "").casefold() == dataset_ref.casefold()]
+    exact = [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("ref") or "").casefold() == dataset_ref.casefold()
+    ]
     if len(exact) != 1:
-        raise RuntimeError(f"DATASET_VERSION_EXACT_MATCH_INVALID:{dataset_ref}:{len(exact)}")
-    version = find_version(exact[0])
-    if not isinstance(version, int):
+        raise RuntimeError(
+            f"DATASET_VERSION_EXACT_MATCH_INVALID:{dataset_ref}:{len(exact)}"
+        )
+    row = exact[0]
+    version = row.get("currentVersionNumber", row.get("current_version_number"))
+    if not isinstance(version, int) or version < 1:
         raise RuntimeError(f"DATASET_VERSION_UNRESOLVED:{dataset_ref}")
     return version
-
 
 def kernel_script(account_id: str, targets: list[dict]) -> str:
     # The extractor never imports ML frameworks and never opens image data.

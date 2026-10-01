@@ -45,6 +45,36 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         self.assertNotIn(".fit(", source)
         self.assertNotIn("optimizer", source.lower())
 
+    def test_resolve_version_uses_exact_listdatasets_row(self):
+        calls = []
+        original = MODULE.post_json
+        try:
+            def fake_post(endpoint, token, payload, timeout=180):
+                calls.append(payload)
+                return {
+                    "ok": True,
+                    "result": {
+                        "datasets": [
+                            {
+                                "ref": "reyhanehazad/pneumonia-m04-r384-state-v1-7",
+                                "currentVersionNumber": 6,
+                            }
+                        ]
+                    },
+                }
+
+            MODULE.post_json = fake_post
+            version = MODULE.resolve_version(
+                "token",
+                "kg-04",
+                "reyhanehazad/pneumonia-m04-r384-state-v1-7",
+            )
+            self.assertEqual(version, 6)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0]["method"], "ListDatasets")
+        finally:
+            MODULE.post_json = original
+
     def test_recursive_status(self):
         self.assertEqual(
             MODULE.recursive_status({"result": {"kernelStatus": "running"}}),
