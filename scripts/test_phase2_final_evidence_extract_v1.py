@@ -195,7 +195,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         original = MODULE.post_json
         try:
             def fake_post(endpoint, token, payload, timeout=180):
-                if payload.get("action") == "raw_read":
+                if payload.get("action") == "raw_read" and payload.get("method") == "ListKernels":
                     return {
                         "ok": True,
                         "result": {
@@ -211,7 +211,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
                             ]
                         },
                     }
-                if payload.get("action") == "resolved_kernel_status":
+                if payload.get("action") == "raw_read" and payload.get("method") == "GetKernelSessionStatus":
                     return {"ok": True, "result": {"status": "COMPLETE"}}
                 raise AssertionError(payload)
 
@@ -231,7 +231,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         original = MODULE.post_json
         try:
             def fake_post(endpoint, token, payload, timeout=180):
-                if payload.get("action") == "raw_read":
+                if payload.get("action") == "raw_read" and payload.get("method") == "ListKernels":
                     return {
                         "ok": True,
                         "result": {
@@ -243,7 +243,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
                             ]
                         },
                     }
-                if payload.get("action") == "resolved_kernel_status":
+                if payload.get("action") == "raw_read" and payload.get("method") == "GetKernelSessionStatus":
                     return {"ok": True, "result": {"status": "ERROR"}}
                 raise AssertionError(payload)
 
@@ -251,6 +251,63 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
             self.assertIsNone(
                 MODULE.reusable_extractor("token", "kg-03", "rezanory")
             )
+        finally:
+            MODULE.post_json = original
+
+    def test_probe_status_falls_back_to_verified_output_receipt(self):
+        original = MODULE.post_json
+        try:
+            def fake_post(endpoint, token, payload, timeout=180):
+                if payload.get("action") == "raw_read" and payload.get("method") == "GetKernelSessionStatus":
+                    return {"ok": False, "http_status": 403, "error": "Kaggle API HTTP 403"}
+                if payload.get("action") == "output_json_files":
+                    return {
+                        "ok": True,
+                        "result": {
+                            "files": [
+                                {
+                                    "json": {"status": "PASS"},
+                                }
+                            ]
+                        },
+                    }
+                raise AssertionError(payload)
+
+            MODULE.post_json = fake_post
+            status = MODULE.probe_extractor_status(
+                "token",
+                "kg-09",
+                "mylovevpn1/phase2-final-evidence-kg-09-36927131810",
+            )
+            self.assertEqual(status, "COMPLETE")
+        finally:
+            MODULE.post_json = original
+
+    def test_probe_status_falls_back_to_runtime_error_log(self):
+        original = MODULE.post_json
+        try:
+            def fake_post(endpoint, token, payload, timeout=180):
+                if payload.get("action") == "raw_read" and payload.get("method") == "GetKernelSessionStatus":
+                    return {"ok": False, "http_status": 403, "error": "Kaggle API HTTP 403"}
+                if payload.get("action") == "output_json_files":
+                    return {"ok": False, "http_status": 403, "error": "not found"}
+                if payload.get("action") == "raw_read" and payload.get("method") == "ListKernelSessionOutput":
+                    return {
+                        "ok": True,
+                        "result": {
+                            "files": [],
+                            "log": "Traceback (most recent call last):\\nRuntimeError: TEST",
+                        },
+                    }
+                raise AssertionError(payload)
+
+            MODULE.post_json = fake_post
+            status = MODULE.probe_extractor_status(
+                "token",
+                "kg-09",
+                "mylovevpn1/phase2-final-evidence-kg-09-36927131810",
+            )
+            self.assertEqual(status, "ERROR")
         finally:
             MODULE.post_json = original
 
