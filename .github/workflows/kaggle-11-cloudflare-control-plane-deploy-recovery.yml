@@ -1,0 +1,84 @@
+name: kaggle-11-cloudflare-control-plane-deploy-recovery
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kaggle-11-cloudflare-control-plane-deploy-recovery
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, windows, x64, v622]
+    environment: cloudflare-production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify preinstalled Node runtime
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $nodeVersion=& node --version
+          if($LASTEXITCODE -ne 0 -or -not $nodeVersion){throw 'preinstalled Node unavailable'}
+          $major=[int](($nodeVersion.TrimStart('v') -split '\.')[0])
+          if($major -lt 22){throw "Node 22+ required; found $nodeVersion"}
+          $npmVersion=& npm --version
+          if($LASTEXITCODE -ne 0 -or -not $npmVersion){throw 'preinstalled npm unavailable'}
+          Write-Host "NODE_RUNTIME_READY node=$nodeVersion npm=$npmVersion"
+
+      - name: Validate exact control-plane bundle
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npm install --no-audit --no-fund
+            if($LASTEXITCODE -ne 0){throw 'npm install failed'}
+            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway --dry-run
+            if($LASTEXITCODE -ne 0){throw 'control-plane dry-run failed'}
+          } finally { Pop-Location }
+
+      - name: Deploy OIDC-gated control plane
+        shell: powershell
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CLOUDFLARE_ACCOUNT_ID=([string]$env:RAW_CLOUDFLARE_ACCOUNT_ID).Trim()
+          if(-not $env:CLOUDFLARE_ACCOUNT_ID -or -not $env:CLOUDFLARE_API_TOKEN){throw 'Cloudflare credentials unavailable'}
+          Push-Location deploy/cloudflare-worker-free
+          try {
+            npx wrangler deploy src/control-plane-v3-index.ts --name chatgpt-kaggle-gateway
+            if($LASTEXITCODE -ne 0){throw 'wrangler deploy failed'}
+          } finally { Pop-Location }
+
+      - name: Verify canonical and v3 health
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $base='https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev'
+          function Get-JsonWithRetry([string]$Url){
+            $last=''
+            for($attempt=1;$attempt-le 6;$attempt++){
+              try {
+                $raw=& curl.exe --fail --silent --show-error --connect-timeout 5 --max-time 20 $Url 2>&1 | Out-String
+                if($LASTEXITCODE-eq 0 -and $raw.Trim()) { return ($raw | ConvertFrom-Json) }
+                $last=$raw.Trim()
+              } catch { $last=$_.Exception.Message }
+              if($attempt-lt 6){Start-Sleep -Seconds 5}
+            }
+            throw "health endpoint unavailable after retries: $Url :: $last"
+          }
+          $h=Get-JsonWithRetry "$base/healthz"
+          if($h.service -ne 'chatgpt-kaggle-gateway' -or $h.status -ne 'ready'){throw 'canonical gateway unhealthy'}
+          $v3=Get-JsonWithRetry "$base/control-plane/v3/healthz"
+          if($v3.status -ne 'ready' -or $v3.github_oidc_read_broker -ne $true -or $v3.github_oidc_action_broker -ne $true){throw 'v3 control plane unhealthy'}
+          Write-Host ('CLOUDFLARE_GATEWAY_READY service={0} configured={1} master={2}' -f $h.service,$h.kaggle_tokens_configured,$h.master_configured)
+          Write-Host 'CONTROL_PLANE_V3_READY'
