@@ -300,8 +300,8 @@ def main():
             "operation_class": "compute",
             "account_id": account_id,
             "purpose": (
-                "Frozen M07 R224 secondary RSNA HARMONIZATION analysis. Inference only; seven "
-                "predefined deterministic intensity transforms; no retraining, model-weight "
+                "Frozen M07 R224 secondary RSNA HARMONIZATION analysis. Inference only; three "
+                "predefined deterministic intensity views; no retraining, model-weight "
                 "adaptation, calibration fitting, or external threshold tuning."
             ),
             "service": "kernels.KernelsApiService",
