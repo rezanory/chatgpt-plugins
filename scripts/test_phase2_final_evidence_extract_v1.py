@@ -1,4 +1,5 @@
 import importlib.util
+import inspect
 import pathlib
 import unittest
 
@@ -18,7 +19,10 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         for account_id, plan in MODULE.ACCOUNT_PLANS.items():
             self.assertTrue(account_id)
             self.assertTrue(plan["owner"])
-            observed.extend((model, int(resolution)) for model, resolution, _ in plan["targets"])
+            observed.extend(
+                (model, int(resolution))
+                for model, resolution, _ in plan["targets"]
+            )
         expected = {
             (f"M{index:02d}", resolution)
             for index in range(1, 13)
@@ -28,55 +32,94 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         self.assertEqual(set(observed), expected)
         self.assertEqual(len(observed), len(set(observed)))
 
-    def test_generated_kernel_is_cpu_evidence_only_python(self):
+    def test_generated_kernel_is_cpu_attached_evidence_only_python(self):
         target = {
             "model_id": "M04",
             "resolution": 384,
             "dataset_ref": "reyhanehazad/pneumonia-m04-r384-state-v1-7",
             "version": 6,
-            "source": "reyhanehazad/pneumonia-m04-r384-state-v1-7/versions/6",
+            "campaign_marker_sha256": "a" * 64,
+            "campaign_receipt_sha256": "b" * 64,
+            "campaign_status": "COMPLETE",
         }
         source = MODULE.kernel_script("kg-04", [target])
         compile(source, "<phase2-final-evidence-kernel>", "exec")
         self.assertIn("FINAL_EVIDENCE.cgpzip", source)
         self.assertIn("FOLD_[1-5]_RECOVERY", source)
-        self.assertIn("kagglehub.dataset_download", source)
-        self.assertIn("KAGGLEHUB_EXACT_VERSION", source)
+        self.assertIn("ATTACHED_DATASET", source)
+        self.assertIn("CAMPAIGN_MARKER_SHA_MISMATCH", source)
+        self.assertNotIn("kagglehub.dataset_download", source)
+        self.assertNotIn("KAGGLEHUB_EXACT_VERSION", source)
         self.assertIn("training_performed", source)
         self.assertNotIn("tensorflow", source.lower())
         self.assertNotIn("torch.", source.lower())
         self.assertNotIn(".fit(", source)
         self.assertNotIn("optimizer", source.lower())
 
-    def test_resolve_version_uses_exact_listdatasets_row(self):
+    def test_resolve_version_and_marker_use_exact_dataset_version(self):
         calls = []
         original = MODULE.post_json
+        marker_sha = "c" * 64
         try:
             def fake_post(endpoint, token, payload, timeout=180):
                 calls.append(payload)
-                return {
-                    "ok": True,
-                    "result": {
-                        "datasets": [
-                            {
-                                "ref": "reyhanehazad/pneumonia-m04-r384-state-v1-7",
-                                "currentVersionNumber": 6,
-                            }
-                        ]
-                    },
-                }
+                if payload.get("action") == "raw_read":
+                    return {
+                        "ok": True,
+                        "result": {
+                            "datasets": [
+                                {
+                                    "ref": "reyhanehazad/pneumonia-m04-r384-state-v1-7",
+                                    "currentVersionNumber": 6,
+                                }
+                            ]
+                        },
+                    }
+                if payload.get("action") == "dataset_json_files":
+                    return {
+                        "ok": True,
+                        "result": {
+                            "files": [
+                                {
+                                    "sha256": marker_sha,
+                                    "json": {
+                                        "status": "COMPLETE",
+                                        "receipt_sha256": "d" * 64,
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                raise AssertionError(payload)
 
             MODULE.post_json = fake_post
-            version = MODULE.resolve_version(
+            resolved = MODULE.resolve_version(
                 "token",
                 "kg-04",
                 "reyhanehazad/pneumonia-m04-r384-state-v1-7",
             )
-            self.assertEqual(version, 6)
-            self.assertEqual(len(calls), 1)
+            self.assertEqual(resolved["version"], 6)
+            self.assertEqual(resolved["campaign_marker_sha256"], marker_sha)
+            self.assertEqual(resolved["campaign_receipt_sha256"], "d" * 64)
+            self.assertEqual(resolved["campaign_status"], "COMPLETE")
+            self.assertEqual(len(calls), 2)
             self.assertEqual(calls[0]["method"], "ListDatasets")
+            self.assertEqual(calls[1]["action"], "dataset_json_files")
+            self.assertEqual(calls[1]["dataset_version_number"], 6)
+            self.assertEqual(calls[1]["file_names"], ["CAMPAIGN_STATE.json"])
         finally:
             MODULE.post_json = original
+
+    def test_launch_uses_unversioned_attached_states(self):
+        source = inspect.getsource(MODULE.launch_account)
+        self.assertIn(
+            '"datasetDataSources": [item["dataset_ref"] for item in resolved]',
+            source,
+        )
+        self.assertIn('"enableInternet": False', source)
+        self.assertIn("campaign_marker_sha256", source)
+        self.assertIn("invalidDatasetSources", source)
+        self.assertIn('broker.get("provider_ref")', source)
 
     def test_recursive_status(self):
         self.assertEqual(
