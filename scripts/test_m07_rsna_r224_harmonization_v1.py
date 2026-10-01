@@ -66,6 +66,7 @@ def test_canonical_replay_is_hard_gate_and_raw_external_is_preserved():
     assert '"training_performed": False' in source
     assert '"domain_harmonization": True' in source
     assert '"test_time_augmentation": False' in source
+    assert '"test_time_augmentation": True' not in source
 
 
 def test_dispatch_verifies_harmonization_receipt_and_has_no_cpu_fallback():

@@ -1027,7 +1027,7 @@ report = {
     "external_threshold_tuning": False,
     "external_model_adaptation": False,
     "external_calibration_fitting": False,
-    "test_time_augmentation": True,
+    "test_time_augmentation": False,
     "harmonization_selection_note": (
         "Two fixed label-free harmonization transforms were prespecified for this secondary analysis: "
         "per-image robust 1st-99th percentile stretching and fixed 256-bin histogram equalization. "
@@ -1091,7 +1091,7 @@ receipt = {
     "external_threshold_tuning": False,
     "external_model_adaptation": False,
     "external_calibration_fitting": False,
-    "test_time_augmentation": True,
+    "test_time_augmentation": False,
     "raw_external_result_preserved": True,
     "canonical_replay_confusion": observed_confusion,
     "source_state": STATE_HANDLE,
