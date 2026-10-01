@@ -174,6 +174,86 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         self.assertIn("invalidDatasetSources", source)
         self.assertIn('broker.get("provider_ref")', source)
 
+    def test_action_envelope_accepts_direct_and_nested_broker_shapes(self):
+        direct = {
+            "ok": True,
+            "provider": "kaggle",
+            "operation_class": "compute",
+            "provider_ref": "/code/example/kernel",
+            "result": {"ref": "/code/example/kernel", "versionNumber": 1},
+        }
+        broker, provider = MODULE._action_envelope(direct)
+        self.assertIs(broker, direct)
+        self.assertEqual(provider["versionNumber"], 1)
+
+        nested = {"ok": True, "result": dict(direct)}
+        broker, provider = MODULE._action_envelope(nested)
+        self.assertEqual(broker["provider"], "kaggle")
+        self.assertEqual(provider["versionNumber"], 1)
+
+    def test_reusable_extractor_selects_latest_complete_kernel(self):
+        original = MODULE.post_json
+        try:
+            def fake_post(endpoint, token, payload, timeout=180):
+                if payload.get("action") == "raw_read":
+                    return {
+                        "ok": True,
+                        "result": {
+                            "kernels": [
+                                {
+                                    "ref": "radlinaradlina/phase2-final-evidence-kg-02-36923248897",
+                                    "status": "ERROR",
+                                },
+                                {
+                                    "ref": "radlinaradlina/phase2-final-evidence-kg-02-36927131810",
+                                    "status": "COMPLETE",
+                                },
+                            ]
+                        },
+                    }
+                if payload.get("action") == "resolved_kernel_status":
+                    return {"ok": True, "result": {"status": "COMPLETE"}}
+                raise AssertionError(payload)
+
+            MODULE.post_json = fake_post
+            reused = MODULE.reusable_extractor("token", "kg-02", "radlinaradlina")
+            self.assertIsNotNone(reused)
+            self.assertEqual(
+                reused["kernel_ref"],
+                "radlinaradlina/phase2-final-evidence-kg-02-36927131810",
+            )
+            self.assertEqual(reused["status"], "COMPLETE")
+            self.assertEqual(reused["source_run_id"], "36927131810")
+        finally:
+            MODULE.post_json = original
+
+    def test_reusable_extractor_does_not_reuse_latest_failed_kernel(self):
+        original = MODULE.post_json
+        try:
+            def fake_post(endpoint, token, payload, timeout=180):
+                if payload.get("action") == "raw_read":
+                    return {
+                        "ok": True,
+                        "result": {
+                            "kernels": [
+                                {
+                                    "ref": "rezanory/phase2-final-evidence-kg-03-36927131810",
+                                    "status": "ERROR",
+                                }
+                            ]
+                        },
+                    }
+                if payload.get("action") == "resolved_kernel_status":
+                    return {"ok": True, "result": {"status": "ERROR"}}
+                raise AssertionError(payload)
+
+            MODULE.post_json = fake_post
+            self.assertIsNone(
+                MODULE.reusable_extractor("token", "kg-03", "rezanory")
+            )
+        finally:
+            MODULE.post_json = original
+
     def test_recursive_status(self):
         self.assertEqual(
             MODULE.recursive_status({"result": {"kernelStatus": "running"}}),
