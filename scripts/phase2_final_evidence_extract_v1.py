@@ -199,11 +199,14 @@ def kernel_script(account_id: str, targets: list[dict]) -> str:
     # It only reads already-sealed evidence JSON/CSV metadata from mounted states.
     payload = json.dumps(targets, sort_keys=True, separators=(",", ":"))
     return f'''from pathlib import Path
-import hashlib, json, re, zipfile
+import hashlib, json, re, shutil, zipfile
+import kagglehub
 
 ACCOUNT_ID={account_id!r}
 TARGETS=json.loads({payload!r})
 ROOT=Path("/kaggle/input")
+DOWNLOAD_ROOT=Path("/kaggle/working/_phase2_final_evidence_download")
+DOWNLOAD_ROOT.mkdir(parents=True,exist_ok=True)
 METRIC_KEYS=set("""accuracy balanced_accuracy precision recall sensitivity specificity f1 f2 mcc auroc auc auprc average_precision brier ece threshold tn fp fn tp precision_positive recall_positive precision_normal recall_normal macro_precision macro_recall macro_f1""".split())
 POLICY_TOKENS=("locked","external","training","hpo","threshold","fingerprint","split","recipe","status","schema","model","resolution","calibrat")
 
@@ -228,7 +231,7 @@ def summarize_json(value):
             for k,v in x.items():
                 kp=f"{{path}}.{{k}}" if path else str(k)
                 lk=str(k).lower()
-                if any(tok in lk for tok in POLICY_TOKENS) and isinstance(v,(str,int,float,bool,type(None))) and len(policy_paths)<180:
+                if any(tok in lk for tok in POLICY_TOKENS) and isinstance(v,(str,int,float,bool,type(None))) and len(policy_paths)<60:
                     policy_paths.append({{"path":kp,"value":v}})
                 walk(v,kp)
         elif isinstance(x,list):
@@ -237,17 +240,28 @@ def summarize_json(value):
     walk(value,"")
     return {{"metric_blocks":metric_blocks,"policy_paths":policy_paths}}
 
-def find_mount(slug):
+def resolve_state_root(dataset_ref,version):
+    slug=dataset_ref.split("/",1)[1]
     direct=ROOT/slug
     if direct.is_dir():
-        return direct
+        return direct,"MOUNT"
     exact=[p for p in ROOT.iterdir() if p.is_dir() and p.name.casefold()==slug.casefold()]
     if len(exact)==1:
-        return exact[0]
+        return exact[0],"MOUNT"
     fuzzy=[p for p in ROOT.iterdir() if p.is_dir() and slug.casefold() in p.name.casefold()]
     if len(fuzzy)==1:
-        return fuzzy[0]
-    raise RuntimeError("DATASET_MOUNT_NOT_UNIQUE:"+slug+":"+str([p.name for p in exact+fuzzy]))
+        return fuzzy[0],"MOUNT"
+    target=DOWNLOAD_ROOT/(slug+"-v"+str(version))
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True,exist_ok=True)
+    handle=dataset_ref+"/versions/"+str(version)
+    result=Path(kagglehub.dataset_download(handle,output_dir=str(target),force_download=True))
+    candidates=[target,result]
+    for candidate in candidates:
+        if candidate.is_dir() and any(p.is_file() for p in candidate.rglob("*")):
+            return candidate,"KAGGLEHUB_EXACT_VERSION"
+    raise RuntimeError("DATASET_DOWNLOAD_EMPTY:"+handle)
 
 def sha256_file(path):
     h=hashlib.sha256()
@@ -278,6 +292,7 @@ def candidate_name(name):
         or "LOCKED" in base
         or "TERMINAL" in base
         or "RECEIPT" in base
+        or base=="COMPLETED.JSON"
     )
 
 rows=[]
@@ -286,9 +301,8 @@ for target in TARGETS:
     resolution=int(target["resolution"])
     dataset_ref=str(target["dataset_ref"])
     version=int(target["version"])
-    slug=dataset_ref.split("/",1)[1]
-    mount=find_mount(slug)
-    files=[p for p in mount.rglob("*") if p.is_file()]
+    state_root,access_mode=resolve_state_root(dataset_ref,version)
+    files=[p for p in state_root.rglob("*") if p.is_file()]
     if len(files)>5000:
         raise RuntimeError("DATASET_FILE_COUNT_UNBOUNDED:"+dataset_ref)
     row={{
@@ -296,7 +310,8 @@ for target in TARGETS:
         "resolution":resolution,
         "dataset_ref":dataset_ref,
         "dataset_version_number":version,
-        "mount_name":mount.name,
+        "state_root_name":state_root.name,
+        "access_mode":access_mode,
         "archive":None,
         "json_sources":[],
     }}
@@ -321,20 +336,37 @@ for target in TARGETS:
         with zipfile.ZipFile(archive) as z:
             members=[n for n in z.namelist() if not n.endswith("/")]
             row["archive"]["member_count"]=len(members)
-            row["archive"]["members"]=members[:300]
+            row["archive"]["members"]=members[:120]
             for name in members:
                 if candidate_name(name):
                     sources.append(("archive:"+name,read_json_member(z,name)))
-    else:
-        for path in files:
-            if candidate_name(path.name):
-                sources.append(("file:"+path.relative_to(mount).as_posix(),read_json_file(path)))
+
+    fold_archives=sorted(
+        [p for p in files if re.fullmatch(r"FOLD_[1-5]_RECOVERY\\.cgpzip",p.name)],
+        key=lambda p:p.name,
+    )
+    row["fold_archives"]=[]
+    for fold_archive in fold_archives:
+        fold_record={{"name":fold_archive.name,"sha256":sha256_file(fold_archive),"bytes":fold_archive.stat().st_size}}
+        with zipfile.ZipFile(fold_archive) as z:
+            completed=[n for n in z.namelist() if Path(n).name=="COMPLETED.json"]
+            if len(completed)!=1:
+                raise RuntimeError("FOLD_COMPLETED_RECEIPT_COUNT_INVALID:"+dataset_ref+":"+fold_archive.name+":"+str(len(completed)))
+            sources.append(("fold_archive:"+fold_archive.name+":"+completed[0],read_json_member(z,completed[0])))
+            fold_record["completed_member"]=completed[0]
+        row["fold_archives"].append(fold_record)
+
+    for path in files:
+        if candidate_name(path.name) and path.name!="CAMPAIGN_STATE.json":
+            label="file:"+path.relative_to(state_root).as_posix()
+            if not any(existing[0]==label for existing in sources):
+                sources.append((label,read_json_file(path)))
     if not sources:
         # M07 R224 historically has direct evidence with nonstandard filenames.
         for path in files:
             if path.suffix.lower()==".json" and ("REPORT" in path.name.upper() or "OOF" in path.name.upper()):
-                sources.append(("file:"+path.relative_to(mount).as_posix(),read_json_file(path)))
-    for source_name,value in sources[:24]:
+                sources.append(("file:"+path.relative_to(state_root).as_posix(),read_json_file(path)))
+    for source_name,value in sources[:18]:
         summary=summarize_json(value)
         row["json_sources"].append({{
             "source":source_name,
@@ -427,9 +459,9 @@ def launch_account(action_token: str, read_token: str, run_id: str, account_id: 
             "isPrivate": True,
             "enableGpu": False,
             "enableTpu": False,
-            "enableInternet": False,
+            "enableInternet": True,
             "kernelDataSources": [],
-            "datasetDataSources": [item["source"] for item in resolved],
+            "datasetDataSources": [],
             "competitionDataSources": [],
             "modelDataSources": [],
         },
@@ -439,6 +471,13 @@ def launch_account(action_token: str, read_token: str, run_id: str, account_id: 
     error = str(provider.get("error") or result.get("error") or "")
     if not result.get("ok") or error:
         raise RuntimeError(f"EXTRACTOR_SAVEKERNEL_REJECTED:{account_id}:{error or result}")
+    invalid_datasets = provider.get("invalidDatasetSources") or []
+    invalid_kernels = provider.get("invalidKernelSources") or []
+    if invalid_datasets or invalid_kernels:
+        raise RuntimeError(
+            f"EXTRACTOR_SAVEKERNEL_SOURCE_REJECTION:{account_id}:"
+            f"datasets={invalid_datasets}:kernels={invalid_kernels}"
+        )
     ref = normalize_provider_ref(
         result.get("provider_ref") or provider.get("ref") or expected_ref,
         expected_ref,
