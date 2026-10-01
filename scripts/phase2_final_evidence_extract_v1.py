@@ -192,21 +192,50 @@ def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> int:
     version = row.get("currentVersionNumber", row.get("current_version_number"))
     if not isinstance(version, int) or version < 1:
         raise RuntimeError(f"DATASET_VERSION_UNRESOLVED:{dataset_ref}")
-    return version
+    marker = post_json(
+        READ_ENDPOINT,
+        read_token,
+        {
+            "action": "dataset_json_files",
+            "account_id": account_id,
+            "dataset_ref": dataset_ref,
+            "dataset_version_number": version,
+            "file_names": ["CAMPAIGN_STATE.json"],
+            "max_bytes_per_file": 262144,
+        },
+        timeout=180,
+    )
+    if not marker.get("ok"):
+        raise RuntimeError(f"DATASET_MARKER_FETCH_FAILED:{dataset_ref}:{marker}")
+    marker_result = marker.get("result") or {}
+    marker_files = marker_result.get("files") or []
+    if (
+        len(marker_files) != 1
+        or not isinstance(marker_files[0], dict)
+        or not isinstance(marker_files[0].get("json"), dict)
+    ):
+        raise RuntimeError(f"DATASET_MARKER_SHAPE_INVALID:{dataset_ref}")
+    marker_sha256 = str(marker_files[0].get("sha256") or "")
+    if len(marker_sha256) != 64:
+        raise RuntimeError(f"DATASET_MARKER_SHA_INVALID:{dataset_ref}")
+    marker_json = marker_files[0]["json"]
+    return {
+        "version": version,
+        "campaign_marker_sha256": marker_sha256,
+        "campaign_receipt_sha256": marker_json.get("receipt_sha256"),
+        "campaign_status": marker_json.get("status"),
+    }
 
 def kernel_script(account_id: str, targets: list[dict]) -> str:
     # The extractor never imports ML frameworks and never opens image data.
     # It only reads already-sealed evidence JSON/CSV metadata from mounted states.
     payload = json.dumps(targets, sort_keys=True, separators=(",", ":"))
     return f'''from pathlib import Path
-import hashlib, json, re, shutil, zipfile
-import kagglehub
+import hashlib, json, re, zipfile
 
 ACCOUNT_ID={account_id!r}
 TARGETS=json.loads({payload!r})
 ROOT=Path("/kaggle/input")
-DOWNLOAD_ROOT=Path("/kaggle/working/_phase2_final_evidence_download")
-DOWNLOAD_ROOT.mkdir(parents=True,exist_ok=True)
 METRIC_KEYS=set("""accuracy balanced_accuracy precision recall sensitivity specificity f1 f2 mcc auroc auc auprc average_precision brier ece threshold tn fp fn tp precision_positive recall_positive precision_normal recall_normal macro_precision macro_recall macro_f1""".split())
 POLICY_TOKENS=("locked","external","training","hpo","threshold","fingerprint","split","recipe","status","schema","model","resolution","calibrat")
 
@@ -244,24 +273,14 @@ def resolve_state_root(dataset_ref,version):
     slug=dataset_ref.split("/",1)[1]
     direct=ROOT/slug
     if direct.is_dir():
-        return direct,"MOUNT"
+        return direct,"ATTACHED_DATASET"
     exact=[p for p in ROOT.iterdir() if p.is_dir() and p.name.casefold()==slug.casefold()]
     if len(exact)==1:
-        return exact[0],"MOUNT"
+        return exact[0],"ATTACHED_DATASET"
     fuzzy=[p for p in ROOT.iterdir() if p.is_dir() and slug.casefold() in p.name.casefold()]
     if len(fuzzy)==1:
-        return fuzzy[0],"MOUNT"
-    target=DOWNLOAD_ROOT/(slug+"-v"+str(version))
-    if target.exists():
-        shutil.rmtree(target)
-    target.mkdir(parents=True,exist_ok=True)
-    handle=dataset_ref+"/versions/"+str(version)
-    result=Path(kagglehub.dataset_download(handle,output_dir=str(target),force_download=True))
-    candidates=[target,result]
-    for candidate in candidates:
-        if candidate.is_dir() and any(p.is_file() for p in candidate.rglob("*")):
-            return candidate,"KAGGLEHUB_EXACT_VERSION"
-    raise RuntimeError("DATASET_DOWNLOAD_EMPTY:"+handle)
+        return fuzzy[0],"ATTACHED_DATASET"
+    raise RuntimeError("DATASET_ATTACHMENT_MISSING:"+dataset_ref+":"+str(version)+":"+str(sorted(p.name for p in ROOT.iterdir() if p.is_dir())))
 
 def sha256_file(path):
     h=hashlib.sha256()
@@ -317,15 +336,27 @@ for target in TARGETS:
     }}
     campaign=[p for p in files if p.name=="CAMPAIGN_STATE.json"]
     if len(campaign)==1:
+        observed_campaign_sha=sha256_file(campaign[0])
+        expected_campaign_sha=str(target.get("campaign_marker_sha256") or "")
+        if observed_campaign_sha != expected_campaign_sha:
+            raise RuntimeError("CAMPAIGN_MARKER_SHA_MISMATCH:"+dataset_ref+":"+expected_campaign_sha+":"+observed_campaign_sha)
         cp=read_json_file(campaign[0])
+        expected_receipt=target.get("campaign_receipt_sha256")
+        if expected_receipt is not None and cp.get("receipt_sha256") != expected_receipt:
+            raise RuntimeError("CAMPAIGN_RECEIPT_MISMATCH:"+dataset_ref)
+        if target.get("campaign_status") is not None and cp.get("status") != target.get("campaign_status"):
+            raise RuntimeError("CAMPAIGN_STATUS_MISMATCH:"+dataset_ref)
         row["campaign"]={{
             "schema":cp.get("schema"),
             "status":cp.get("status"),
             "model_id":cp.get("model_id"),
             "resolution":cp.get("resolution"),
             "receipt_sha256":cp.get("receipt_sha256"),
+            "marker_sha256":observed_campaign_sha,
             "artifact_sha256":cp.get("artifact_sha256"),
         }}
+    else:
+        raise RuntimeError("CAMPAIGN_MARKER_COUNT_INVALID:"+dataset_ref+":"+str(len(campaign)))
     archives=[p for p in files if p.name=="FINAL_EVIDENCE.cgpzip"]
     if len(archives)>1:
         raise RuntimeError("FINAL_EVIDENCE_ARCHIVE_AMBIGUOUS:"+dataset_ref)
@@ -408,14 +439,17 @@ def launch_account(action_token: str, read_token: str, run_id: str, account_id: 
     owner = plan["owner"]
     resolved = []
     for model_id, resolution, dataset_ref in plan["targets"]:
-        version = resolve_version(read_token, account_id, dataset_ref)
+        resolved_state = resolve_version(read_token, account_id, dataset_ref)
+        version = int(resolved_state["version"])
         resolved.append(
             {
                 "model_id": model_id,
                 "resolution": resolution,
                 "dataset_ref": dataset_ref,
                 "version": version,
-                "source": f"{dataset_ref}/versions/{version}",
+                "campaign_marker_sha256": resolved_state["campaign_marker_sha256"],
+                "campaign_receipt_sha256": resolved_state["campaign_receipt_sha256"],
+                "campaign_status": resolved_state["campaign_status"],
             }
         )
     slug = f"phase2-final-evidence-{account_id.replace('-', '')}-{run_id}"
@@ -459,27 +493,46 @@ def launch_account(action_token: str, read_token: str, run_id: str, account_id: 
             "isPrivate": True,
             "enableGpu": False,
             "enableTpu": False,
-            "enableInternet": True,
+            "enableInternet": False,
             "kernelDataSources": [],
-            "datasetDataSources": [],
+            "datasetDataSources": [item["dataset_ref"] for item in resolved],
             "competitionDataSources": [],
             "modelDataSources": [],
         },
     }
     result = post_json(ACTION_ENDPOINT, action_token, payload, timeout=240)
-    provider = result.get("result") if isinstance(result.get("result"), dict) else {}
-    error = str(provider.get("error") or result.get("error") or "")
-    if not result.get("ok") or error:
-        raise RuntimeError(f"EXTRACTOR_SAVEKERNEL_REJECTED:{account_id}:{error or result}")
-    invalid_datasets = provider.get("invalidDatasetSources") or []
-    invalid_kernels = provider.get("invalidKernelSources") or []
+    broker = result.get("result") if isinstance(result.get("result"), dict) else {}
+    provider = broker.get("result") if isinstance(broker.get("result"), dict) else {}
+    error = str(
+        broker.get("error")
+        or provider.get("error")
+        or result.get("error")
+        or ""
+    )
+    if not result.get("ok") or not broker.get("ok") or error:
+        raise RuntimeError(
+            f"EXTRACTOR_SAVEKERNEL_REJECTED:{account_id}:{error or result}"
+        )
+    invalid_datasets = (
+        provider.get("invalidDatasetSources")
+        or broker.get("invalidDatasetSources")
+        or []
+    )
+    invalid_kernels = (
+        provider.get("invalidKernelSources")
+        or broker.get("invalidKernelSources")
+        or []
+    )
     if invalid_datasets or invalid_kernels:
         raise RuntimeError(
             f"EXTRACTOR_SAVEKERNEL_SOURCE_REJECTION:{account_id}:"
             f"datasets={invalid_datasets}:kernels={invalid_kernels}"
         )
     ref = normalize_provider_ref(
-        result.get("provider_ref") or provider.get("ref") or expected_ref,
+        broker.get("provider_ref")
+        or result.get("provider_ref")
+        or provider.get("ref")
+        or expected_ref,
         expected_ref,
         owner,
     )
