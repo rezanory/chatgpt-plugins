@@ -112,6 +112,10 @@ ACCOUNT_PLANS = {
 TERMINAL = {"COMPLETE", "ERROR", "CANCELLED"}
 ACTIVE = {"QUEUED", "RUNNING"}
 
+LEGACY_CAMPAIGN_MARKERS = {
+    "rezanory/m07-final-5fold-fix2-d260914d": "M07_CAMPAIGN_STATE.json",
+}
+
 
 def post_json(endpoint: str, token: str, payload: dict, timeout: int = 180) -> dict:
     request = urllib.request.Request(
@@ -154,7 +158,7 @@ def recursive_status(value) -> str:
     return ""
 
 
-def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> int:
+def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> dict:
     # Historical Phase-2 completion was established through account-scoped
     # ListDatasets inventory.  Keep that same proven read path here: some private
     # state datasets return 403 to GetDataset even for their owner account.
@@ -192,6 +196,7 @@ def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> int:
     version = row.get("currentVersionNumber", row.get("current_version_number"))
     if not isinstance(version, int) or version < 1:
         raise RuntimeError(f"DATASET_VERSION_UNRESOLVED:{dataset_ref}")
+    marker_name = LEGACY_CAMPAIGN_MARKERS.get(dataset_ref, "CAMPAIGN_STATE.json")
     marker = post_json(
         READ_ENDPOINT,
         read_token,
@@ -200,7 +205,7 @@ def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> int:
             "account_id": account_id,
             "dataset_ref": dataset_ref,
             "dataset_version_number": version,
-            "file_names": ["CAMPAIGN_STATE.json"],
+            "file_names": [marker_name],
             "max_bytes_per_file": 262144,
         },
         timeout=180,
@@ -219,11 +224,22 @@ def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> int:
     if len(marker_sha256) != 64:
         raise RuntimeError(f"DATASET_MARKER_SHA_INVALID:{dataset_ref}")
     marker_json = marker_files[0]["json"]
+    completed_folds = marker_json.get("completed_folds")
+    derived_status = marker_json.get("status")
+    if (
+        derived_status is None
+        and isinstance(completed_folds, list)
+        and completed_folds == [1, 2, 3, 4, 5]
+    ):
+        derived_status = "COMPLETE"
     return {
         "version": version,
+        "campaign_marker_name": marker_name,
         "campaign_marker_sha256": marker_sha256,
         "campaign_receipt_sha256": marker_json.get("receipt_sha256"),
-        "campaign_status": marker_json.get("status"),
+        "campaign_status": derived_status,
+        "campaign_split_fingerprint": marker_json.get("split_fingerprint"),
+        "campaign_completed_folds": completed_folds,
     }
 
 def kernel_script(account_id: str, targets: list[dict]) -> str:
@@ -334,7 +350,8 @@ for target in TARGETS:
         "archive":None,
         "json_sources":[],
     }}
-    campaign=[p for p in files if p.name=="CAMPAIGN_STATE.json"]
+    campaign_marker_name=str(target.get("campaign_marker_name") or "CAMPAIGN_STATE.json")
+    campaign=[p for p in files if p.name==campaign_marker_name]
     if len(campaign)==1:
         observed_campaign_sha=sha256_file(campaign[0])
         expected_campaign_sha=str(target.get("campaign_marker_sha256") or "")
@@ -344,14 +361,27 @@ for target in TARGETS:
         expected_receipt=target.get("campaign_receipt_sha256")
         if expected_receipt is not None and cp.get("receipt_sha256") != expected_receipt:
             raise RuntimeError("CAMPAIGN_RECEIPT_MISMATCH:"+dataset_ref)
-        if target.get("campaign_status") is not None and cp.get("status") != target.get("campaign_status"):
+        expected_status=target.get("campaign_status")
+        observed_status=cp.get("status")
+        if observed_status is None and cp.get("completed_folds")==[1,2,3,4,5]:
+            observed_status="COMPLETE"
+        if expected_status is not None and observed_status != expected_status:
             raise RuntimeError("CAMPAIGN_STATUS_MISMATCH:"+dataset_ref)
+        expected_split=target.get("campaign_split_fingerprint")
+        if expected_split is not None and cp.get("split_fingerprint") != expected_split:
+            raise RuntimeError("CAMPAIGN_SPLIT_FINGERPRINT_MISMATCH:"+dataset_ref)
+        expected_completed=target.get("campaign_completed_folds")
+        if expected_completed is not None and cp.get("completed_folds") != expected_completed:
+            raise RuntimeError("CAMPAIGN_COMPLETED_FOLDS_MISMATCH:"+dataset_ref)
         row["campaign"]={{
+            "marker_name":campaign_marker_name,
             "schema":cp.get("schema"),
-            "status":cp.get("status"),
+            "status":observed_status,
             "model_id":cp.get("model_id"),
             "resolution":cp.get("resolution"),
             "receipt_sha256":cp.get("receipt_sha256"),
+            "split_fingerprint":cp.get("split_fingerprint"),
+            "completed_folds":cp.get("completed_folds"),
             "marker_sha256":observed_campaign_sha,
             "artifact_sha256":cp.get("artifact_sha256"),
         }}
@@ -447,9 +477,12 @@ def launch_account(action_token: str, read_token: str, run_id: str, account_id: 
                 "resolution": resolution,
                 "dataset_ref": dataset_ref,
                 "version": version,
+                "campaign_marker_name": resolved_state["campaign_marker_name"],
                 "campaign_marker_sha256": resolved_state["campaign_marker_sha256"],
                 "campaign_receipt_sha256": resolved_state["campaign_receipt_sha256"],
                 "campaign_status": resolved_state["campaign_status"],
+                "campaign_split_fingerprint": resolved_state["campaign_split_fingerprint"],
+                "campaign_completed_folds": resolved_state["campaign_completed_folds"],
             }
         )
     slug = f"phase2-final-evidence-{account_id.replace('-', '')}-{run_id}"

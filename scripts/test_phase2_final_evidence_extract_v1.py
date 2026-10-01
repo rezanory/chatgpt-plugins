@@ -38,9 +38,12 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
             "resolution": 384,
             "dataset_ref": "reyhanehazad/pneumonia-m04-r384-state-v1-7",
             "version": 6,
+            "campaign_marker_name": "CAMPAIGN_STATE.json",
             "campaign_marker_sha256": "a" * 64,
             "campaign_receipt_sha256": "b" * 64,
             "campaign_status": "COMPLETE",
+            "campaign_split_fingerprint": None,
+            "campaign_completed_folds": None,
         }
         source = MODULE.kernel_script("kg-04", [target])
         compile(source, "<phase2-final-evidence-kernel>", "exec")
@@ -48,15 +51,16 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         self.assertIn("FOLD_[1-5]_RECOVERY", source)
         self.assertIn("ATTACHED_DATASET", source)
         self.assertIn("CAMPAIGN_MARKER_SHA_MISMATCH", source)
+        self.assertIn("CAMPAIGN_SPLIT_FINGERPRINT_MISMATCH", source)
+        self.assertIn("CAMPAIGN_COMPLETED_FOLDS_MISMATCH", source)
         self.assertNotIn("kagglehub.dataset_download", source)
-        self.assertNotIn("KAGGLEHUB_EXACT_VERSION", source)
         self.assertIn("training_performed", source)
         self.assertNotIn("tensorflow", source.lower())
         self.assertNotIn("torch.", source.lower())
         self.assertNotIn(".fit(", source)
         self.assertNotIn("optimizer", source.lower())
 
-    def test_resolve_version_and_marker_use_exact_dataset_version(self):
+    def test_resolve_standard_marker_uses_exact_dataset_version(self):
         calls = []
         original = MODULE.post_json
         marker_sha = "c" * 64
@@ -99,14 +103,62 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
                 "reyhanehazad/pneumonia-m04-r384-state-v1-7",
             )
             self.assertEqual(resolved["version"], 6)
+            self.assertEqual(resolved["campaign_marker_name"], "CAMPAIGN_STATE.json")
             self.assertEqual(resolved["campaign_marker_sha256"], marker_sha)
             self.assertEqual(resolved["campaign_receipt_sha256"], "d" * 64)
             self.assertEqual(resolved["campaign_status"], "COMPLETE")
             self.assertEqual(len(calls), 2)
-            self.assertEqual(calls[0]["method"], "ListDatasets")
-            self.assertEqual(calls[1]["action"], "dataset_json_files")
             self.assertEqual(calls[1]["dataset_version_number"], 6)
             self.assertEqual(calls[1]["file_names"], ["CAMPAIGN_STATE.json"])
+        finally:
+            MODULE.post_json = original
+
+    def test_resolve_legacy_m07_marker_derives_complete_from_five_folds(self):
+        calls = []
+        original = MODULE.post_json
+        marker_sha = "e" * 64
+        split = "896491de87f9dc2a1d7d63548b7c5c22206da11f27a37efece8efc8e1557c8a9"
+        ref = "rezanory/m07-final-5fold-fix2-d260914d"
+        try:
+            def fake_post(endpoint, token, payload, timeout=180):
+                calls.append(payload)
+                if payload.get("action") == "raw_read":
+                    return {
+                        "ok": True,
+                        "result": {
+                            "datasets": [
+                                {"ref": ref, "currentVersionNumber": 108}
+                            ]
+                        },
+                    }
+                if payload.get("action") == "dataset_json_files":
+                    return {
+                        "ok": True,
+                        "result": {
+                            "files": [
+                                {
+                                    "sha256": marker_sha,
+                                    "json": {
+                                        "schema": "m07.persistence.state.run_safe.v1.6",
+                                        "split_fingerprint": split,
+                                        "completed_folds": [1, 2, 3, 4, 5],
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                raise AssertionError(payload)
+
+            MODULE.post_json = fake_post
+            resolved = MODULE.resolve_version("token", "kg-03", ref)
+            self.assertEqual(resolved["version"], 108)
+            self.assertEqual(resolved["campaign_marker_name"], "M07_CAMPAIGN_STATE.json")
+            self.assertEqual(resolved["campaign_marker_sha256"], marker_sha)
+            self.assertIsNone(resolved["campaign_receipt_sha256"])
+            self.assertEqual(resolved["campaign_status"], "COMPLETE")
+            self.assertEqual(resolved["campaign_split_fingerprint"], split)
+            self.assertEqual(resolved["campaign_completed_folds"], [1, 2, 3, 4, 5])
+            self.assertEqual(calls[1]["file_names"], ["M07_CAMPAIGN_STATE.json"])
         finally:
             MODULE.post_json = original
 
@@ -117,6 +169,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
             source,
         )
         self.assertIn('"enableInternet": False', source)
+        self.assertIn("campaign_marker_name", source)
         self.assertIn("campaign_marker_sha256", source)
         self.assertIn("invalidDatasetSources", source)
         self.assertIn('broker.get("provider_ref")', source)
