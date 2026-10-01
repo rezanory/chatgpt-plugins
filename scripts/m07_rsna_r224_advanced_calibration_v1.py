@@ -137,6 +137,18 @@ def beta_features(score: float) -> tuple[float, float, float]:
 def fit_beta(rows: list[dict], l2: float = 1e-3) -> dict:
     weights = prior.patient_weights(rows)
     theta = [1.0, 1.0, 0.0]
+
+    def objective(params: list[float]) -> float:
+        total = 0.5 * l2 * (params[0] ** 2 + params[1] ** 2)
+        for row, weight in zip(rows, weights):
+            features = beta_features(float(row["score"]))
+            y = float(row["label"])
+            z = sum(params[j] * features[j] for j in range(3))
+            p = clamp_prob(prior.sigmoid(z))
+            total += -weight * (y * math.log(p) + (1.0 - y) * math.log(1.0 - p))
+        return total
+
+    current = objective(theta)
     for _ in range(100):
         gradient = [l2 * theta[0], l2 * theta[1], 0.0]
         hessian = [[0.0] * 3 for _ in range(3)]
@@ -153,17 +165,35 @@ def fit_beta(rows: list[dict], l2: float = 1e-3) -> dict:
                 gradient[j] += weight * error * features[j]
                 for k in range(3):
                     hessian[j][k] += weight * curvature * features[j] * features[k]
+
         delta = solve3(hessian, gradient)
         if delta is None:
             break
-        max_step = max(abs(value) for value in delta)
-        theta = [
-            max(-20.0, min(20.0, theta[j] - delta[j]))
-            for j in range(3)
-        ]
-        if max_step < 1e-8:
+        if max(abs(value) for value in delta) < 1e-8:
             break
-    return {"a": theta[0], "b": theta[1], "c": theta[2], "l2": l2}
+
+        step = 1.0
+        accepted = False
+        while step >= 1e-6:
+            candidate = [theta[j] - step * delta[j] for j in range(3)]
+            value = objective(candidate)
+            if math.isfinite(value) and value < current - 1e-12:
+                theta = candidate
+                current = value
+                accepted = True
+                break
+            step *= 0.5
+        if not accepted:
+            break
+
+    return {
+        "a": theta[0],
+        "b": theta[1],
+        "c": theta[2],
+        "l2": l2,
+        "objective": current,
+        "solver": "damped_newton_backtracking",
+    }
 
 
 def apply_beta(rows: list[dict], params: dict) -> list[dict]:
