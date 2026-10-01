@@ -155,7 +155,9 @@ jobs:
                 "- Read only: `true`\n- Cloudflare deploy: `false`\n"
                 "- Kaggle compute launched: `false`\n\n```json\n"+raw+"\n```")
           payload=json.dumps({'body':body},ensure_ascii=True).encode('utf-8')
-          event=json.loads(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))\n          issue=int(event["issue"]["number"])\n          url=f"https://api.github.com/repos/{os.environ[\'GITHUB_REPOSITORY\']}/issues/{issue}/comments"
+          event=json.loads(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+          issue=int(event["issue"]["number"])
+          url=f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/{issue}/comments"
           req=urllib.request.Request(url,data=payload,method='POST',headers={
               'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],
               'Accept':'application/vnd.github+json',
