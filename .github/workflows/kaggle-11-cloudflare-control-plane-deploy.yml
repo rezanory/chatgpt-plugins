@@ -34,7 +34,7 @@ jobs:
           $ErrorActionPreference='Stop'
           $nodeVersion=& node --version
           if($LASTEXITCODE -ne 0 -or -not $nodeVersion){throw 'preinstalled Node unavailable'}
-          $major=[int](($nodeVersion.TrimStart('v') -split '\\.')[0])
+          $major=[int](($nodeVersion.TrimStart('v') -split '\.')[0])
           if($major -lt 22){throw "Node 22+ required; found $nodeVersion"}
           $npmVersion=& npm --version
           if($LASTEXITCODE -ne 0 -or -not $npmVersion){throw 'preinstalled npm unavailable'}
