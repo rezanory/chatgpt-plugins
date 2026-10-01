@@ -128,6 +128,14 @@ The tested deterministic intensity TTA and lung-focused crops did not recover th
 
 Therefore these methods are not candidates for the final combined operating point.
 
+## Domain harmonization literature context
+
+Simple intensity normalization can reduce acquisition-style differences, but histogram equalization is not uniformly beneficial. Recent chest-X-ray preprocessing work has shown that histogram equalization can materially alter external generalization and, in some settings, worsen it when used as a stand-alone normalization step. Therefore the active harmonization lane should be interpreted as an empirical stress test rather than an assumed improvement.
+
+References:
+- Dapamede T et al. DICOM LUT is a Key Step in Medical Image Preprocessing Towards AI Generalizability. J Imaging Inform Med. 2025. https://pubmed.ncbi.nlm.nih.gov/39890738/
+- Recalibration of deep learning models for abnormality detection in smartphone-captured chest radiograph. npj Digit Med. 2021. https://www.nature.com/articles/s41746-021-00393-9
+
 ## Current synthesis
 
 Evidence supports the following ordering of hypotheses:
