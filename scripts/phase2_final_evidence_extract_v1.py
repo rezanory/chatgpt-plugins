@@ -285,25 +285,56 @@ def summarize_json(value):
     walk(value,"")
     return {{"metric_blocks":metric_blocks,"policy_paths":policy_paths}}
 
-def resolve_state_root(dataset_ref,version):
-    slug=dataset_ref.split("/",1)[1]
-    direct=ROOT/slug
-    if direct.is_dir():
-        return direct,"ATTACHED_DATASET"
-    exact=[p for p in ROOT.iterdir() if p.is_dir() and p.name.casefold()==slug.casefold()]
-    if len(exact)==1:
-        return exact[0],"ATTACHED_DATASET"
-    fuzzy=[p for p in ROOT.iterdir() if p.is_dir() and slug.casefold() in p.name.casefold()]
-    if len(fuzzy)==1:
-        return fuzzy[0],"ATTACHED_DATASET"
-    raise RuntimeError("DATASET_ATTACHMENT_MISSING:"+dataset_ref+":"+str(version)+":"+str(sorted(p.name for p in ROOT.iterdir() if p.is_dir())))
-
 def sha256_file(path):
     h=hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda:f.read(8*1024*1024),b""):
             h.update(chunk)
     return h.hexdigest()
+
+def resolve_state_root(target):
+    dataset_ref=str(target["dataset_ref"])
+    version=int(target["version"])
+    marker_name=str(target.get("campaign_marker_name") or "CAMPAIGN_STATE.json")
+    expected_marker_sha=str(target.get("campaign_marker_sha256") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}",expected_marker_sha):
+        raise RuntimeError("CAMPAIGN_MARKER_EXPECTED_SHA_INVALID:"+dataset_ref)
+
+    slug=dataset_ref.split("/",1)[1]
+    direct=ROOT/slug
+    if direct.is_dir():
+        direct_markers=[p for p in direct.rglob(marker_name) if p.is_file()]
+        if len(direct_markers)==1 and sha256_file(direct_markers[0])==expected_marker_sha:
+            return direct_markers[0].parent,"ATTACHED_DATASET_DIRECT_SHA"
+
+    marker_candidates=[]
+    scanned=0
+    for marker in ROOT.rglob(marker_name):
+        if not marker.is_file():
+            continue
+        scanned+=1
+        if scanned>200:
+            raise RuntimeError("DATASET_MARKER_SCAN_BOUND_EXCEEDED:"+dataset_ref)
+        if sha256_file(marker)==expected_marker_sha:
+            marker_candidates.append(marker)
+
+    if len(marker_candidates)!=1:
+        raise RuntimeError(
+            "DATASET_ATTACHMENT_MARKER_SHA_MATCH_INVALID:"
+            +dataset_ref+":"+str(version)+":"+str(len(marker_candidates))
+            +":"+str([p.as_posix() for p in marker_candidates[:10]])
+        )
+
+    marker=marker_candidates[0]
+    marker_path=marker.as_posix().casefold()
+    slug_token=slug.casefold()
+    if slug_token not in marker_path:
+        # New Kaggle mount layouts can normalize path components, so SHA is the
+        # authority. Keep this only as diagnostic metadata, never as a selector.
+        access_mode="ATTACHED_DATASET_MARKER_SHA_PATH_NORMALIZED"
+    else:
+        access_mode="ATTACHED_DATASET_MARKER_SHA"
+    return marker.parent,access_mode
 
 def read_json_file(path):
     if path.stat().st_size>2_000_000:
@@ -336,7 +367,7 @@ for target in TARGETS:
     resolution=int(target["resolution"])
     dataset_ref=str(target["dataset_ref"])
     version=int(target["version"])
-    state_root,access_mode=resolve_state_root(dataset_ref,version)
+    state_root,access_mode=resolve_state_root(target)
     files=[p for p in state_root.rglob("*") if p.is_file()]
     if len(files)>5000:
         raise RuntimeError("DATASET_FILE_COUNT_UNBOUNDED:"+dataset_ref)
