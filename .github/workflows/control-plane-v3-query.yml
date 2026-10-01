@@ -757,8 +757,8 @@ jobs:
           action=issue('cgp-control-plane-v3-action')
           read=issue('cgp-control-plane-v3')
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as handle:
-              handle.write('CGP_ACTION_OIDC_TOKEN='+action+'\\n')
-              handle.write('CGP_READ_OIDC_TOKEN='+read+'\\n')
+              print('CGP_ACTION_OIDC_TOKEN='+action, file=handle)
+              print('CGP_READ_OIDC_TOKEN='+read, file=handle)
           PY
 
       - name: Run frozen M07 R224 RSNA harmonization analysis
