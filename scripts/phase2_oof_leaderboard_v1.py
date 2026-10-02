@@ -62,6 +62,11 @@ def _finite_number(value: Any, *, name: str) -> float:
 def _source_priority(source_name: str, path: str) -> int:
     source_upper = source_name.upper()
     path_lower = path.lower()
+    if "M07_OOF_PRIMARY_METRICS.JSON" in source_upper and path in {"$", ""}:
+        # Legacy M07/R224 pre-registered its primary OOF rule as the
+        # fold-specific-threshold metrics file. The global-threshold file is
+        # explicitly secondary and must never displace this source.
+        return 0
     if "OOF_METRICS.JSON" in source_upper and path in {"$", ""}:
         return 0
     if "FINAL_REPORT.JSON" in source_upper and path_lower == "oof":

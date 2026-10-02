@@ -123,6 +123,49 @@ class Phase2OofLeaderboardV1Tests(unittest.TestCase):
         self.assertAlmostEqual(metrics["balanced_accuracy"], 0.81)
         self.assertIn("OOF_METRICS.json", evidence["source"])
 
+    def test_legacy_m07_r224_prefers_primary_fold_threshold_metrics(self):
+        unit = synthetic_unit("M07", 224, 0.70)
+        unit["json_sources"] = [
+            {
+                "source": "file:LIGHT_STATE/M07_OOF_GLOBAL_THRESHOLD_METRICS.json",
+                "metric_blocks": [
+                    {
+                        "path": "$",
+                        "values": {
+                            "balanced_accuracy": 0.91,
+                            "macro_f1": 0.90,
+                            "mcc": 0.82,
+                            "auroc": 0.97,
+                            "recall_normal": 0.89,
+                            "recall_pneumonia": 0.93,
+                        },
+                    }
+                ],
+                "policy_paths": [],
+            },
+            {
+                "source": "file:LIGHT_STATE/M07_OOF_PRIMARY_METRICS.json",
+                "metric_blocks": [
+                    {
+                        "path": "$",
+                        "values": {
+                            "balanced_accuracy": 0.98,
+                            "macro_f1": 0.97,
+                            "mcc": 0.95,
+                            "auroc": 0.99,
+                            "recall_normal": 0.97,
+                            "recall_pneumonia": 0.99,
+                        },
+                    }
+                ],
+                "policy_paths": [],
+            },
+        ]
+        metrics, evidence = MODULE.extract_oof_metrics(unit)
+        self.assertAlmostEqual(metrics["balanced_accuracy"], 0.98)
+        self.assertIn("M07_OOF_PRIMARY_METRICS.json", evidence["source"])
+        self.assertNotIn("GLOBAL_THRESHOLD", evidence["source"])
+
     def test_rejects_locked_test_selection_flag(self):
         unit = synthetic_unit("M01", 224, 0.80)
         unit["json_sources"][0]["policy_paths"][0]["value"] = True
