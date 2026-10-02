@@ -58,6 +58,10 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         self.assertIn('"fold_archives"', source)
         self.assertIn('"receipt_sha256"', source)
         self.assertIn("wanted_policy", source)
+        self.assertIn("CANONICAL_PHASE2_OOF_FROM_SEALED_FOLDS", source)
+        self.assertIn("M07_HIGHRES_VALIDATION_SHA_MISMATCH", source)
+        self.assertIn("average_precision_score", source)
+        self.assertIn("locked_test_used_for_selection", source)
         self.assertNotIn('"members"=', source)
         self.assertIn("ROOT.rglob(marker_name)", source)
         self.assertIn("DATASET_ATTACHMENT_MARKER_SHA_MATCH_INVALID", source)
@@ -204,6 +208,24 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         self.assertEqual(broker["provider"], "kaggle")
         self.assertEqual(provider["versionNumber"], 1)
 
+    def test_read_payload_accepts_direct_and_nested_broker_shapes(self):
+        payload = {"files": [{"file_name": "x.json"}]}
+        direct = {"ok": True, "result": payload}
+        nested = {
+            "ok": True,
+            "provider": "kaggle",
+            "read_only": True,
+            "result": {
+                "ok": True,
+                "provider": "kaggle",
+                "read_only": True,
+                "broker_run_id": "123",
+                "result": payload,
+            },
+        }
+        self.assertEqual(MODULE._read_payload(direct), payload)
+        self.assertEqual(MODULE._read_payload(nested), payload)
+
     def test_reusable_extractor_selects_latest_complete_kernel(self):
         original = MODULE.post_json
         try:
@@ -218,7 +240,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
                                     "status": "ERROR",
                                 },
                                 {
-                                    "ref": "radlinaradlina/phase2-final-evidence-v2-kg-02-36927131810",
+                                    "ref": "radlinaradlina/phase2-final-evidence-kg-02-36927131810",
                                     "status": "COMPLETE",
                                 },
                             ]
@@ -233,7 +255,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
             self.assertIsNotNone(reused)
             self.assertEqual(
                 reused["kernel_ref"],
-                "radlinaradlina/phase2-final-evidence-v2-kg-02-36927131810",
+                "radlinaradlina/phase2-final-evidence-kg-02-36927131810",
             )
             self.assertEqual(reused["status"], "COMPLETE")
             self.assertEqual(reused["source_run_id"], "36927131810")
@@ -276,12 +298,20 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
                 if payload.get("action") == "output_json_files":
                     return {
                         "ok": True,
+                        "provider": "kaggle",
+                        "read_only": True,
                         "result": {
-                            "files": [
-                                {
-                                    "json": {"status": "PASS"},
-                                }
-                            ]
+                            "ok": True,
+                            "provider": "kaggle",
+                            "read_only": True,
+                            "broker_run_id": "nested",
+                            "result": {
+                                "files": [
+                                    {
+                                        "json": {"status": "PASS"},
+                                    }
+                                ]
+                            },
                         },
                     }
                 raise AssertionError(payload)
@@ -307,9 +337,17 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
                 if payload.get("action") == "raw_read" and payload.get("method") == "ListKernelSessionOutput":
                     return {
                         "ok": True,
+                        "provider": "kaggle",
+                        "read_only": True,
                         "result": {
-                            "files": [],
-                            "log": "Traceback (most recent call last):\\nRuntimeError: TEST",
+                            "ok": True,
+                            "provider": "kaggle",
+                            "read_only": True,
+                            "broker_run_id": "nested",
+                            "result": {
+                                "files": [],
+                                "log": "Traceback (most recent call last):\\nRuntimeError: TEST",
+                            },
                         },
                     }
                 raise AssertionError(payload)
