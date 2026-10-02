@@ -53,6 +53,12 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         self.assertIn("CAMPAIGN_MARKER_SHA_MISMATCH", source)
         self.assertIn("CAMPAIGN_SPLIT_FINGERPRINT_MISMATCH", source)
         self.assertIn("CAMPAIGN_COMPLETED_FOLDS_MISMATCH", source)
+        self.assertIn("ACCOUNT_EXTRACT_JSON_SIZE_BOUND_EXCEEDED", source)
+        self.assertIn('"analysis_members"', source)
+        self.assertIn('"fold_archives"', source)
+        self.assertIn('"receipt_sha256"', source)
+        self.assertIn("wanted_policy", source)
+        self.assertNotIn('"members"=', source)
         self.assertIn("ROOT.rglob(marker_name)", source)
         self.assertIn("DATASET_ATTACHMENT_MARKER_SHA_MATCH_INVALID", source)
         self.assertIn("sha256_file(marker)==expected_marker_sha", source)
@@ -173,6 +179,8 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
             '"datasetDataSources": [item["dataset_ref"] for item in resolved]',
             source,
         )
+        self.assertIn("EXTRACTOR_GENERATION", source)
+        self.assertIn("phase2-final-evidence-{EXTRACTOR_GENERATION}", source)
         self.assertIn('"enableInternet": False', source)
         self.assertIn("campaign_marker_name", source)
         self.assertIn("campaign_marker_sha256", source)
@@ -206,11 +214,11 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
                         "result": {
                             "kernels": [
                                 {
-                                    "ref": "radlinaradlina/phase2-final-evidence-kg-02-36923248897",
+                                    "ref": "radlinaradlina/phase2-final-evidence-v2-kg-02-36923248897",
                                     "status": "ERROR",
                                 },
                                 {
-                                    "ref": "radlinaradlina/phase2-final-evidence-kg-02-36927131810",
+                                    "ref": "radlinaradlina/phase2-final-evidence-v2-kg-02-36927131810",
                                     "status": "COMPLETE",
                                 },
                             ]
@@ -225,7 +233,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
             self.assertIsNotNone(reused)
             self.assertEqual(
                 reused["kernel_ref"],
-                "radlinaradlina/phase2-final-evidence-kg-02-36927131810",
+                "radlinaradlina/phase2-final-evidence-v2-kg-02-36927131810",
             )
             self.assertEqual(reused["status"], "COMPLETE")
             self.assertEqual(reused["source_run_id"], "36927131810")
@@ -242,7 +250,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
                         "result": {
                             "kernels": [
                                 {
-                                    "ref": "rezanory/phase2-final-evidence-kg-03-36927131810",
+                                    "ref": "rezanory/phase2-final-evidence-v2-kg-03-36927131810",
                                     "status": "ERROR",
                                 }
                             ]
@@ -282,7 +290,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
             status = MODULE.probe_extractor_status(
                 "token",
                 "kg-09",
-                "mylovevpn1/phase2-final-evidence-kg-09-36927131810",
+                "mylovevpn1/phase2-final-evidence-v2-kg-09-36927131810",
             )
             self.assertEqual(status, "COMPLETE")
         finally:
@@ -310,7 +318,7 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
             status = MODULE.probe_extractor_status(
                 "token",
                 "kg-09",
-                "mylovevpn1/phase2-final-evidence-kg-09-36927131810",
+                "mylovevpn1/phase2-final-evidence-v2-kg-09-36927131810",
             )
             self.assertEqual(status, "ERROR")
         finally:
