@@ -56,6 +56,12 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         self.assertIn("ROOT.rglob(marker_name)", source)
         self.assertIn("DATASET_ATTACHMENT_MARKER_SHA_MATCH_INVALID", source)
         self.assertIn("sha256_file(marker)==expected_marker_sha", source)
+        self.assertIn("PHASE2_SELECTION_PREDICTIONS_", source)
+        self.assertIn("OOF_PREDICTIONS.csv", source)
+        self.assertIn("LOCKED_TEST_PREDICTIONS.csv", source)
+        self.assertIn("BUNDLE_MANIFEST.json", source)
+        self.assertIn("SELECTION_PREDICTION_MEMBERS_MISSING", source)
+        self.assertIn("zipfile.ZIP_DEFLATED", source)
         self.assertNotIn("kagglehub.dataset_download", source)
         self.assertIn("training_performed", source)
         self.assertNotIn("tensorflow", source.lower())
@@ -176,6 +182,14 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         self.assertIn("campaign_marker_sha256", source)
         self.assertIn("invalidDatasetSources", source)
         self.assertIn('broker.get("provider_ref")', source)
+
+    def test_main_exports_verified_selection_bundle_inventory(self):
+        source = inspect.getsource(MODULE.main)
+        self.assertIn("selection_prediction_bundles", source)
+        self.assertIn("ACCOUNT_SELECTION_BUNDLE_MISSING", source)
+        self.assertIn("ACCOUNT_SELECTION_BUNDLE_INVALID", source)
+        self.assertIn("PHASE2_SELECTION_PREDICTIONS_", source)
+        self.assertIn('"kernel_ref"', source)
 
     def test_action_envelope_accepts_direct_and_nested_broker_shapes(self):
         direct = {

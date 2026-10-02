@@ -254,6 +254,60 @@ TARGETS=json.loads({payload!r})
 ROOT=Path("/kaggle/input")
 METRIC_KEYS=set("""accuracy balanced_accuracy precision recall sensitivity specificity f1 f2 mcc auroc auc auprc average_precision brier ece threshold tn fp fn tp precision_positive recall_positive precision_normal recall_normal macro_precision macro_recall macro_f1""".split())
 POLICY_TOKENS=("locked","external","training","hpo","threshold","fingerprint","split","recipe","status","schema","model","resolution","calibrat")
+BUNDLE_NAME="PHASE2_SELECTION_PREDICTIONS_"+ACCOUNT_ID.replace("-","_").upper()+".zip"
+BUNDLE_PATH=Path("/kaggle/working")/BUNDLE_NAME
+BUNDLE_MAX_MEMBER_BYTES=25_000_000
+BUNDLE_ALIASES={{
+    "OOF_PREDICTIONS.csv":{{"OOF_PREDICTIONS.CSV","M07_OOF_PREDICTIONS.CSV"}},
+    "LOCKED_TEST_PREDICTIONS.csv":{{"LOCKED_TEST_PREDICTIONS.CSV","M07_LOCKED_TEST_ENSEMBLE_PREDICTIONS.CSV"}},
+    "FINAL_REPORT.json":{{"FINAL_REPORT.JSON"}},
+}}
+bundle=zipfile.ZipFile(BUNDLE_PATH,"w",compression=zipfile.ZIP_DEFLATED,compresslevel=6)
+bundle_manifest=[]
+
+def bundle_dest(model_id,resolution,canonical_name):
+    return f"{{model_id}}/R{{int(resolution)}}/{{canonical_name}}"
+
+def add_bundle_bytes(model_id,resolution,canonical_name,data,source):
+    if len(data)>BUNDLE_MAX_MEMBER_BYTES:
+        raise RuntimeError("SELECTION_BUNDLE_MEMBER_TOO_LARGE:"+str(source)+":"+str(len(data)))
+    dest=bundle_dest(model_id,resolution,canonical_name)
+    bundle.writestr(dest,data)
+    bundle_manifest.append({{"path":dest,"source":str(source),"bytes":len(data),"sha256":hashlib.sha256(data).hexdigest()}})
+    return dest
+
+def add_selection_from_archive(z,members,model_id,resolution):
+    found=set()
+    for canonical_name,aliases in BUNDLE_ALIASES.items():
+        matches=[name for name in members if Path(name).name.upper() in aliases]
+        if len(matches)>1:
+            raise RuntimeError("SELECTION_ARCHIVE_MEMBER_AMBIGUOUS:"+model_id+":"+str(resolution)+":"+canonical_name+":"+str(matches))
+        if len(matches)==1:
+            info=z.getinfo(matches[0])
+            if info.file_size>BUNDLE_MAX_MEMBER_BYTES:
+                raise RuntimeError("SELECTION_ARCHIVE_MEMBER_TOO_LARGE:"+matches[0]+":"+str(info.file_size))
+            add_bundle_bytes(model_id,resolution,canonical_name,z.read(matches[0]),"archive:"+matches[0])
+            found.add(canonical_name)
+    return found
+
+def add_selection_from_files(files,found,model_id,resolution,state_root):
+    for canonical_name,aliases in BUNDLE_ALIASES.items():
+        if canonical_name in found:
+            continue
+        matches=[path for path in files if path.name.upper() in aliases]
+        if len(matches)>1:
+            raise RuntimeError("SELECTION_DIRECT_MEMBER_AMBIGUOUS:"+model_id+":"+str(resolution)+":"+canonical_name+":"+str([p.as_posix() for p in matches]))
+        if len(matches)==1:
+            path=matches[0]
+            if path.stat().st_size>BUNDLE_MAX_MEMBER_BYTES:
+                raise RuntimeError("SELECTION_DIRECT_MEMBER_TOO_LARGE:"+path.as_posix()+":"+str(path.stat().st_size))
+            add_bundle_bytes(model_id,resolution,canonical_name,path.read_bytes(),"file:"+path.relative_to(state_root).as_posix())
+            found.add(canonical_name)
+    required={{"OOF_PREDICTIONS.csv","LOCKED_TEST_PREDICTIONS.csv"}}
+    missing=required-found
+    if missing:
+        raise RuntimeError("SELECTION_PREDICTION_MEMBERS_MISSING:"+model_id+":"+str(resolution)+":"+str(sorted(missing)))
+    return found
 
 def scalars(d):
     out={{}}
@@ -422,6 +476,7 @@ for target in TARGETS:
     if len(archives)>1:
         raise RuntimeError("FINAL_EVIDENCE_ARCHIVE_AMBIGUOUS:"+dataset_ref)
     sources=[]
+    selection_found=set()
     if archives:
         archive=archives[0]
         row["archive"]={{"name":archive.name,"sha256":sha256_file(archive),"bytes":archive.stat().st_size}}
@@ -429,6 +484,7 @@ for target in TARGETS:
             members=[n for n in z.namelist() if not n.endswith("/")]
             row["archive"]["member_count"]=len(members)
             row["archive"]["members"]=members[:120]
+            selection_found=add_selection_from_archive(z,members,model_id,resolution)
             for name in members:
                 if candidate_name(name):
                     sources.append(("archive:"+name,read_json_member(z,name)))
@@ -447,6 +503,9 @@ for target in TARGETS:
             sources.append(("fold_archive:"+fold_archive.name+":"+completed[0],read_json_member(z,completed[0])))
             fold_record["completed_member"]=completed[0]
         row["fold_archives"].append(fold_record)
+
+    selection_found=add_selection_from_files(files,selection_found,model_id,resolution,state_root)
+    row["selection_bundle_members"]=sorted(selection_found)
 
     for path in files:
         if candidate_name(path.name) and path.name!="CAMPAIGN_STATE.json":
@@ -471,6 +530,19 @@ for target in TARGETS:
         raise RuntimeError("NO_FINAL_JSON_EVIDENCE:"+dataset_ref)
     rows.append(row)
 
+bundle.writestr("BUNDLE_MANIFEST.json",json.dumps({{
+    "schema":"pneumonia.phase2.selection_prediction_bundle.v1",
+    "status":"PASS",
+    "account_id":ACCOUNT_ID,
+    "training_performed":False,
+    "hpo_performed":False,
+    "locked_test_executed":False,
+    "external_validation_executed":False,
+    "files":bundle_manifest,
+}},indent=2,sort_keys=True))
+bundle.close()
+bundle_sha=sha256_file(BUNDLE_PATH)
+
 out={{
     "schema":"pneumonia.phase2.final_evidence.extract.account.v1",
     "status":"PASS",
@@ -479,6 +551,12 @@ out={{
     "hpo_performed":False,
     "locked_test_executed":False,
     "external_validation_executed":False,
+    "selection_prediction_bundle":{{
+        "file_name":BUNDLE_NAME,
+        "sha256":bundle_sha,
+        "bytes":BUNDLE_PATH.stat().st_size,
+        "member_count":len(bundle_manifest)+1,
+    }},
     "targets":rows,
 }}
 name="PHASE2_FINAL_EVIDENCE_"+ACCOUNT_ID.replace("-","_").upper()+".json"
@@ -897,9 +975,40 @@ def main() -> None:
     account_results.sort(key=lambda row: row["account_id"])
 
     units = []
+    selection_bundles = []
+    launch_by_account = {str(row["account_id"]): row for row in launches}
     for account_result in account_results:
+        account_id = str(account_result.get("account_id") or "")
         if account_result.get("status") != "PASS" or account_result.get("training_performed") is not False:
-            raise RuntimeError("ACCOUNT_EXTRACT_RECEIPT_INVALID:" + str(account_result.get("account_id")))
+            raise RuntimeError("ACCOUNT_EXTRACT_RECEIPT_INVALID:" + account_id)
+        bundle = account_result.get("selection_prediction_bundle")
+        if not isinstance(bundle, dict):
+            raise RuntimeError("ACCOUNT_SELECTION_BUNDLE_MISSING:" + account_id)
+        file_name = str(bundle.get("file_name") or "")
+        sha256 = str(bundle.get("sha256") or "")
+        byte_count = bundle.get("bytes")
+        member_count = bundle.get("member_count")
+        expected_name = "PHASE2_SELECTION_PREDICTIONS_" + account_id.replace("-", "_").upper() + ".zip"
+        if (
+            file_name != expected_name
+            or len(sha256) != 64
+            or not isinstance(byte_count, int)
+            or byte_count <= 0
+            or not isinstance(member_count, int)
+            or member_count < 1
+            or account_id not in launch_by_account
+        ):
+            raise RuntimeError("ACCOUNT_SELECTION_BUNDLE_INVALID:" + account_id)
+        selection_bundles.append(
+            {
+                "account_id": account_id,
+                "kernel_ref": str(launch_by_account[account_id]["kernel_ref"]),
+                "file_name": file_name,
+                "sha256": sha256,
+                "bytes": int(byte_count),
+                "member_count": int(member_count),
+            }
+        )
         units.extend(account_result.get("targets") or [])
     expected = {(f"M{index:02d}", resolution) for index in range(1, 13) for resolution in (224, 320, 384)}
     observed = {(str(row.get("model_id")), int(row.get("resolution"))) for row in units}
@@ -923,6 +1032,9 @@ def main() -> None:
         "locked_test_executed": False,
         "external_validation_executed": False,
         "launches": launches,
+        "selection_prediction_bundles": sorted(
+            selection_bundles, key=lambda row: row["account_id"]
+        ),
         "units": sorted(units, key=lambda row: (row["model_id"], row["resolution"])),
     }
     target = pathlib.Path(args.output)
