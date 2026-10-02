@@ -159,6 +159,17 @@ def recursive_status(value) -> str:
     return ""
 
 
+def _read_payload(response: dict) -> dict:
+    """Unwrap direct or nested control-plane read envelopes to provider payload."""
+    current = response if isinstance(response, dict) else {}
+    for _ in range(4):
+        nested = current.get("result")
+        if not isinstance(nested, dict):
+            break
+        current = nested
+    return current
+
+
 def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> dict:
     # Historical Phase-2 completion was established through account-scoped
     # ListDatasets inventory.  Keep that same proven read path here: some private
@@ -182,7 +193,7 @@ def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> dict:
     )
     if not listing.get("ok"):
         raise RuntimeError(f"DATASET_LIST_FAILED:{dataset_ref}:{listing}")
-    rows = (listing.get("result") or {}).get("datasets") or []
+    rows = _read_payload(listing).get("datasets") or []
     exact = [
         row
         for row in rows
@@ -213,7 +224,7 @@ def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> dict:
     )
     if not marker.get("ok"):
         raise RuntimeError(f"DATASET_MARKER_FETCH_FAILED:{dataset_ref}:{marker}")
-    marker_result = marker.get("result") or {}
+    marker_result = _read_payload(marker)
     marker_files = marker_result.get("files") or []
     if (
         len(marker_files) != 1
@@ -225,8 +236,13 @@ def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> dict:
     if len(marker_sha256) != 64:
         raise RuntimeError(f"DATASET_MARKER_SHA_INVALID:{dataset_ref}")
     marker_json = marker_files[0]["json"]
+    marker_contract = marker_json.get("run_contract") if isinstance(marker_json.get("run_contract"), dict) else {}
     completed_folds = marker_json.get("completed_folds")
     derived_status = marker_json.get("status")
+    split_fingerprint = (
+        marker_json.get("split_fingerprint")
+        or marker_contract.get("split_fingerprint")
+    )
     if (
         derived_status is None
         and isinstance(completed_folds, list)
@@ -239,7 +255,7 @@ def resolve_version(read_token: str, account_id: str, dataset_ref: str) -> dict:
         "campaign_marker_sha256": marker_sha256,
         "campaign_receipt_sha256": marker_json.get("receipt_sha256"),
         "campaign_status": derived_status,
-        "campaign_split_fingerprint": marker_json.get("split_fingerprint"),
+        "campaign_split_fingerprint": split_fingerprint,
         "campaign_completed_folds": completed_folds,
     }
 
@@ -248,7 +264,12 @@ def kernel_script(account_id: str, targets: list[dict]) -> str:
     # It only reads already-sealed evidence JSON/CSV metadata from mounted states.
     payload = json.dumps(targets, sort_keys=True, separators=(",", ":"))
     return f'''from pathlib import Path
-import hashlib, json, re, zipfile
+import csv, hashlib, json, math, re, zipfile
+from sklearn.metrics import (
+    accuracy_score, average_precision_score, balanced_accuracy_score,
+    confusion_matrix, f1_score, fbeta_score, matthews_corrcoef,
+    precision_score, recall_score, roc_auc_score,
+)
 
 ACCOUNT_ID={account_id!r}
 TARGETS=json.loads({payload!r})
@@ -364,6 +385,144 @@ def candidate_name(name):
         return False
     return base=="FINAL_REPORT.JSON" or ("OOF" in base and "METRIC" in base)
 
+def canonical_binary_metrics(y,pred,score):
+    cm=confusion_matrix(y,pred,labels=[0,1])
+    tn,fp,fn,tp=[int(v) for v in cm.ravel()]
+    precision_n=precision_score(y,pred,pos_label=0,zero_division=0)
+    precision_p=precision_score(y,pred,pos_label=1,zero_division=0)
+    recall_n=recall_score(y,pred,pos_label=0,zero_division=0)
+    recall_p=recall_score(y,pred,pos_label=1,zero_division=0)
+    f1_n=f1_score(y,pred,pos_label=0,zero_division=0)
+    f1_p=f1_score(y,pred,pos_label=1,zero_division=0)
+    return {{
+        "n":int(len(y)),
+        "accuracy":float(accuracy_score(y,pred)),
+        "balanced_accuracy":float(balanced_accuracy_score(y,pred)),
+        "macro_precision":float(precision_score(y,pred,average="macro",zero_division=0)),
+        "macro_recall":float(recall_score(y,pred,average="macro",zero_division=0)),
+        "macro_f1":float(f1_score(y,pred,average="macro",zero_division=0)),
+        "precision_normal":float(precision_n),
+        "recall_normal":float(recall_n),
+        "f1_normal":float(f1_n),
+        "precision_pneumonia":float(precision_p),
+        "recall_pneumonia":float(recall_p),
+        "f1_pneumonia":float(f1_p),
+        "f2":float(fbeta_score(y,pred,beta=2,pos_label=1,zero_division=0)),
+        "mcc":float(matthews_corrcoef(y,pred)),
+        "tn":tn,"fp":fp,"fn":fn,"tp":tp,
+        "confusion_matrix":cm.tolist(),
+        "auroc":float(roc_auc_score(y,score)),
+        "auprc_pneumonia":float(average_precision_score(y,score)),
+    }}
+
+def reconstruct_m07_highres_oof(files,state_root,dataset_ref,model_id,resolution,expected_split):
+    if model_id!="M07" or resolution not in (320,384):
+        return None,None
+    labels=[]
+    probabilities=[]
+    predictions=[]
+    fold_evidence=[]
+    for fold in range(1,6):
+        fold_token=("FOLD_"+str(fold)+"_RECOVERY").upper()
+        fold_dir_token=("/fold_"+str(fold)+"/").lower()
+        completed=[
+            p for p in files
+            if p.name=="COMPLETED.json"
+            and fold_token in p.as_posix().upper()
+            and fold_dir_token in p.as_posix().lower()
+        ]
+        validation=[
+            p for p in files
+            if p.name=="validation_predictions.csv"
+            and fold_token in p.as_posix().upper()
+            and fold_dir_token in p.as_posix().lower()
+        ]
+        if len(completed)!=1 or len(validation)!=1:
+            raise RuntimeError(
+                "M07_HIGHRES_FOLD_EVIDENCE_COUNT_INVALID:"
+                +dataset_ref+":"+str(fold)+":"+str(len(completed))+":"+str(len(validation))
+            )
+        receipt=read_json_file(completed[0])
+        if (
+            receipt.get("schema")!="pneumonia.phase2.fold.v1.7"
+            or receipt.get("status")!="COMPLETED"
+            or receipt.get("model_id")!="M07"
+            or int(receipt.get("resolution") or 0)!=resolution
+            or int(receipt.get("fold_id") or 0)!=fold
+            or receipt.get("locked_test_used_for_training") is not False
+            or receipt.get("external_used_for_training") is not False
+        ):
+            raise RuntimeError("M07_HIGHRES_FOLD_RECEIPT_POLICY_INVALID:"+dataset_ref+":"+str(fold))
+        if expected_split is not None and receipt.get("split_fingerprint")!=expected_split:
+            raise RuntimeError("M07_HIGHRES_FOLD_SPLIT_MISMATCH:"+dataset_ref+":"+str(fold))
+        receipt_sha=str(receipt.get("receipt_sha256") or "")
+        run_contract=receipt.get("run_contract") or {{}}
+        run_fingerprint=str(receipt.get("run_fingerprint") or "")
+        if (
+            not re.fullmatch(r"[0-9a-f]{{64}}",receipt_sha)
+            or not re.fullmatch(r"[0-9a-f]{{64}}",run_fingerprint)
+            or run_contract.get("stage")!="phase2_fold"
+            or run_contract.get("model_id")!="M07"
+            or int(run_contract.get("resolution") or 0)!=resolution
+            or int(run_contract.get("fold_id") or 0)!=fold
+            or run_contract.get("split_fingerprint")!=expected_split
+            or (run_contract.get("extra") or {{}}).get("campaign_role")!="M07_GATE_MULTIRES"
+        ):
+            raise RuntimeError("M07_HIGHRES_FOLD_CONTRACT_INVALID:"+dataset_ref+":"+str(fold))
+        validation_sha=sha256_file(validation[0])
+        expected_validation_sha=str((receipt.get("artifact_sha256") or {{}}).get("validation_predictions.csv") or "")
+        if validation_sha!=expected_validation_sha:
+            raise RuntimeError("M07_HIGHRES_VALIDATION_SHA_MISMATCH:"+dataset_ref+":"+str(fold))
+        metrics=receipt.get("validation_metrics") or {{}}
+        threshold=float(metrics.get("threshold"))
+        if not math.isfinite(threshold) or not 0.0<=threshold<=1.0:
+            raise RuntimeError("M07_HIGHRES_THRESHOLD_INVALID:"+dataset_ref+":"+str(fold))
+        fold_rows=0
+        with validation[0].open("r",encoding="utf-8",newline="") as handle:
+            reader=csv.DictReader(handle)
+            required={{"patient_id","label","probability_pneumonia"}}
+            if not required.issubset(set(reader.fieldnames or [])):
+                raise RuntimeError("M07_HIGHRES_VALIDATION_COLUMNS_INVALID:"+dataset_ref+":"+str(fold))
+            for item in reader:
+                patient_id=str(item.get("patient_id") or "").strip()
+                if not patient_id:
+                    raise RuntimeError("M07_HIGHRES_PATIENT_ID_EMPTY:"+dataset_ref+":"+str(fold))
+                label=int(item["label"])
+                probability=float(item["probability_pneumonia"])
+                if label not in (0,1) or not math.isfinite(probability) or not 0.0<=probability<=1.0:
+                    raise RuntimeError("M07_HIGHRES_VALIDATION_VALUE_INVALID:"+dataset_ref+":"+str(fold))
+                labels.append(label)
+                probabilities.append(probability)
+                predictions.append(int(probability>=threshold))
+                fold_rows+=1
+        if fold_rows<1:
+            raise RuntimeError("M07_HIGHRES_VALIDATION_EMPTY:"+dataset_ref+":"+str(fold))
+        fold_evidence.append({{
+            "fold_id":fold,
+            "completed_path":completed[0].relative_to(state_root).as_posix(),
+            "validation_predictions_path":validation[0].relative_to(state_root).as_posix(),
+            "completed_sha256":sha256_file(completed[0]),
+            "validation_predictions_sha256":validation_sha,
+            "receipt_sha256":receipt_sha,
+            "run_fingerprint":run_fingerprint,
+            "threshold":threshold,
+            "rows":fold_rows,
+        }})
+    if len(labels)<2 or len(set(labels))!=2:
+        raise RuntimeError("M07_HIGHRES_OOF_CLASS_COVERAGE_INVALID:"+dataset_ref)
+    metrics=canonical_binary_metrics(labels,predictions,probabilities)
+    derived={{
+        "schema":"pneumonia.phase2.oof.reconstructed_from_sealed_folds.v1",
+        "status":"PASS",
+        "model_id":"M07",
+        "resolution":resolution,
+        "reconstruction_method":"CANONICAL_PHASE2_OOF_FROM_SEALED_FOLDS",
+        "locked_test_used_for_selection":False,
+        "external_used_for_selection":False,
+        **metrics,
+    }}
+    return derived,fold_evidence
+
 rows=[]
 for target in TARGETS:
     model_id=str(target["model_id"])
@@ -402,7 +561,10 @@ for target in TARGETS:
         if expected_status is not None and observed_status != expected_status:
             raise RuntimeError("CAMPAIGN_STATUS_MISMATCH:"+dataset_ref)
         expected_split=target.get("campaign_split_fingerprint")
-        if expected_split is not None and cp.get("split_fingerprint") != expected_split:
+        observed_split=cp.get("split_fingerprint")
+        if observed_split is None and isinstance(cp.get("run_contract"),dict):
+            observed_split=cp["run_contract"].get("split_fingerprint")
+        if expected_split is not None and observed_split != expected_split:
             raise RuntimeError("CAMPAIGN_SPLIT_FINGERPRINT_MISMATCH:"+dataset_ref)
         expected_completed=target.get("campaign_completed_folds")
         if expected_completed is not None and cp.get("completed_folds") != expected_completed:
@@ -414,7 +576,7 @@ for target in TARGETS:
             "model_id":cp.get("model_id"),
             "resolution":cp.get("resolution"),
             "receipt_sha256":cp.get("receipt_sha256"),
-            "split_fingerprint":cp.get("split_fingerprint"),
+            "split_fingerprint":observed_split,
             "completed_folds":cp.get("completed_folds"),
             "marker_sha256":observed_campaign_sha,
             "artifact_sha256":cp.get("artifact_sha256"),
@@ -471,6 +633,12 @@ for target in TARGETS:
         for path in files:
             if path.suffix.lower()==".json" and ("REPORT" in path.name.upper() or "OOF" in path.name.upper()):
                 sources.append(("file:"+path.relative_to(state_root).as_posix(),read_json_file(path)))
+    if not sources and model_id=="M07" and resolution in (320,384):
+        derived,fold_evidence=reconstruct_m07_highres_oof(
+            files,state_root,dataset_ref,model_id,resolution,target.get("campaign_split_fingerprint")
+        )
+        row["m07_highres_fold_evidence"]=fold_evidence
+        sources.append(("derived:OOF_METRICS.json",derived))
     for source_name,value in sources[:6]:
         summary=summarize_json(value)
         row["json_sources"].append({{
@@ -583,7 +751,7 @@ def probe_extractor_status(
         timeout=120,
     )
     if receipt_response.get("ok"):
-        receipt_result = receipt_response.get("result") or {}
+        receipt_result = _read_payload(receipt_response)
         receipt_files = receipt_result.get("files") or []
         if (
             len(receipt_files) == 1
@@ -611,7 +779,7 @@ def probe_extractor_status(
         timeout=120,
     )
     if output_response.get("ok"):
-        output_result = output_response.get("result") or {}
+        output_result = _read_payload(output_response)
         names = {
             str(item.get("fileName") or "").split("/")[-1]
             for item in (output_result.get("files") or [])
@@ -637,7 +805,6 @@ def reusable_extractor(
     account_id: str,
     owner: str,
 ) -> dict | None:
-    search = f"phase2-final-evidence-{EXTRACTOR_GENERATION}-{account_id}"
     listing = post_json(
         READ_ENDPOINT,
         read_token,
@@ -649,7 +816,7 @@ def reusable_extractor(
             "body": {
                 "group": "PROFILE",
                 "user": owner,
-                "search": f"phase2-final-evidence-{EXTRACTOR_GENERATION}",
+                "search": "phase2-final-evidence",
                 "sortBy": "DATE_RUN",
                 "page": 1,
                 "pageSize": 100,
@@ -659,7 +826,7 @@ def reusable_extractor(
     )
     if not listing.get("ok"):
         raise RuntimeError(f"EXTRACTOR_HISTORY_LIST_FAILED:{account_id}:{listing}")
-    result = listing.get("result") or {}
+    result = _read_payload(listing)
     kernels = result.get("kernels") or []
     account_tokens = {account_id.casefold(), account_id.replace("-", "").casefold()}
     candidates = []
@@ -672,12 +839,18 @@ def reusable_extractor(
         slug = ref.split("/", 1)[1]
         match = None
         for token in account_tokens:
-            prefix = f"phase2-final-evidence-{EXTRACTOR_GENERATION}-{token}-"
-            if slug.casefold().startswith(prefix):
-                suffix = slug[len(prefix):]
-                if suffix.isdigit():
-                    match = int(suffix)
-                    break
+            prefixes = (
+                f"phase2-final-evidence-{EXTRACTOR_GENERATION}-{token}-",
+                f"phase2-final-evidence-{token}-",
+            )
+            for prefix in prefixes:
+                if slug.casefold().startswith(prefix):
+                    suffix = slug[len(prefix):]
+                    if suffix.isdigit():
+                        match = int(suffix)
+                        break
+            if match is not None:
+                break
         if match is None:
             continue
         candidates.append((match, ref, item))
@@ -843,7 +1016,7 @@ def fetch_account_result(read_token: str, item: dict) -> dict:
     )
     if not response.get("ok"):
         raise RuntimeError(f"EXTRACTOR_OUTPUT_FETCH_FAILED:{account_id}:{response}")
-    result = response.get("result") or {}
+    result = _read_payload(response)
     files = result.get("files") or []
     if len(files) != 1 or not isinstance(files[0].get("json"), dict):
         raise RuntimeError(f"EXTRACTOR_OUTPUT_SHAPE_INVALID:{account_id}")
