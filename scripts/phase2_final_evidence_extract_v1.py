@@ -111,6 +111,7 @@ ACCOUNT_PLANS = {
 
 TERMINAL = {"COMPLETE", "ERROR", "CANCELLED"}
 ACTIVE = {"QUEUED", "RUNNING"}
+EXTRACTOR_GENERATION = "v2"
 
 LEGACY_CAMPAIGN_MARKERS = {
     "rezanory/m07-final-5fold-fix2-d260914d": "M07_CAMPAIGN_STATE.json",
@@ -636,7 +637,7 @@ def reusable_extractor(
     account_id: str,
     owner: str,
 ) -> dict | None:
-    search = f"phase2-final-evidence-{account_id}"
+    search = f"phase2-final-evidence-{EXTRACTOR_GENERATION}-{account_id}"
     listing = post_json(
         READ_ENDPOINT,
         read_token,
@@ -648,7 +649,7 @@ def reusable_extractor(
             "body": {
                 "group": "PROFILE",
                 "user": owner,
-                "search": "phase2-final-evidence",
+                "search": f"phase2-final-evidence-{EXTRACTOR_GENERATION}",
                 "sortBy": "DATE_RUN",
                 "page": 1,
                 "pageSize": 100,
@@ -671,7 +672,7 @@ def reusable_extractor(
         slug = ref.split("/", 1)[1]
         match = None
         for token in account_tokens:
-            prefix = f"phase2-final-evidence-{token}-"
+            prefix = f"phase2-final-evidence-{EXTRACTOR_GENERATION}-{token}-"
             if slug.casefold().startswith(prefix):
                 suffix = slug[len(prefix):]
                 if suffix.isdigit():
@@ -748,11 +749,11 @@ def launch_account(action_token: str, read_token: str, run_id: str, account_id: 
         }
 
     slug_token = "master" if account_id == "master" else account_id
-    slug = f"phase2-final-evidence-{slug_token}-{run_id}"
+    slug = f"phase2-final-evidence-{EXTRACTOR_GENERATION}-{slug_token}-{run_id}"
     expected_ref = f"{owner}/{slug}"
 
     payload = {
-        "request_id": f"phase2-final-evidence-{account_id}-{run_id}",
+        "request_id": f"phase2-final-evidence-{EXTRACTOR_GENERATION}-{account_id}-{run_id}",
         "provider": "kaggle",
         "operation_class": "compute",
         "account_id": account_id,
