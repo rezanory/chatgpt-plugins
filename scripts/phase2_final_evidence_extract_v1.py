@@ -297,7 +297,7 @@ def resolve_state_root(target):
     version=int(target["version"])
     marker_name=str(target.get("campaign_marker_name") or "CAMPAIGN_STATE.json")
     expected_marker_sha=str(target.get("campaign_marker_sha256") or "")
-    if not re.fullmatch(r"[0-9a-f]{64}",expected_marker_sha):
+    if not re.fullmatch(r"[0-9a-f]{{64}}",expected_marker_sha):
         raise RuntimeError("CAMPAIGN_MARKER_EXPECTED_SHA_INVALID:"+dataset_ref)
 
     slug=dataset_ref.split("/",1)[1]
