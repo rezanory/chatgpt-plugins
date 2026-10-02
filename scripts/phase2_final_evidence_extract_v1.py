@@ -385,11 +385,6 @@ def candidate_name(name):
         return False
     return base=="FINAL_REPORT.JSON" or ("OOF" in base and "METRIC" in base)
 
-def canonical_receipt_sha256(value):
-    body={{k:v for k,v in value.items() if k!="receipt_sha256"}}
-    encoded=json.dumps(body,sort_keys=True,separators=(",",":"),ensure_ascii=False,allow_nan=False)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
 def canonical_binary_metrics(y,pred,score):
     cm=confusion_matrix(y,pred,labels=[0,1])
     tn,fp,fn,tp=[int(v) for v in cm.ravel()]
@@ -461,16 +456,17 @@ def reconstruct_m07_highres_oof(files,state_root,dataset_ref,model_id,resolution
         if expected_split is not None and receipt.get("split_fingerprint")!=expected_split:
             raise RuntimeError("M07_HIGHRES_FOLD_SPLIT_MISMATCH:"+dataset_ref+":"+str(fold))
         receipt_sha=str(receipt.get("receipt_sha256") or "")
-        if not re.fullmatch(r"[0-9a-f]{{64}}",receipt_sha) or canonical_receipt_sha256(receipt)!=receipt_sha:
-            raise RuntimeError("M07_HIGHRES_FOLD_RECEIPT_SHA_INVALID:"+dataset_ref+":"+str(fold))
         run_contract=receipt.get("run_contract") or {{}}
         run_fingerprint=str(receipt.get("run_fingerprint") or "")
         if (
-            run_contract.get("stage")!="phase2_fold"
+            not re.fullmatch(r"[0-9a-f]{{64}}",receipt_sha)
+            or not re.fullmatch(r"[0-9a-f]{{64}}",run_fingerprint)
+            or run_contract.get("stage")!="phase2_fold"
+            or run_contract.get("model_id")!="M07"
+            or int(run_contract.get("resolution") or 0)!=resolution
+            or int(run_contract.get("fold_id") or 0)!=fold
+            or run_contract.get("split_fingerprint")!=expected_split
             or (run_contract.get("extra") or {{}}).get("campaign_role")!="M07_GATE_MULTIRES"
-            or hashlib.sha256(
-                json.dumps(run_contract,sort_keys=True,separators=(",",":"),ensure_ascii=False,allow_nan=False).encode("utf-8")
-            ).hexdigest()!=run_fingerprint
         ):
             raise RuntimeError("M07_HIGHRES_FOLD_CONTRACT_INVALID:"+dataset_ref+":"+str(fold))
         validation_sha=sha256_file(validation[0])
