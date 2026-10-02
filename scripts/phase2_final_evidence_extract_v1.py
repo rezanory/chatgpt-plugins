@@ -263,24 +263,34 @@ def scalars(d):
     return out
 
 def summarize_json(value):
+    # Keep only the development OOF block and the two selection-policy flags.
+    # Full sealed artifacts remain attested by their hashes; this bounded summary
+    # is intentionally small enough for the read broker JSON ceiling.
     metric_blocks=[]
     policy_paths=[]
+    wanted_policy={{
+        "locked_test_used_for_selection",
+        "external_used_for_selection",
+    }}
     def walk(x,path):
         if isinstance(x,dict):
             keys=set(str(k).lower() for k in x)
             hit=sorted(keys & METRIC_KEYS)
-            if len(hit)>=2 and len(metric_blocks)<80:
+            path_lower=path.lower()
+            is_oof=(path in ("","$") or path_lower=="oof" or path_lower.endswith(".oof"))
+            if is_oof and len(hit)>=2 and len(metric_blocks)<4:
                 block=scalars(x)
                 if block:
                     metric_blocks.append({{"path":path or "$","values":block}})
             for k,v in x.items():
                 kp=f"{{path}}.{{k}}" if path else str(k)
                 lk=str(k).lower()
-                if any(tok in lk for tok in POLICY_TOKENS) and isinstance(v,(str,int,float,bool,type(None))) and len(policy_paths)<60:
+                if lk in wanted_policy and isinstance(v,(str,int,float,bool,type(None))):
                     policy_paths.append({{"path":kp,"value":v}})
-                walk(v,kp)
+                if isinstance(v,(dict,list)):
+                    walk(v,kp)
         elif isinstance(x,list):
-            for i,v in enumerate(x[:100]):
+            for i,v in enumerate(x[:20]):
                 walk(v,f"{{path}}[{{i}}]")
     walk(value,"")
     return {{"metric_blocks":metric_blocks,"policy_paths":policy_paths}}
@@ -351,15 +361,7 @@ def candidate_name(name):
     base=Path(name).name.upper()
     if not base.endswith(".JSON"):
         return False
-    return (
-        base=="FINAL_REPORT.JSON"
-        or ("OOF" in base and "METRIC" in base)
-        or "CALIBRAT" in base
-        or "LOCKED" in base
-        or "TERMINAL" in base
-        or "RECEIPT" in base
-        or base=="COMPLETED.JSON"
-    )
+    return base=="FINAL_REPORT.JSON" or ("OOF" in base and "METRIC" in base)
 
 rows=[]
 for target in TARGETS:
@@ -428,10 +430,11 @@ for target in TARGETS:
         with zipfile.ZipFile(archive) as z:
             members=[n for n in z.namelist() if not n.endswith("/")]
             row["archive"]["member_count"]=len(members)
-            row["archive"]["members"]=members[:120]
-            for name in members:
-                if candidate_name(name):
-                    sources.append(("archive:"+name,read_json_member(z,name)))
+            row["archive"]["analysis_members"]=[
+                name for name in members if candidate_name(name)
+            ][:8]
+            for name in row["archive"]["analysis_members"]:
+                sources.append(("archive:"+name,read_json_member(z,name)))
 
     fold_archives=sorted(
         [p for p in files if re.fullmatch(r"FOLD_[1-5]_RECOVERY\\.cgpzip",p.name)],
@@ -444,8 +447,17 @@ for target in TARGETS:
             completed=[n for n in z.namelist() if Path(n).name=="COMPLETED.json"]
             if len(completed)!=1:
                 raise RuntimeError("FOLD_COMPLETED_RECEIPT_COUNT_INVALID:"+dataset_ref+":"+fold_archive.name+":"+str(len(completed)))
-            sources.append(("fold_archive:"+fold_archive.name+":"+completed[0],read_json_member(z,completed[0])))
+            receipt=read_json_member(z,completed[0])
             fold_record["completed_member"]=completed[0]
+            fold_record["receipt"]={{
+                "schema":receipt.get("schema"),
+                "status":receipt.get("status"),
+                "fold_id":receipt.get("fold_id"),
+                "receipt_sha256":receipt.get("receipt_sha256"),
+                "run_fingerprint":receipt.get("run_fingerprint"),
+                "locked_test_used_for_training":receipt.get("locked_test_used_for_training"),
+                "external_used_for_training":receipt.get("external_used_for_training"),
+            }}
         row["fold_archives"].append(fold_record)
 
     for path in files:
@@ -458,13 +470,12 @@ for target in TARGETS:
         for path in files:
             if path.suffix.lower()==".json" and ("REPORT" in path.name.upper() or "OOF" in path.name.upper()):
                 sources.append(("file:"+path.relative_to(state_root).as_posix(),read_json_file(path)))
-    for source_name,value in sources[:18]:
+    for source_name,value in sources[:6]:
         summary=summarize_json(value)
         row["json_sources"].append({{
             "source":source_name,
             "schema":value.get("schema") if isinstance(value,dict) else None,
             "status":value.get("status") if isinstance(value,dict) else None,
-            "top_keys":list(value.keys())[:120] if isinstance(value,dict) else [],
             **summary,
         }})
     if not row["json_sources"]:
@@ -482,8 +493,11 @@ out={{
     "targets":rows,
 }}
 name="PHASE2_FINAL_EVIDENCE_"+ACCOUNT_ID.replace("-","_").upper()+".json"
-Path("/kaggle/working",name).write_text(json.dumps(out,indent=2,sort_keys=True),encoding="utf-8")
-print("PHASE2_FINAL_EVIDENCE_EXTRACT_PASS "+json.dumps({{"account_id":ACCOUNT_ID,"target_count":len(rows)}},sort_keys=True))
+encoded=json.dumps(out,sort_keys=True,separators=(",",":"))
+if len(encoded.encode("utf-8"))>240_000:
+    raise RuntimeError("ACCOUNT_EXTRACT_JSON_SIZE_BOUND_EXCEEDED:"+ACCOUNT_ID+":"+str(len(encoded.encode("utf-8"))))
+Path("/kaggle/working",name).write_text(encoded,encoding="utf-8")
+print("PHASE2_FINAL_EVIDENCE_EXTRACT_PASS "+json.dumps({{"account_id":ACCOUNT_ID,"target_count":len(rows),"json_bytes":len(encoded.encode("utf-8"))}},sort_keys=True))
 '''
 
 
