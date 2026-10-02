@@ -56,6 +56,8 @@ class Phase2FinalEvidenceExtractV1Tests(unittest.TestCase):
         self.assertIn("ROOT.rglob(marker_name)", source)
         self.assertIn("DATASET_ATTACHMENT_MARKER_SHA_MATCH_INVALID", source)
         self.assertIn("sha256_file(marker)==expected_marker_sha", source)
+        self.assertIn(r'[0-9a-f]{64}', source)
+        self.assertNotIn(r'[0-9a-f]64', source)
         self.assertNotIn("kagglehub.dataset_download", source)
         self.assertIn("training_performed", source)
         self.assertNotIn("tensorflow", source.lower())
