@@ -884,11 +884,19 @@ jobs:
             --run-id "$GITHUB_RUN_ID" \
             --output "$RUNNER_TEMP/PHASE2_FINAL_EVIDENCE_MATRIX_V1.json"
 
-      - name: Upload canonical final-evidence matrix
+      - name: Build development-only OOF leaderboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/phase2_oof_leaderboard_v1.py             --matrix "$RUNNER_TEMP/PHASE2_FINAL_EVIDENCE_MATRIX_V1.json"             --output-dir "$RUNNER_TEMP/PHASE2_OOF_ANALYSIS_V1"
+
+      - name: Upload canonical final-evidence matrix and OOF analysis
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: PHASE2_FINAL_EVIDENCE_MATRIX_V1-${{ github.run_id }}
-          path: ${{ runner.temp }}/PHASE2_FINAL_EVIDENCE_MATRIX_V1.json
+          path: |
+            ${{ runner.temp }}/PHASE2_FINAL_EVIDENCE_MATRIX_V1.json
+            ${{ runner.temp }}/PHASE2_OOF_ANALYSIS_V1
           if-no-files-found: warn
           retention-days: 30
