@@ -949,6 +949,19 @@ jobs:
             --run-id "$GITHUB_RUN_ID" \
             --output-dir "$RUNNER_TEMP/PHASE2_OOF_VECTORS_V1"
 
+      - name: Set up canonical Phase-2 statistics Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install canonical Phase-2 statistics runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            numpy==2.0.2 \
+            scikit-learn==1.6.1
+
       - name: Run predeclared paired patient-cluster bootstrap and Holm
         shell: bash
         run: |
