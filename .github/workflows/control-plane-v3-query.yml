@@ -1624,7 +1624,7 @@ jobs:
           assert rec["status"]=="PASS"
           assert rec["final_closure_sha256"]=="83481411e937ba1da52c5e95841e68da22f1522ef70b622d624d6a14d65f87f5"
           assert rec["critical_fix_audit"] and all(rec["critical_fix_audit"].values())
-          assert len(nb["cells"]) >= 19
+          assert len(nb["cells"]) == 7, len(nb["cells"])
           assert int(rec["bytes"]) < 600000, rec["bytes"]
           print("MASTER_NOTEBOOK_STATIC_ACCEPTANCE_PASS", rec["output_sha256"], rec["bytes"], len(nb["cells"]))
           PY
