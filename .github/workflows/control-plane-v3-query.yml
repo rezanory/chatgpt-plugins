@@ -1349,6 +1349,20 @@ jobs:
             --name PHASE2_FULL_RESULTS_RECONCILED_V1-37140085014 \
             --dir "$RUNNER_TEMP/FULL_RESULTS"
 
+      - name: Resolve exact reconciled full-results matrix path
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t matches < <(
+            find "$RUNNER_TEMP/FULL_RESULTS" -type f -name PHASE2_FULL_RESULTS_MATRIX_V1.json -print
+          )
+          if [[ "${#matches[@]}" -ne 1 ]]; then
+            printf 'FULL_RESULTS_MATRIX_FILE_COUNT_INVALID=%s\n' "${#matches[@]}" >&2
+            exit 1
+          fi
+          echo "FULL_RESULTS_MATRIX=${matches[0]}" >> "$GITHUB_ENV"
+          printf 'FULL_RESULTS_MATRIX=%s\n' "${matches[0]}"
+
       - name: Resolve latest successful finalist external artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1436,7 +1450,7 @@ jobs:
           set -euo pipefail
           python scripts/phase2_final_scientific_closure_v1.py \
             --selection-freeze evidence/phase2_final_closure_v1/SELECTION_FREEZE.json \
-            --full-results "$RUNNER_TEMP/FULL_RESULTS/PHASE2_FULL_RESULTS_MATRIX_V1.json" \
+            --full-results "$FULL_RESULTS_MATRIX" \
             --external-root "$RUNNER_TEMP/EXTERNAL" \
             --output-dir "$RUNNER_TEMP/PHASE2_FINAL_CLOSURE" \
             --full-results-run-id 37140085014 \
