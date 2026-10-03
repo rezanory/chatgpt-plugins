@@ -205,6 +205,71 @@ class Phase2OofVectorExtractV1Tests(unittest.TestCase):
             MODULE.post_json=original_post
             MODULE.time.sleep=original_sleep
 
+    def test_fetch_vectors_reads_each_output_separately(self):
+        launch={
+            "account_id":"kg-09",
+            "kernel_ref":"mylovevpn1/phase2-oof-vectors-kg-09-123",
+            "targets":[
+                {"model_id":"M10","resolution":224},
+                {"model_id":"M10","resolution":320},
+                {"model_id":"M10","resolution":384},
+            ],
+        }
+        original_post=MODULE.post_json
+        requested=[]
+        try:
+            def fake_post(endpoint,token,payload,timeout=180):
+                names=payload.get("file_names") or []
+                self.assertEqual(len(names),1)
+                requested.extend(names)
+                name=names[0]
+                resolution=int(name.split("_R",1)[1].split(".",1)[0])
+                return {
+                    "ok":True,
+                    "result":{
+                        "files":[{
+                            "file_name":name,
+                            "json":{
+                                "schema":"pneumonia.phase2.oof.vector.v1",
+                                "status":"PASS",
+                                "model_id":"M10",
+                                "resolution":resolution,
+                            },
+                        }]
+                    },
+                }
+            MODULE.post_json=fake_post
+            result=MODULE.fetch_vectors("token",launch)
+            self.assertEqual(len(result),3)
+            self.assertEqual(requested,[
+                "PHASE2_OOF_VECTOR_M10_R224.json",
+                "PHASE2_OOF_VECTOR_M10_R320.json",
+                "PHASE2_OOF_VECTOR_M10_R384.json",
+            ])
+        finally:
+            MODULE.post_json=original_post
+
+    def test_single_vector_truncated_envelope_fails_closed(self):
+        launch={
+            "account_id":"kg-09",
+            "kernel_ref":"mylovevpn1/phase2-oof-vectors-kg-09-123",
+            "targets":[{"model_id":"M10","resolution":224}],
+        }
+        original_post=MODULE.post_json
+        try:
+            MODULE.post_json=lambda *args,**kwargs: {
+                "ok":True,
+                "result":{
+                    "truncated":True,
+                    "original_json_chars":210000,
+                    "preview":"...",
+                },
+            }
+            with self.assertRaisesRegex(RuntimeError,"OOF_VECTOR_SINGLE_OUTPUT_RESPONSE_TRUNCATED"):
+                MODULE.fetch_vectors("token",launch)
+        finally:
+            MODULE.post_json=original_post
+
     def test_fetch_vectors_fails_fast_on_permanent_read_error(self):
         launch={
             "account_id":"kg-09",

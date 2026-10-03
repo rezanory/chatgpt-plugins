@@ -586,13 +586,9 @@ def _retryable_output_propagation(response: dict) -> bool:
     )
 
 
-def fetch_vectors(read_token: str, launch: dict) -> list[dict]:
-    names = [
-        vector_output_name(target["model_id"], target["resolution"])
-        for target in launch["targets"]
-    ]
-    expected_names = set(names)
+def _fetch_one_vector(read_token: str, launch: dict, name: str) -> dict:
     last_files = []
+    last_error = None
     for attempt in range(31):
         response = post_json(
             READ_ENDPOINT,
@@ -601,66 +597,75 @@ def fetch_vectors(read_token: str, launch: dict) -> list[dict]:
                 "action": "output_json_files",
                 "account_id": launch["account_id"],
                 "kernel_ref": launch["kernel_ref"],
-                "file_names": names,
+                "file_names": [name],
                 "max_bytes_per_file": MAX_JSON_BYTES,
             },
             timeout=240,
         )
         if not response.get("ok"):
+            last_error = response.get("error")
             if _retryable_output_propagation(response) and attempt < 30:
                 time.sleep(10)
                 continue
             if _retryable_output_propagation(response):
                 raise RuntimeError(
                     f"OOF_VECTOR_OUTPUT_PROPAGATION_TIMEOUT:{launch['account_id']}:"
-                    f"error={response.get('error')}"
+                    f"{name}:error={last_error}"
                 )
             raise RuntimeError(
-                f"OOF_VECTOR_OUTPUT_FETCH_FAILED:{launch['account_id']}:{response}"
+                f"OOF_VECTOR_OUTPUT_FETCH_FAILED:{launch['account_id']}:{name}:{response}"
             )
-        files = _read_payload(response).get("files") or []
-        last_files = files
-        observed_names = {
-            str(item.get("file_name") or item.get("source_file_name") or "")
-            for item in files
-            if isinstance(item, dict)
-        }
-        if len(files) == len(names) and observed_names == expected_names:
-            break
-        if attempt < 30:
-            time.sleep(10)
-    else:
-        observed_names = sorted(
-            str(item.get("file_name") or item.get("source_file_name") or "")
-            for item in last_files
-            if isinstance(item, dict)
-        )
-        raise RuntimeError(
-            f"OOF_VECTOR_OUTPUT_PROPAGATION_TIMEOUT:{launch['account_id']}:"
-            f"{len(last_files)}:{len(names)}:{observed_names}"
-        )
 
-    by_name = {}
-    for item in files:
-        if not isinstance(item, dict):
-            raise RuntimeError(f"OOF_VECTOR_OUTPUT_INVALID:{launch['account_id']}")
-        name = str(item.get("file_name") or item.get("source_file_name") or "")
+        payload = _read_payload(response)
+        if payload.get("truncated") is True:
+            raise RuntimeError(
+                f"OOF_VECTOR_SINGLE_OUTPUT_RESPONSE_TRUNCATED:{launch['account_id']}:"
+                f"{name}:{payload.get('original_json_chars')}"
+            )
+        files = payload.get("files") or []
+        last_files = files
+        if len(files) == 0:
+            if attempt < 30:
+                time.sleep(10)
+                continue
+            raise RuntimeError(
+                f"OOF_VECTOR_OUTPUT_PROPAGATION_TIMEOUT:{launch['account_id']}:"
+                f"{name}:files=0"
+            )
+        if len(files) != 1 or not isinstance(files[0], dict):
+            raise RuntimeError(
+                f"OOF_VECTOR_SINGLE_OUTPUT_COUNT_INVALID:{launch['account_id']}:"
+                f"{name}:{len(files)}"
+            )
+        item = files[0]
+        observed_name = str(item.get("file_name") or item.get("source_file_name") or "")
         value = item.get("json")
         if (
-            name not in expected_names
-            or name in by_name
+            observed_name != name
             or not isinstance(value, dict)
             or value.get("schema") != "pneumonia.phase2.oof.vector.v1"
             or value.get("status") != "PASS"
         ):
-            raise RuntimeError(f"OOF_VECTOR_OUTPUT_INVALID:{launch['account_id']}:{name}")
-        by_name[name] = value
-    if set(by_name) != expected_names:
-        raise RuntimeError(
-            f"OOF_VECTOR_OUTPUT_NAME_MISMATCH:{launch['account_id']}:"
-            f"{sorted(by_name)}:{sorted(expected_names)}"
-        )
-    return [by_name[name] for name in names]
+            raise RuntimeError(
+                f"OOF_VECTOR_OUTPUT_INVALID:{launch['account_id']}:{name}:{observed_name}"
+            )
+        return value
+
+    raise RuntimeError(
+        f"OOF_VECTOR_OUTPUT_PROPAGATION_TIMEOUT:{launch['account_id']}:"
+        f"{name}:files={len(last_files)}:error={last_error}"
+    )
+
+
+def fetch_vectors(read_token: str, launch: dict) -> list[dict]:
+    names = [
+        vector_output_name(target["model_id"], target["resolution"])
+        for target in launch["targets"]
+    ]
+    # Read each vector separately. The read broker caps the serialized response at
+    # 200k characters, so batching 3-5 otherwise-valid compressed vectors can turn
+    # a complete result into a bounded {truncated, preview} envelope.
+    return [_fetch_one_vector(read_token, launch, name) for name in names]
 
 
 def validate_vectors(vectors: list[dict]) -> None:
