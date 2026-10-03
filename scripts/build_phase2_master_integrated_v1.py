@@ -122,10 +122,21 @@ def package(args,repo):
         ]
         for root,prefix in ((args.dual,"dual"),(args.paired,"paired")):
             for p in sorted(root.rglob("*")):
-                if p.is_file() and p.suffix.lower() in (".json",".csv",".md"):rows.append((p,prefix+"/"+p.name))
+                # Keep all statistical result tables/receipts, but do not duplicate
+                # the 36 per-image OOF vector payloads already summarized by the
+                # sealed full-results matrix and paired-statistics outputs.
+                if not p.is_file() or p.suffix.lower() not in (".json",".csv",".md"):
+                    continue
+                if p.name.startswith("PHASE2_OOF_VECTOR_"):
+                    continue
+                rows.append((p,prefix+"/"+p.name))
         for root,prefix in ((args.external_m09,"external/M09"),(args.external_m10,"external/M10")):
             for p in sorted(root.rglob("*")):
-                if p.is_file() and ("_HANDOFF" in str(p) or p.suffix.lower() in (".json",".zip")):rows.append((p,prefix+"/"+p.name))
+                # Structured handoff/report/receipt JSON contains all external
+                # numerical results. Omit duplicate plot/prediction ZIP binaries
+                # from the single-file notebook to keep Kaggle SaveKernel bounded.
+                if p.is_file() and p.suffix.lower()==".json":
+                    rows.append((p,prefix+"/"+p.name))
         rows.append((repo/"evidence/phase2_final_closure_v1/SELECTION_FREEZE.json","closure/SELECTION_FREEZE.json"))
         for rel in SOURCE_FILES:
             p=repo/rel
