@@ -1349,14 +1349,76 @@ jobs:
             --name PHASE2_FULL_RESULTS_RECONCILED_V1-37140085014 \
             --dir "$RUNNER_TEMP/FULL_RESULTS"
 
+      - name: Resolve latest successful finalist external artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, subprocess
+
+          repo = "rezanory/chatgpt-plugins"
+          response = subprocess.run(
+              ["gh", "api", f"repos/{repo}/actions/artifacts?per_page=100"],
+              check=True, capture_output=True, text=True,
+          )
+          artifacts = json.loads(response.stdout).get("artifacts") or []
+
+          def resolve(prefix):
+              rows = []
+              for artifact in artifacts:
+                  name = str(artifact.get("name") or "")
+                  if artifact.get("expired") or not name.startswith(prefix):
+                      continue
+                  workflow = artifact.get("workflow_run") or {}
+                  run_id = int(workflow.get("id") or 0)
+                  if run_id < 1:
+                      continue
+                  run_raw = subprocess.run(
+                      ["gh", "api", f"repos/{repo}/actions/runs/{run_id}"],
+                      check=True, capture_output=True, text=True,
+                  )
+                  run = json.loads(run_raw.stdout)
+                  if (
+                      run.get("status") == "completed"
+                      and run.get("conclusion") == "success"
+                  ):
+                      rows.append(
+                          (
+                              str(artifact.get("created_at") or ""),
+                              run_id,
+                              name,
+                              int(artifact.get("id") or 0),
+                          )
+                      )
+              if not rows:
+                  raise SystemExit("FINAL_EXTERNAL_SUCCESS_ARTIFACT_NOT_FOUND:" + prefix)
+              return max(rows)
+
+          m09 = resolve("PHASE2_FINALIST_RSNA_M09_FIX1-")
+          m10 = resolve("PHASE2_FINALIST_RSNA_M10_FIX1-")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              print(f"M09_EXTERNAL_RUN_ID={m09[1]}", file=handle)
+              print(f"M09_EXTERNAL_ARTIFACT={m09[2]}", file=handle)
+              print(f"M10_EXTERNAL_RUN_ID={m10[1]}", file=handle)
+              print(f"M10_EXTERNAL_ARTIFACT={m10[2]}", file=handle)
+          print(json.dumps(
+              {
+                  "m09": {"run_id": m09[1], "artifact": m09[2]},
+                  "m10": {"run_id": m10[1], "artifact": m10[2]},
+              },
+              sort_keys=True,
+          ))
+          PY
+
       - name: Download M10 finalist external evidence
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/EXTERNAL/M10"
-          gh run download 37140744443 --repo rezanory/chatgpt-plugins \
-            --name PHASE2_FINALIST_RSNA_M10_FIX1-37140744443 \
+          gh run download "$M10_EXTERNAL_RUN_ID" --repo rezanory/chatgpt-plugins \
+            --name "$M10_EXTERNAL_ARTIFACT" \
             --dir "$RUNNER_TEMP/EXTERNAL/M10"
 
       - name: Download M09 finalist external evidence
@@ -1365,8 +1427,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/EXTERNAL/M09"
-          gh run download 37141482022 --repo rezanory/chatgpt-plugins \
-            --name PHASE2_FINALIST_RSNA_M09_FIX1-37141482022 \
+          gh run download "$M09_EXTERNAL_RUN_ID" --repo rezanory/chatgpt-plugins \
+            --name "$M09_EXTERNAL_ARTIFACT" \
             --dir "$RUNNER_TEMP/EXTERNAL/M09"
 
       - name: Reconcile and seal final scientific closure
@@ -1378,8 +1440,8 @@ jobs:
             --external-root "$RUNNER_TEMP/EXTERNAL" \
             --output-dir "$RUNNER_TEMP/PHASE2_FINAL_CLOSURE" \
             --full-results-run-id 37140085014 \
-            --m09-external-run-id 37141482022 \
-            --m10-external-run-id 37140744443
+            --m09-external-run-id "$M09_EXTERNAL_RUN_ID" \
+            --m10-external-run-id "$M10_EXTERNAL_RUN_ID"
 
       - name: Publish final scientific closure package
         uses: actions/upload-artifact@v4
