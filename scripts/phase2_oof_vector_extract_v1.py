@@ -321,7 +321,10 @@ def _vector_slug(account_id: str, run_id: str) -> str:
 
 def _candidate_prefixes(account_id: str) -> tuple[str, ...]:
     token = "master" if account_id == "master" else account_id
-    return (f"phase2-oof-vectors-{EXTRACTOR_GENERATION}-{token}-",)
+    return (
+        f"phase2-oof-vectors-{EXTRACTOR_GENERATION}-{token}-",
+        f"phase2-oof-vectors-{token}-",
+    )
 
 
 def fetch_account_summary(read_token: str, account_id: str, kernel_ref: str) -> dict | None:
@@ -348,6 +351,10 @@ def fetch_account_summary(read_token: str, account_id: str, kernel_ref: str) -> 
         or value.get("schema") != "pneumonia.phase2.oof.vector.account.v1"
         or value.get("status") != "PASS"
         or value.get("account_id") != account_id
+        or value.get("training_performed") is not False
+        or value.get("inference_performed") is not False
+        or value.get("locked_test_used_for_selection") is not False
+        or value.get("external_used_for_selection") is not False
     ):
         return None
     return value
@@ -370,7 +377,7 @@ def reusable_account(
             "body": {
                 "group": "PROFILE",
                 "user": owner,
-                "search": f"phase2-oof-vectors-{EXTRACTOR_GENERATION}",
+                "search": "phase2-oof-vectors",
                 "sortBy": "DATE_RUN",
                 "page": 1,
                 "pageSize": 100,
@@ -414,7 +421,7 @@ def reusable_account(
                 timeout=120,
             )
         )
-        if status != "COMPLETE":
+        if status in {"ERROR", "CANCELLED"}:
             continue
         summary = fetch_account_summary(read_token, account_id, ref)
         if summary is None or int(summary.get("target_count") or 0) != len(targets):
@@ -571,41 +578,94 @@ def probe_status(read_token: str, row: dict) -> str:
     return "UNKNOWN"
 
 
+def _retryable_output_propagation(response: dict) -> bool:
+    error = str(response.get("error") or "")
+    return (
+        "requested Kaggle output JSON not found:" in error
+        or "output JSON HTTP 404:" in error
+    )
+
+
+def _fetch_one_vector(read_token: str, launch: dict, name: str) -> dict:
+    last_files = []
+    last_error = None
+    for attempt in range(31):
+        response = post_json(
+            READ_ENDPOINT,
+            read_token,
+            {
+                "action": "output_json_files",
+                "account_id": launch["account_id"],
+                "kernel_ref": launch["kernel_ref"],
+                "file_names": [name],
+                "max_bytes_per_file": MAX_JSON_BYTES,
+            },
+            timeout=240,
+        )
+        if not response.get("ok"):
+            last_error = response.get("error")
+            if _retryable_output_propagation(response) and attempt < 30:
+                time.sleep(10)
+                continue
+            if _retryable_output_propagation(response):
+                raise RuntimeError(
+                    f"OOF_VECTOR_OUTPUT_PROPAGATION_TIMEOUT:{launch['account_id']}:"
+                    f"{name}:error={last_error}"
+                )
+            raise RuntimeError(
+                f"OOF_VECTOR_OUTPUT_FETCH_FAILED:{launch['account_id']}:{name}:{response}"
+            )
+
+        payload = _read_payload(response)
+        if payload.get("truncated") is True:
+            raise RuntimeError(
+                f"OOF_VECTOR_SINGLE_OUTPUT_RESPONSE_TRUNCATED:{launch['account_id']}:"
+                f"{name}:{payload.get('original_json_chars')}"
+            )
+        files = payload.get("files") or []
+        last_files = files
+        if len(files) == 0:
+            if attempt < 30:
+                time.sleep(10)
+                continue
+            raise RuntimeError(
+                f"OOF_VECTOR_OUTPUT_PROPAGATION_TIMEOUT:{launch['account_id']}:"
+                f"{name}:files=0"
+            )
+        if len(files) != 1 or not isinstance(files[0], dict):
+            raise RuntimeError(
+                f"OOF_VECTOR_SINGLE_OUTPUT_COUNT_INVALID:{launch['account_id']}:"
+                f"{name}:{len(files)}"
+            )
+        item = files[0]
+        observed_name = str(item.get("file_name") or item.get("source_file_name") or "")
+        value = item.get("json")
+        if (
+            observed_name != name
+            or not isinstance(value, dict)
+            or value.get("schema") != "pneumonia.phase2.oof.vector.v1"
+            or value.get("status") != "PASS"
+        ):
+            raise RuntimeError(
+                f"OOF_VECTOR_OUTPUT_INVALID:{launch['account_id']}:{name}:{observed_name}"
+            )
+        return value
+
+    raise RuntimeError(
+        f"OOF_VECTOR_OUTPUT_PROPAGATION_TIMEOUT:{launch['account_id']}:"
+        f"{name}:files={len(last_files)}:error={last_error}"
+    )
+
+
 def fetch_vectors(read_token: str, launch: dict) -> list[dict]:
     names = [
         vector_output_name(target["model_id"], target["resolution"])
         for target in launch["targets"]
     ]
-    response = post_json(
-        READ_ENDPOINT,
-        read_token,
-        {
-            "action": "output_json_files",
-            "account_id": launch["account_id"],
-            "kernel_ref": launch["kernel_ref"],
-            "file_names": names,
-            "max_bytes_per_file": MAX_JSON_BYTES,
-        },
-        timeout=240,
-    )
-    if not response.get("ok"):
-        raise RuntimeError(f"OOF_VECTOR_OUTPUT_FETCH_FAILED:{launch['account_id']}:{response}")
-    files = _read_payload(response).get("files") or []
-    if len(files) != len(names):
-        raise RuntimeError(
-            f"OOF_VECTOR_OUTPUT_COUNT_INVALID:{launch['account_id']}:{len(files)}:{len(names)}"
-        )
-    vectors = []
-    for item in files:
-        value = item.get("json") if isinstance(item, dict) else None
-        if (
-            not isinstance(value, dict)
-            or value.get("schema") != "pneumonia.phase2.oof.vector.v1"
-            or value.get("status") != "PASS"
-        ):
-            raise RuntimeError(f"OOF_VECTOR_OUTPUT_INVALID:{launch['account_id']}")
-        vectors.append(value)
-    return vectors
+    # Read each vector separately. The read broker caps the serialized response at
+    # 200k characters, so batching 3-5 otherwise-valid compressed vectors can turn
+    # a complete result into a bounded {truncated, preview} envelope.
+    return [_fetch_one_vector(read_token, launch, name) for name in names]
 
 
 def validate_vectors(vectors: list[dict]) -> None:

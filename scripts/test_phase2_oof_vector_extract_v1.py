@@ -145,6 +145,199 @@ class Phase2OofVectorExtractV1Tests(unittest.TestCase):
             MODULE.post_json=original_post
             MODULE.fetch_account_summary=original_summary
 
+    def test_candidate_prefixes_accept_provider_normalized_ref(self):
+        prefixes=MODULE._candidate_prefixes("kg-09")
+        self.assertIn("phase2-oof-vectors-v1-kg-09-",prefixes)
+        self.assertIn("phase2-oof-vectors-kg-09-",prefixes)
+
+    def test_fetch_vectors_retries_output_propagation(self):
+        launch={
+            "account_id":"kg-09",
+            "kernel_ref":"mylovevpn1/phase2-oof-vectors-kg-09-123",
+            "targets":[{"model_id":"M10","resolution":224}],
+        }
+        vector={
+            "schema":"pneumonia.phase2.oof.vector.v1",
+            "status":"PASS",
+            "model_id":"M10",
+            "resolution":224,
+        }
+        original_post=MODULE.post_json
+        original_sleep=MODULE.time.sleep
+        calls=[]
+        try:
+            def fake_post(endpoint,token,payload,timeout=180):
+                calls.append(payload)
+                if len(calls)==1:
+                    return {
+                        "ok":False,
+                        "http_status":403,
+                        "error":(
+                            '{"ok":false,"read_only":true,"error":'
+                            '"requested Kaggle output JSON not found: '
+                            'PHASE2_OOF_VECTOR_M10_R224.json"}'
+                        ),
+                    }
+                if len(calls)==2:
+                    return {"ok":True,"result":{"files":[]}}
+                return {
+                    "ok":True,
+                    "provider":"kaggle",
+                    "read_only":True,
+                    "result":{
+                        "ok":True,
+                        "provider":"kaggle",
+                        "read_only":True,
+                        "result":{
+                            "files":[{
+                                "file_name":"PHASE2_OOF_VECTOR_M10_R224.json",
+                                "json":vector,
+                            }]
+                        },
+                    },
+                }
+            MODULE.post_json=fake_post
+            MODULE.time.sleep=lambda _: None
+            result=MODULE.fetch_vectors("token",launch)
+            self.assertEqual(len(calls),3)
+            self.assertEqual(result,[vector])
+        finally:
+            MODULE.post_json=original_post
+            MODULE.time.sleep=original_sleep
+
+    def test_fetch_vectors_reads_each_output_separately(self):
+        launch={
+            "account_id":"kg-09",
+            "kernel_ref":"mylovevpn1/phase2-oof-vectors-kg-09-123",
+            "targets":[
+                {"model_id":"M10","resolution":224},
+                {"model_id":"M10","resolution":320},
+                {"model_id":"M10","resolution":384},
+            ],
+        }
+        original_post=MODULE.post_json
+        requested=[]
+        try:
+            def fake_post(endpoint,token,payload,timeout=180):
+                names=payload.get("file_names") or []
+                self.assertEqual(len(names),1)
+                requested.extend(names)
+                name=names[0]
+                resolution=int(name.split("_R",1)[1].split(".",1)[0])
+                return {
+                    "ok":True,
+                    "result":{
+                        "files":[{
+                            "file_name":name,
+                            "json":{
+                                "schema":"pneumonia.phase2.oof.vector.v1",
+                                "status":"PASS",
+                                "model_id":"M10",
+                                "resolution":resolution,
+                            },
+                        }]
+                    },
+                }
+            MODULE.post_json=fake_post
+            result=MODULE.fetch_vectors("token",launch)
+            self.assertEqual(len(result),3)
+            self.assertEqual(requested,[
+                "PHASE2_OOF_VECTOR_M10_R224.json",
+                "PHASE2_OOF_VECTOR_M10_R320.json",
+                "PHASE2_OOF_VECTOR_M10_R384.json",
+            ])
+        finally:
+            MODULE.post_json=original_post
+
+    def test_single_vector_truncated_envelope_fails_closed(self):
+        launch={
+            "account_id":"kg-09",
+            "kernel_ref":"mylovevpn1/phase2-oof-vectors-kg-09-123",
+            "targets":[{"model_id":"M10","resolution":224}],
+        }
+        original_post=MODULE.post_json
+        try:
+            MODULE.post_json=lambda *args,**kwargs: {
+                "ok":True,
+                "result":{
+                    "truncated":True,
+                    "original_json_chars":210000,
+                    "preview":"...",
+                },
+            }
+            with self.assertRaisesRegex(RuntimeError,"OOF_VECTOR_SINGLE_OUTPUT_RESPONSE_TRUNCATED"):
+                MODULE.fetch_vectors("token",launch)
+        finally:
+            MODULE.post_json=original_post
+
+    def test_fetch_vectors_fails_fast_on_permanent_read_error(self):
+        launch={
+            "account_id":"kg-09",
+            "kernel_ref":"mylovevpn1/phase2-oof-vectors-kg-09-123",
+            "targets":[{"model_id":"M10","resolution":224}],
+        }
+        original_post=MODULE.post_json
+        original_sleep=MODULE.time.sleep
+        calls=[]
+        try:
+            def fake_post(endpoint,token,payload,timeout=180):
+                calls.append(payload)
+                return {
+                    "ok":False,
+                    "http_status":403,
+                    "error":"Kaggle API HTTP 403: permission denied",
+                }
+            MODULE.post_json=fake_post
+            MODULE.time.sleep=lambda _: None
+            with self.assertRaisesRegex(RuntimeError,"OOF_VECTOR_OUTPUT_FETCH_FAILED"):
+                MODULE.fetch_vectors("token",launch)
+            self.assertEqual(len(calls),1)
+        finally:
+            MODULE.post_json=original_post
+            MODULE.time.sleep=original_sleep
+
+    def test_reuse_accepts_exact_pass_summary_when_status_api_is_unavailable(self):
+        targets=[{
+            "model_id":"M10",
+            "resolution":224,
+            "dataset_ref":"mylovevpn1/pneumonia-m10-r224-state-v1-7",
+            "version":5,
+            "campaign_marker_sha256":"a"*64,
+        }]
+        original_post=MODULE.post_json
+        original_summary=MODULE.fetch_account_summary
+        try:
+            def fake_post(endpoint,token,payload,timeout=180):
+                if payload.get("method")=="ListKernels":
+                    self.assertEqual(payload["body"]["search"],"phase2-oof-vectors")
+                    return {"ok":True,"result":{"kernels":[{
+                        "ref":"mylovevpn1/phase2-oof-vectors-kg-09-37115268419",
+                    }]}}
+                if payload.get("method")=="GetKernelSessionStatus":
+                    return {"ok":False,"http_status":403,"error":"Kaggle API HTTP 403"}
+                raise AssertionError(payload)
+            MODULE.post_json=fake_post
+            MODULE.fetch_account_summary=lambda *args: {
+                "schema":"pneumonia.phase2.oof.vector.account.v1",
+                "status":"PASS",
+                "account_id":"kg-09",
+                "target_count":1,
+                "targets":[{
+                    "model_id":"M10",
+                    "resolution":224,
+                    "dataset_ref":"mylovevpn1/pneumonia-m10-r224-state-v1-7",
+                    "dataset_version_number":5,
+                    "campaign_marker_sha256":"a"*64,
+                }],
+            }
+            reused=MODULE.reusable_account("token","kg-09","mylovevpn1",targets)
+            self.assertIsNotNone(reused)
+            self.assertEqual(reused["kernel_ref"],"mylovevpn1/phase2-oof-vectors-kg-09-37115268419")
+            self.assertEqual(reused["source_run_id"],"37115268419")
+        finally:
+            MODULE.post_json=original_post
+            MODULE.fetch_account_summary=original_summary
+
     def test_validate_vectors_requires_exact_36_and_one_identity(self):
         vectors = []
         for i in range(1, 13):
