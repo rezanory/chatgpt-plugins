@@ -1659,7 +1659,17 @@ jobs:
           notebook=(root/"PNEUMONIA_PHASE2_MASTER_INTEGRATED_V1.ipynb").read_text(encoding="utf-8")
           kernel_ref="azadka/pneumonia-phase2-master-integrated-v1"
           def post(url, token, payload, timeout=240):
-              req=urllib.request.Request(url,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
+              req=urllib.request.Request(
+                  url,
+                  data=json.dumps(payload,separators=(",",":")).encode(),
+                  headers={
+                      "Authorization":"Bearer "+token,
+                      "Content-Type":"application/json",
+                      "Accept":"application/json",
+                      "User-Agent":"phase2-master-integrated-v1/1.0",
+                  },
+                  method="POST",
+              )
               try:
                   with urllib.request.urlopen(req,timeout=timeout) as r:
                       return json.load(r)
