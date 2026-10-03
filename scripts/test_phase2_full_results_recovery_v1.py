@@ -40,6 +40,17 @@ class FullResultsRecoveryTests(unittest.TestCase):
         self.assertNotIn("model.predict(", source)
         self.assertNotIn("model.fit(", source)
 
+    def test_configure_base_uses_exact_generation_reuse(self):
+        recovery._configure_base()
+        self.assertIs(
+            recovery.base.reusable_extractor,
+            recovery.reusable_full_results,
+        )
+        source = __import__("inspect").getsource(recovery.reusable_full_results)
+        self.assertIn("phase2-final-evidence-", source)
+        self.assertIn("EXTRACTOR_GENERATION", source)
+        self.assertNotIn('prefixes = (', source)
+
     def test_output_name_is_account_scoped(self):
         self.assertEqual(
             recovery._output_name("master"),
