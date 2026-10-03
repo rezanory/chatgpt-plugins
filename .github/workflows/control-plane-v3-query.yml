@@ -1578,3 +1578,143 @@ jobs:
             evidence/phase2_final_closure_v1/SELECTION_FREEZE.json
           if-no-files-found: error
           retention-days: 30
+
+  phase2_master_integrated_notebook_v1:
+    if: >-
+      ${{ github.event_name == 'issue_comment' &&
+          github.event.issue.number == 126 &&
+          github.event.comment.user.id == 62356000 &&
+          github.event.comment.body == 'PHASE2_MASTER_INTEGRATED_NOTEBOOK_V1' }}
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    timeout-minutes: 45
+    steps:
+      - name: Checkout integrated-master implementation
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download exact executed runtime and sealed evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/MASTER_INPUT"/{unit,full,closure,dual,paired,m09,m10}
+          gh run download 36597162497 --repo rezanory/chatgpt-plugins --name phase2-unit-notebook-36597162497 --dir "$RUNNER_TEMP/MASTER_INPUT/unit"
+          gh run download 37140085014 --repo rezanory/chatgpt-plugins --name PHASE2_FULL_RESULTS_RECONCILED_V1-37140085014 --dir "$RUNNER_TEMP/MASTER_INPUT/full"
+          gh run download 37152774434 --repo rezanory/chatgpt-plugins --name PHASE2_FINAL_SCIENTIFIC_CLOSURE_V1-37152774434 --dir "$RUNNER_TEMP/MASTER_INPUT/closure"
+          gh run download 37125310017 --repo rezanory/chatgpt-plugins --name PHASE2_DUAL_PR_V1-37125310017 --dir "$RUNNER_TEMP/MASTER_INPUT/dual"
+          gh run download 37118976126 --repo rezanory/chatgpt-plugins --name PHASE2_OOF_PAIRED_STATS_V1-37118976126 --dir "$RUNNER_TEMP/MASTER_INPUT/paired"
+          gh run download 37152612072 --repo rezanory/chatgpt-plugins --name PHASE2_FINALIST_RSNA_M09_FIX1-37152612072 --dir "$RUNNER_TEMP/MASTER_INPUT/m09"
+          gh run download 37152614549 --repo rezanory/chatgpt-plugins --name PHASE2_FINALIST_RSNA_M10_FIX1-37152614549 --dir "$RUNNER_TEMP/MASTER_INPUT/m10"
+
+      - name: Build one-file corrected master notebook
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/build_phase2_master_integrated_v1.py
+          mkdir -p "$RUNNER_TEMP/MASTER_OUTPUT"
+          python scripts/build_phase2_master_integrated_v1.py             --unit-artifact "$RUNNER_TEMP/MASTER_INPUT/unit"             --full-results "$RUNNER_TEMP/MASTER_INPUT/full"             --closure "$RUNNER_TEMP/MASTER_INPUT/closure"             --dual "$RUNNER_TEMP/MASTER_INPUT/dual"             --paired "$RUNNER_TEMP/MASTER_INPUT/paired"             --external-m09 "$RUNNER_TEMP/MASTER_INPUT/m09"             --external-m10 "$RUNNER_TEMP/MASTER_INPUT/m10"             --repo-root "$GITHUB_WORKSPACE"             --output "$RUNNER_TEMP/MASTER_OUTPUT/PNEUMONIA_PHASE2_MASTER_INTEGRATED_V1.ipynb"             --receipt "$RUNNER_TEMP/MASTER_OUTPUT/PNEUMONIA_PHASE2_MASTER_INTEGRATED_V1_RECEIPT.json"
+          python - <<'PY'
+          import json, os, pathlib
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])/"MASTER_OUTPUT"
+          nb=json.loads((root/"PNEUMONIA_PHASE2_MASTER_INTEGRATED_V1.ipynb").read_text())
+          rec=json.loads((root/"PNEUMONIA_PHASE2_MASTER_INTEGRATED_V1_RECEIPT.json").read_text())
+          assert rec["status"]=="PASS"
+          assert rec["final_closure_sha256"]=="83481411e937ba1da52c5e95841e68da22f1522ef70b622d624d6a14d65f87f5"
+          assert rec["critical_fix_audit"] and all(rec["critical_fix_audit"].values())
+          assert len(nb["cells"]) >= 19
+          print("MASTER_NOTEBOOK_STATIC_ACCEPTANCE_PASS", rec["output_sha256"], rec["bytes"], len(nb["cells"]))
+          PY
+
+      - name: Request trusted Kaggle action and read identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']; bearer=os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']
+          def issue(aud):
+              sep='&' if '?' in base else '?'
+              req=urllib.request.Request(base+sep+urllib.parse.urlencode({'audience':aud}),headers={'Authorization':'Bearer '+bearer})
+              with urllib.request.urlopen(req,timeout=30) as r: token=json.load(r)['value']
+              if len(token)<100: raise SystemExit('OIDC_TOKEN_INVALID:'+aud)
+              print('::add-mask::'+token); return token
+          a=issue('cgp-control-plane-v3-action'); r=issue('cgp-control-plane-v3')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h:
+              print('CGP_ACTION_OIDC_TOKEN='+a,file=h); print('CGP_READ_OIDC_TOKEN='+r,file=h)
+          PY
+
+      - name: Publish master notebook to Kaggle master account and replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, pathlib, time, urllib.request
+          action="https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
+          read="https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle"
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])/"MASTER_OUTPUT"
+          notebook=(root/"PNEUMONIA_PHASE2_MASTER_INTEGRATED_V1.ipynb").read_text(encoding="utf-8")
+          kernel_ref="azadka/pneumonia-phase2-master-integrated-v1"
+          def post(url, token, payload, timeout=240):
+              req=urllib.request.Request(url,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
+              with urllib.request.urlopen(req,timeout=timeout) as r: return json.load(r)
+          payload={
+            "request_id":"phase2-master-integrated-v1-"+os.environ["GITHUB_RUN_ID"],
+            "provider":"kaggle","operation_class":"compute","account_id":"master",
+            "purpose":"Publish the final corrected single-file Phase-2 M01-M12 integrated notebook. Safe default is sealed-results replay; no retraining occurs in this publication run.",
+            "service":"kernels.KernelsApiService","method":"SaveKernel",
+            "body":{"slug":kernel_ref,"newTitle":"Pneumonia Phase-2 Master Integrated V1 - M01-M12 Final","text":notebook,"language":"PYTHON","kernelType":"NOTEBOOK","kernelExecutionType":"SAVE_AND_RUN_ALL","isPrivate":True,"enableGpu":False,"enableTpu":False,"enableInternet":False,"datasetDataSources":["paultimothymooney/chest-xray-pneumonia","nih-chest-xrays/data"],"competitionDataSources":[],"modelDataSources":[]}
+          }
+          launch=post(action,os.environ["CGP_ACTION_OIDC_TOKEN"],payload)
+          (root/"KAGGLE_MASTER_LAUNCH.json").write_text(json.dumps(launch,indent=2))
+          result=launch.get("result") if isinstance(launch.get("result"),dict) else {}
+          if not launch.get("ok") or result.get("error") or launch.get("error"):
+              raise SystemExit("KAGGLE_MASTER_SAVE_REJECTED:"+json.dumps(launch))
+          provider_ref=launch.get("provider_ref") or result.get("ref") or kernel_ref
+          terminal=None; history=[]
+          for attempt in range(1,61):
+              row=post(read,os.environ["CGP_READ_OIDC_TOKEN"],{"action":"resolved_kernel_status","account_id":"master","kernel_ref":provider_ref},timeout=120)
+              history.append(row)
+              cur=row
+              status=""
+              for _ in range(6):
+                  if not isinstance(cur,dict): break
+                  for k in ("status","state","kernel_status"):
+                      if isinstance(cur.get(k),str): status=cur[k].upper()
+                  cur=cur.get("result")
+              print("MASTER_KAGGLE_STATUS",attempt,status or "UNKNOWN",flush=True)
+              if status in {"COMPLETE","ERROR","CANCELLED"}: terminal=status; break
+              time.sleep(10)
+          (root/"KAGGLE_MASTER_STATUS.json").write_text(json.dumps(history,indent=2))
+          if terminal!="COMPLETE": raise SystemExit("KAGGLE_MASTER_TERMINAL_"+str(terminal))
+          out=post(read,os.environ["CGP_READ_OIDC_TOKEN"],{"action":"output_json_files","account_id":"master","kernel_ref":provider_ref,"file_names":["PNEUMONIA_PHASE2_MASTER_REPLAY_RECEIPT.json"],"max_bytes_per_file":262144},timeout=120)
+          (root/"KAGGLE_MASTER_REPLAY_QUERY.json").write_text(json.dumps(out,indent=2))
+          cur=out
+          for _ in range(5):
+              if isinstance(cur,dict) and isinstance(cur.get("result"),dict): cur=cur["result"]
+              else: break
+          files=cur.get("files") if isinstance(cur,dict) else None
+          if not isinstance(files,list) or len(files)!=1 or not isinstance(files[0].get("json"),dict):
+              raise SystemExit("KAGGLE_MASTER_REPLAY_RECEIPT_MISSING")
+          receipt=files[0]["json"]
+          if receipt.get("status")!="PASS" or receipt.get("mode")!="SEALED_RESULTS_REPLAY" or receipt.get("closure_sha256")!="83481411e937ba1da52c5e95841e68da22f1522ef70b622d624d6a14d65f87f5":
+              raise SystemExit("KAGGLE_MASTER_REPLAY_RECEIPT_INVALID:"+json.dumps(receipt))
+          (root/"KAGGLE_MASTER_REPLAY_RECEIPT.json").write_text(json.dumps(receipt,indent=2,sort_keys=True))
+          print("PHASE2_MASTER_KAGGLE_OPERATIONAL_PASS",provider_ref,receipt["closure_sha256"])
+          PY
+
+      - name: Publish downloadable integrated master package
+        uses: actions/upload-artifact@v4
+        with:
+          name: PNEUMONIA_PHASE2_MASTER_INTEGRATED_V1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/MASTER_OUTPUT/PNEUMONIA_PHASE2_MASTER_INTEGRATED_V1.ipynb
+            ${{ runner.temp }}/MASTER_OUTPUT/PNEUMONIA_PHASE2_MASTER_INTEGRATED_V1_RECEIPT.json
+            ${{ runner.temp }}/MASTER_OUTPUT/KAGGLE_MASTER_LAUNCH.json
+            ${{ runner.temp }}/MASTER_OUTPUT/KAGGLE_MASTER_STATUS.json
+            ${{ runner.temp }}/MASTER_OUTPUT/KAGGLE_MASTER_REPLAY_RECEIPT.json
+          if-no-files-found: error
+          retention-days: 90
+
