@@ -1,0 +1,67 @@
+name: phase2-dual-pr-audit-v1
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/phase2_dual_pr_oof_stats_v1.py'
+      - 'scripts/test_phase2_dual_pr_oof_stats_v1.py'
+      - 'evidence/phase2_dual_pr_v1/**'
+      - '.github/workflows/phase2-dual-pr-audit-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  dual-pr-operational:
+    if: >-
+      github.repository == 'rezanory/chatgpt-plugins' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned statistics-only runtime
+        run: python -m pip install --disable-pip-version-check numpy==2.0.2 scikit-learn==1.6.1 pytest==8.4.2 ruff==0.12.12
+      - name: Check added analysis code
+        run: python -m ruff check scripts/phase2_dual_pr_oof_stats_v1.py scripts/test_phase2_dual_pr_oof_stats_v1.py
+      - name: Run focused algorithm and fail-closed tests
+        run: python -m pytest scripts/test_phase2_dual_pr_oof_stats_v1.py -q
+      - name: Read previously executed sealed OOF artifact only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download 37118976126 --repo rezanory/chatgpt-plugins \
+            --name PHASE2_OOF_PAIRED_STATS_V1-37118976126 \
+            --dir "$RUNNER_TEMP/DUAL_PR_SOURCE"
+      - name: Real dual-metric run and original-result reconciliation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/phase2_dual_pr_oof_stats_v1.py \
+            --baseline-root "$RUNNER_TEMP/DUAL_PR_SOURCE" \
+            --source-lock evidence/phase2_dual_pr_v1/source_lock.json \
+            --output-dir "$RUNNER_TEMP/PHASE2_DUAL_PR_V1"
+      - name: Publish auditable result and exact analysis source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PHASE2_DUAL_PR_V1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/PHASE2_DUAL_PR_V1
+            scripts/phase2_dual_pr_oof_stats_v1.py
+            scripts/test_phase2_dual_pr_oof_stats_v1.py
+            evidence/phase2_dual_pr_v1
+          retention-days: 30
+          if-no-files-found: error
