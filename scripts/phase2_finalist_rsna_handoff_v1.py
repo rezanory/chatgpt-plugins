@@ -187,6 +187,39 @@ def read_output_items(
     return items
 
 
+def select_complete_output_candidate(
+    candidates: list[tuple[str, int, list[dict]]],
+    receipt_suffix: str,
+    zip_suffix: str,
+) -> tuple[str, int, dict, dict]:
+    complete = []
+    for kernel_ref, run_id, items in candidates:
+        receipt_item = next(
+            (
+                item for item in items
+                if str(item.get("fileName") or "").endswith(receipt_suffix)
+                and item.get("url")
+            ),
+            None,
+        )
+        zip_item = next(
+            (
+                item for item in items
+                if str(item.get("fileName") or "").endswith(zip_suffix)
+                and item.get("url")
+            ),
+            None,
+        )
+        if receipt_item and zip_item:
+            complete.append(
+                (int(run_id), kernel_ref, receipt_item, zip_item)
+            )
+    if not complete:
+        raise RuntimeError("HANDOFF_COMPLETE_OUTPUT_NOT_FOUND")
+    run_id, kernel_ref, receipt_item, zip_item = max(complete)
+    return kernel_ref, run_id, receipt_item, zip_item
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--token", required=True)
@@ -206,59 +239,54 @@ def main() -> None:
     if len(read_token) < 100:
         raise SystemExit("HANDOFF_READ_OIDC_TOKEN_INVALID")
 
-    candidate_states = []
-    for kernel_ref in args.kernel_ref:
-        validate_kernel_ref(contract, kernel_ref)
-        response = legacy.post_json(
-            legacy.READ_ENDPOINT,
-            read_token,
-            {
-                "action": "raw_read",
-                "account_id": str(contract["account_id"]),
-                "service": "kernels.KernelsApiService",
-                "method": "GetKernelSessionStatus",
-                "body": {
-                    "userName": kernel_ref.split("/", 1)[0],
-                    "kernelSlug": kernel_ref.split("/", 1)[1],
-                },
-            },
-            timeout=120,
-        )
-        if not response.get("ok"):
-            raise RuntimeError(
-                "HANDOFF_KERNEL_STATUS_READ_FAILED:"
-                + json.dumps(response, sort_keys=True)[:2000]
-            )
-        status = legacy.recursive_status(response)
-        candidate_states.append((kernel_ref, status or "UNKNOWN"))
-
-    kernel_ref, source_run_id = choose_complete_kernel(candidate_states)
-    items = read_output_items(read_token, contract, kernel_ref)
-
     receipt_suffix = (
         f"{model_id}_RSNA_PEDIATRIC_EXTERNAL_TERMINAL_RECEIPT.json"
     )
     zip_suffix = (
         f"{model_id}_RSNA_PEDIATRIC_EXTERNAL_R{resolution}_V1_COMPLETE.zip"
     )
-    receipt_item = next(
-        (
-            item for item in items
-            if str(item.get("fileName") or "").endswith(receipt_suffix)
-        ),
-        None,
-    )
-    zip_item = next(
-        (
-            item for item in items
-            if str(item.get("fileName") or "").endswith(zip_suffix)
-        ),
-        None,
-    )
-    if not receipt_item or not receipt_item.get("url"):
-        raise RuntimeError("HANDOFF_TERMINAL_RECEIPT_NOT_FOUND")
-    if not zip_item or not zip_item.get("url"):
-        raise RuntimeError("HANDOFF_COMPLETE_ZIP_NOT_FOUND")
+
+    candidate_outputs = []
+    read_errors = {}
+    ranked_refs = []
+    for kernel_ref in args.kernel_ref:
+        run_id = validate_kernel_ref(contract, kernel_ref)
+        ranked_refs.append((run_id, kernel_ref))
+    for run_id, kernel_ref in sorted(ranked_refs, reverse=True):
+        try:
+            items = read_output_items(read_token, contract, kernel_ref)
+        except Exception as exc:
+            read_errors[kernel_ref] = f"{type(exc).__name__}:{exc}"
+            continue
+        candidate_outputs.append((kernel_ref, run_id, items))
+
+    try:
+        kernel_ref, source_run_id, receipt_item, zip_item = (
+            select_complete_output_candidate(
+                candidate_outputs,
+                receipt_suffix,
+                zip_suffix,
+            )
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            str(exc)
+            + ":"
+            + json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "kernel_ref": ref,
+                            "run_id": run_id,
+                            "file_count": len(items),
+                        }
+                        for ref, run_id, items in candidate_outputs
+                    ],
+                    "read_errors": read_errors,
+                },
+                sort_keys=True,
+            )
+        ) from exc
 
     out = pathlib.Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
