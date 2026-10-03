@@ -89,6 +89,14 @@ class FinalistRsnaExternalTests(unittest.TestCase):
                 '"external_may_reselect": False',
                 code,
             )
+            self.assertIn(
+                'expected_artifacts = {f"FOLD_{fold}_RECOVERY.cgpzip"',
+                code,
+            )
+            self.assertNotIn(
+                'expected_artifacts = {f"FOLD_{fold}_RECOVERY.zip"',
+                code,
+            )
             self.assertNotIn("model.fit(", code)
             self.assertNotIn("optimizer.apply_gradients", code)
 

@@ -172,6 +172,12 @@ def build_kernel_script(
     )
     patched = _replace_once(
         patched,
+        'expected_artifacts = {f"FOLD_{fold}_RECOVERY.zip" for fold in range(1, 6)}',
+        'expected_artifacts = {f"FOLD_{fold}_RECOVERY.cgpzip" for fold in range(1, 6)}',
+        "campaign_fold_archive_extension",
+    )
+    patched = _replace_once(
+        patched,
         "and set(artifacts) == expected_artifacts",
         "and expected_artifacts.issubset(set(artifacts))",
         "campaign_artifact_subset",
