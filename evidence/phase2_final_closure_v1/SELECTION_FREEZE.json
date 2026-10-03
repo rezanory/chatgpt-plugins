@@ -1,0 +1,54 @@
+{
+  "schema": "pneumonia.phase2.selection_freeze.v1",
+  "status": "FROZEN_FOR_REPORT_ONLY_CONFIRMATION",
+  "created_utc": "2026-10-03T15:16:54.153577+00:00",
+  "scientific_classification": "POST_RESULTS_EXPLORATORY_DUAL_METRIC_SELECTION_FREEZE",
+  "selection_basis": {
+    "requested_metrics": [
+      "macro_precision",
+      "macro_recall"
+    ],
+    "macro_average": "UNWEIGHTED_MEAN_OF_NORMAL_AND_PNEUMONIA_CLASSES",
+    "source_scope": "SEALED_DEVELOPMENT_OOF_ONLY",
+    "source_dual_run_id": "37125310017",
+    "source_dual_artifact_id": 11273769987,
+    "source_original_paired_run_id": "37118976126",
+    "source_original_paired_artifact_id": 11272493898,
+    "holm72_rejections": 0
+  },
+  "frozen_candidate_set": [
+    {
+      "model_id": "M09",
+      "resolution": 384,
+      "n": 5209,
+      "macro_precision": 0.9791999841666731,
+      "macro_recall": 0.9798256911862867,
+      "tn": 1387,
+      "fp": 41,
+      "fn": 44,
+      "tp": 3737
+    },
+    {
+      "model_id": "M10",
+      "resolution": 320,
+      "n": 5209,
+      "macro_precision": 0.9793989580903507,
+      "macro_recall": 0.9796077912783733,
+      "tn": 1386,
+      "fp": 42,
+      "fn": 43,
+      "tp": 3738
+    }
+  ],
+  "freeze_rule": "PARETO_NONDOMINATED_SET_UNDER_MACRO_PRECISION_AND_MACRO_RECALL",
+  "single_winner_declared": false,
+  "confirmatory_superiority_claim": false,
+  "locked_test_used_for_selection": false,
+  "external_used_for_selection": false,
+  "locked_test_may_reselect": false,
+  "external_may_reselect": false,
+  "thresholds_refit_after_freeze": false,
+  "cross_model_ensemble_selected": false,
+  "cross_model_ensemble_fitted": false,
+  "next_permitted_stage": "REPORT_ONLY_LOCKED_TEST_EVIDENCE_RECOVERY_THEN_EXTERNAL_EVIDENCE_RECONCILIATION_AND_FINAL_CLOSURE"
+}
