@@ -40,12 +40,46 @@ class FinalistHandoffTests(unittest.TestCase):
                 "azadkk/phase2-finalist-rsna-m10-r384-v1-37142719732",
             )
 
-    def test_main_uses_supported_raw_status_read(self):
+    def test_main_selects_by_complete_output_evidence(self):
         import inspect
         source = inspect.getsource(target.main)
-        self.assertIn('"action": "raw_read"', source)
-        self.assertIn('"method": "GetKernelSessionStatus"', source)
-        self.assertNotIn('"action": "resolved_kernel_status"', source)
+        self.assertIn("select_complete_output_candidate", source)
+        self.assertNotIn("GetKernelSessionStatus", source)
+        self.assertNotIn("resolved_kernel_status", source)
+
+    def test_complete_output_candidate_prefers_highest_run(self):
+        def item(name):
+            return {"fileName": name, "url": "https://example.invalid/x"}
+
+        receipt = "M10_RSNA_PEDIATRIC_EXTERNAL_TERMINAL_RECEIPT.json"
+        complete = "M10_RSNA_PEDIATRIC_EXTERNAL_R320_V1_COMPLETE.zip"
+        ref, run_id, receipt_item, zip_item = (
+            target.select_complete_output_candidate(
+                [
+                    (
+                        "owner/phase2-finalist-rsna-m10-r320-v1-100",
+                        100,
+                        [item(receipt), item(complete)],
+                    ),
+                    (
+                        "owner/phase2-finalist-rsna-m10-r320-v1-101",
+                        101,
+                        [item(receipt)],
+                    ),
+                    (
+                        "owner/phase2-finalist-rsna-m10-r320-v1-99",
+                        99,
+                        [item(receipt), item(complete)],
+                    ),
+                ],
+                receipt,
+                complete,
+            )
+        )
+        self.assertEqual(run_id, 100)
+        self.assertTrue(ref.endswith("-100"))
+        self.assertTrue(receipt_item["fileName"].endswith(receipt))
+        self.assertTrue(zip_item["fileName"].endswith(complete))
 
     def test_choose_complete_kernel_selects_highest_complete_run(self):
         ref, run_id = target.choose_complete_kernel(
