@@ -193,10 +193,86 @@ def kernel_script(account_id: str, targets: list[dict]) -> str:
     return source
 
 
+
+def reusable_full_results(
+    read_token: str,
+    account_id: str,
+    owner: str,
+) -> dict | None:
+    """Reuse only extractors created by this exact full-results generation."""
+    listing = base.post_json(
+        base.READ_ENDPOINT,
+        read_token,
+        {
+            "action": "raw_read",
+            "account_id": account_id,
+            "service": "kernels.KernelsApiService",
+            "method": "ListKernels",
+            "body": {
+                "group": "PROFILE",
+                "user": owner,
+                "search": "phase2-final-evidence-" + EXTRACTOR_GENERATION,
+                "sortBy": "DATE_RUN",
+                "page": 1,
+                "pageSize": 100,
+            },
+        },
+        timeout=120,
+    )
+    if not listing.get("ok"):
+        raise RuntimeError(
+            f"FULL_RESULTS_EXTRACTOR_HISTORY_LIST_FAILED:{account_id}:{listing}"
+        )
+    result = base._read_payload(listing)
+    kernels = result.get("kernels") or []
+    account_tokens = {
+        account_id.casefold(),
+        account_id.replace("-", "").casefold(),
+    }
+    candidates = []
+    for item in kernels:
+        if not isinstance(item, dict):
+            continue
+        ref = base._listed_kernel_ref(item, owner)
+        if not ref:
+            continue
+        slug = ref.split("/", 1)[1]
+        match = None
+        for token in account_tokens:
+            prefix = f"phase2-final-evidence-{EXTRACTOR_GENERATION}-{token}-"
+            if slug.casefold().startswith(prefix):
+                suffix = slug[len(prefix):]
+                if suffix.isdigit():
+                    match = int(suffix)
+                    break
+        if match is not None:
+            candidates.append((match, ref, item))
+    if not candidates:
+        return None
+    run_number, ref, item = max(candidates, key=lambda row: row[0])
+    status = base.probe_extractor_status(
+        read_token,
+        account_id,
+        ref,
+        listing_item=item,
+    )
+    if status in base.ACTIVE | {"COMPLETE"}:
+        return {
+            "kernel_ref": ref,
+            "status": status,
+            "source_run_id": str(run_number),
+        }
+    if status in {"ERROR", "CANCELLED"}:
+        return None
+    raise RuntimeError(
+        f"FULL_RESULTS_EXTRACTOR_LATEST_STATUS_UNCERTAIN:{account_id}:{ref}"
+    )
+
 def _configure_base() -> None:
     base.EXTRACTOR_GENERATION = EXTRACTOR_GENERATION
     base.kernel_script = kernel_script
     base._extractor_output_name = _output_name
+    base.reusable_extractor = reusable_full_results
 
 
 def _fold_receipts(unit: dict) -> list[dict]:
