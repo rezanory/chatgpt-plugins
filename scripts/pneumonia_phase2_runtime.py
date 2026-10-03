@@ -147,6 +147,14 @@ class OidcReadBroker:
             detail = error.read(4000).decode("utf-8", "replace")
             if error.code == 403 and "GitHub OIDC JWT expired" in detail:
                 envelope = request_once(self.refresh())
+            elif error.code == 403 and re.search(
+                r"Kaggle (?:returned non-JSON|API) HTTP (?:408|425|429|5\d\d)",
+                detail,
+                flags=re.IGNORECASE,
+            ):
+                raise BrokerTransientError(
+                    f"Phase2 wrapped Kaggle transport transient: {detail[:800]}"
+                ) from error
             else:
                 raise RuntimeError(
                     f"Phase2 read broker HTTP {error.code}: {detail[:1600]}"
