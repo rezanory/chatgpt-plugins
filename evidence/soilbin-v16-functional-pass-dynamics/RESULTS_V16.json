@@ -1,0 +1,555 @@
+{
+  "schema": "soilbin.q1.v16.functional-pass-dynamics",
+  "created_utc": "2026-09-28T16:18:22.033827+00:00",
+  "post_lock_exploratory": true,
+  "does_not_supersede_v5": true,
+  "n_valid_runs": 51,
+  "n_groups": 9,
+  "n_consecutive_transitions": 41,
+  "missing_design_slots": [
+    "V1W1T1",
+    "V2W3T2",
+    "V3W2T1"
+  ],
+  "families": [
+    "PERSISTENCE",
+    "LINEAR",
+    "LOGARITHMIC",
+    "POWER_FREE",
+    "EXPONENTIAL_FREE",
+    "EXPONENTIAL_DECAY",
+    "HYPERBOLIC_DECAY",
+    "SATURATING_EXP_DECAY",
+    "STRETCHED_EXP_DECAY",
+    "QUADRATIC_LOG",
+    "PIECEWISE_LOG",
+    "DECAY_REBOUND"
+  ],
+  "hypothesis": "Repeated-pass change is not assumed exponential. Linear, logarithmic, power, exponential, hyperbolic, saturating, stretched-exponential, quadratic-log, piecewise and decay-to-rebound laws compete under group-held-out validation.",
+  "observed_pass_dynamics": [
+    {
+      "TargetPass": 2,
+      "n": 6,
+      "mean_D_joint_N": 78.49043258116667,
+      "median_D_joint_N": 79.014066830125,
+      "mean_D_LC1_N": 42.435924279000005,
+      "mean_D_LC5_N": 114.54494088333335,
+      "mean_signed_LC1_N": -42.435924279000005,
+      "mean_signed_LC5_N": -100.18408262333334
+    },
+    {
+      "TargetPass": 3,
+      "n": 8,
+      "mean_D_joint_N": 45.638230674093734,
+      "median_D_joint_N": 36.94956941987499,
+      "mean_D_LC1_N": 26.396155280687488,
+      "mean_D_LC5_N": 64.88030606749999,
+      "mean_signed_LC1_N": -26.396155280687488,
+      "mean_signed_LC5_N": -55.64832575749999
+    },
+    {
+      "TargetPass": 4,
+      "n": 9,
+      "mean_D_joint_N": 20.231108053722227,
+      "median_D_joint_N": 19.902547141750006,
+      "mean_D_LC1_N": 7.40944709633334,
+      "mean_D_LC5_N": 33.05276901111112,
+      "mean_signed_LC1_N": 1.3471721993333148,
+      "mean_signed_LC5_N": -2.963351704444458
+    },
+    {
+      "TargetPass": 5,
+      "n": 9,
+      "mean_D_joint_N": 16.214609309499995,
+      "median_D_joint_N": 14.712083429749995,
+      "mean_D_LC1_N": 11.001906294555546,
+      "mean_D_LC5_N": 21.427312324444443,
+      "mean_signed_LC1_N": -9.654734095222215,
+      "mean_signed_LC5_N": -15.500608915555546
+    },
+    {
+      "TargetPass": 6,
+      "n": 9,
+      "mean_D_joint_N": 32.00240052216667,
+      "median_D_joint_N": 28.706320079500024,
+      "mean_D_LC1_N": 18.186824690999995,
+      "mean_D_LC5_N": 45.81797635333334,
+      "mean_signed_LC1_N": -8.981147995555554,
+      "mean_signed_LC5_N": -33.05276901111111
+    }
+  ],
+  "t6_candidate_transition_evidence": {
+    "groups_total": 9,
+    "groups_D6_gt_D5": 8,
+    "groups_D6_gt_2x_D5": 7,
+    "mean_D5_N": 16.2146093095,
+    "mean_D6_N": 32.00240052216666,
+    "mean_increase_N": 15.78779121266667,
+    "mean_ratio_D6_over_D5": 3.342249839454214,
+    "median_ratio_D6_over_D5": 2.7994362311609002,
+    "bootstrap_95CI_mean_increase_N": [
+      0.49492528108334394,
+      26.95221549027779
+    ],
+    "exact_signflip_one_sided_p": 0.037109375,
+    "exact_directional_binomial_one_sided_p": 0.01953125,
+    "interpretation_guard": "Exploratory candidate regime transition only; not proof of structural collapse, fatigue failure, permanent strain, or shakedown class."
+  },
+  "primary_decision": {
+    "primary_contract": "ONE_STEP conditional transition-magnitude forecast using only the previous observed transition magnitude.",
+    "best_fixed_family_descriptive": {
+      "family": "QUADRATIC_LOG",
+      "Group_MAE_N": 17.313739435905248
+    },
+    "nested_selected_family": {
+      "Group_MAE_N": 17.313739435905248,
+      "selection_counts": {
+        "QUADRATIC_LOG": 9
+      }
+    },
+    "best_monotone_decay_family": {
+      "family": "SATURATING_EXP_DECAY",
+      "Group_MAE_N": 20.960824459341794
+    },
+    "decay_rebound": {
+      "Group_MAE_N": 19.7902646755894,
+      "delta_vs_best_monotone_N": -1.1705597837523953,
+      "outer_breakpoint_counts": {
+        "5": 9
+      }
+    },
+    "piecewise_log": {
+      "Group_MAE_N": 19.790264656368496,
+      "outer_breakpoint_counts": {
+        "5": 9
+      }
+    },
+    "t6_rebound": {
+      "groups_total": 9,
+      "groups_D6_gt_D5": 8,
+      "groups_D6_gt_2x_D5": 7,
+      "mean_D5_N": 16.2146093095,
+      "mean_D6_N": 32.00240052216666,
+      "mean_increase_N": 15.78779121266667,
+      "mean_ratio_D6_over_D5": 3.342249839454214,
+      "median_ratio_D6_over_D5": 2.7994362311609002,
+      "bootstrap_95CI_mean_increase_N": [
+        0.49492528108334394,
+        26.95221549027779
+      ],
+      "exact_signflip_one_sided_p": 0.037109375,
+      "exact_directional_binomial_one_sided_p": 0.01953125,
+      "interpretation_guard": "Exploratory candidate regime transition only; not proof of structural collapse, fatigue failure, permanent strain, or shakedown class."
+    }
+  },
+  "functional_family_summary": [
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "SATURATING_EXP_DECAY",
+      "joint_Group_MAE_N": 16.59310841623518,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "STRETCHED_EXP_DECAY",
+      "joint_Group_MAE_N": 16.88202183937844,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "QUADRATIC_LOG",
+      "joint_Group_MAE_N": 17.378437504840935,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "DECAY_REBOUND",
+      "joint_Group_MAE_N": 19.072842007103365,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "PIECEWISE_LOG",
+      "joint_Group_MAE_N": 19.223441296852783,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "HYPERBOLIC_DECAY",
+      "joint_Group_MAE_N": 19.569025735001787,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "POWER_FREE",
+      "joint_Group_MAE_N": 20.758307177937766,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "LOGARITHMIC",
+      "joint_Group_MAE_N": 21.981833179908897,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "EXPONENTIAL_FREE",
+      "joint_Group_MAE_N": 22.76173852868109,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "EXPONENTIAL_DECAY",
+      "joint_Group_MAE_N": 22.761738529044493,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "LINEAR",
+      "joint_Group_MAE_N": 24.946068990738066,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ANCHOR",
+      "metric": "D_joint",
+      "family": "PERSISTENCE",
+      "joint_Group_MAE_N": 42.164580175650464,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "STRETCHED_EXP_DECAY",
+      "joint_Group_MAE_N": 11.043621767622904,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "QUADRATIC_LOG",
+      "joint_Group_MAE_N": 12.831869568003226,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "PIECEWISE_LOG",
+      "joint_Group_MAE_N": 13.147612899350229,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "DECAY_REBOUND",
+      "joint_Group_MAE_N": 13.14761295730369,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "SATURATING_EXP_DECAY",
+      "joint_Group_MAE_N": 13.290018240555643,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "LOGARITHMIC",
+      "joint_Group_MAE_N": 13.678467926377431,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "POWER_FREE",
+      "joint_Group_MAE_N": 13.845981592752922,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "HYPERBOLIC_DECAY",
+      "joint_Group_MAE_N": 13.889587481511963,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "LINEAR",
+      "joint_Group_MAE_N": 14.578306280445487,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "EXPONENTIAL_DECAY",
+      "joint_Group_MAE_N": 14.610796415406563,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "EXPONENTIAL_FREE",
+      "joint_Group_MAE_N": 14.610796905226007,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC1",
+      "family": "PERSISTENCE",
+      "joint_Group_MAE_N": 14.697274480226847,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "QUADRATIC_LOG",
+      "joint_Group_MAE_N": 31.895045431530473,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "STRETCHED_EXP_DECAY",
+      "joint_Group_MAE_N": 32.39132431852332,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "SATURATING_EXP_DECAY",
+      "joint_Group_MAE_N": 32.39200457600417,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "LOGARITHMIC",
+      "joint_Group_MAE_N": 33.191922515508686,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "HYPERBOLIC_DECAY",
+      "joint_Group_MAE_N": 33.334570176955566,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "POWER_FREE",
+      "joint_Group_MAE_N": 34.27369492718248,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "LINEAR",
+      "joint_Group_MAE_N": 34.75320500819234,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "EXPONENTIAL_DECAY",
+      "joint_Group_MAE_N": 35.59953546582702,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "EXPONENTIAL_FREE",
+      "joint_Group_MAE_N": 35.5995355050749,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "DECAY_REBOUND",
+      "joint_Group_MAE_N": 37.733636489225596,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "PERSISTENCE",
+      "joint_Group_MAE_N": 38.01068436277776,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_LC5",
+      "family": "PIECEWISE_LOG",
+      "joint_Group_MAE_N": 38.32538842383138,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "QUADRATIC_LOG",
+      "joint_Group_MAE_N": 17.313739435905248,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "NESTED_SELECTED",
+      "joint_Group_MAE_N": 17.313739435905248,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "PIECEWISE_LOG",
+      "joint_Group_MAE_N": 19.790264656368496,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "DECAY_REBOUND",
+      "joint_Group_MAE_N": 19.7902646755894,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "SATURATING_EXP_DECAY",
+      "joint_Group_MAE_N": 20.960824459341794,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "STRETCHED_EXP_DECAY",
+      "joint_Group_MAE_N": 21.033380174465687,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "POWER_FREE",
+      "joint_Group_MAE_N": 22.349876677759752,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "LOGARITHMIC",
+      "joint_Group_MAE_N": 22.388891523211186,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "PERSISTENCE",
+      "joint_Group_MAE_N": 22.976586413942123,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "EXPONENTIAL_DECAY",
+      "joint_Group_MAE_N": 23.116741785288113,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "LINEAR",
+      "joint_Group_MAE_N": 23.521898895942066,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "EXPONENTIAL_FREE",
+      "joint_Group_MAE_N": 23.52189891963812,
+      "n": 32,
+      "n_groups": 9
+    },
+    {
+      "mode": "ONE_STEP",
+      "metric": "D_joint",
+      "family": "HYPERBOLIC_DECAY",
+      "joint_Group_MAE_N": 23.888231966432972,
+      "n": 32,
+      "n_groups": 9
+    }
+  ],
+  "guards": {
+    "random_split_used": false,
+    "outer_group_held_out": true,
+    "family_selection_for_nested_selected_uses_outer_training_only": true,
+    "breakpoint_selection_uses_outer_training_only": true,
+    "current_transition_target_used_to_predict_itself": false,
+    "external_labels_used_for_selection": false,
+    "collapse_confirmed": false,
+    "fatigue_failure_confirmed": false,
+    "shakedown_class_confirmed": false,
+    "interpretation": "T6 may be called a candidate regime transition only unless independent deformation/strain or extended-pass evidence supports a mechanical failure classification."
+  },
+  "v5_reference": {
+    "joint_Group_MAE_N": 24.28878365273039,
+    "comparison_scope": "Historical force-prediction reference only; V16 primary metric predicts transition magnitude and is not numerically interchangeable with V5 force MAE."
+  }
+}
