@@ -186,5 +186,11 @@ class FinalistRsnaExternalTests(unittest.TestCase):
             )
 
 
+    def test_gpu_capacity_errors_enable_cpu_fallback(self):
+        source = __import__("inspect").getsource(target.main)
+        self.assertIn("maximum batch gpu session count", source)
+        self.assertIn("CPU_FALLBACK_GPU_CAPACITY", source)
+
+
 if __name__ == "__main__":
     unittest.main()

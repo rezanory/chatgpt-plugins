@@ -609,10 +609,18 @@ def main() -> None:
         provider_error = str(
             provider_result.get("error") or launch.get("error") or ""
         )
-        if "maximum weekly gpu quota" in provider_error.casefold():
+        gpu_capacity_error = any(
+            token in provider_error.casefold()
+            for token in (
+                "maximum weekly gpu quota",
+                "maximum batch gpu session count",
+                "maximum gpu session count",
+            )
+        )
+        if gpu_capacity_error:
             launch_payload["request_id"] += "-cpu-fallback"
             launch_payload["body"]["enableGpu"] = False
-            compute_mode = "CPU_FALLBACK_GPU_QUOTA"
+            compute_mode = "CPU_FALLBACK_GPU_CAPACITY"
             launch = legacy.post_json(
                 legacy.ACTION_ENDPOINT, action_token, launch_payload, timeout=240
             )
