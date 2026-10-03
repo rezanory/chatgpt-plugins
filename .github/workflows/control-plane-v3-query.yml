@@ -916,6 +916,25 @@ jobs:
         with:
           ref: main
 
+      - name: Set up canonical Phase-2 statistics Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install canonical Phase-2 statistics runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-input \
+            "numpy==2.0.2" \
+            "scikit-learn==1.6.1"
+          python - <<'PY'
+          import numpy, sklearn
+          assert numpy.__version__ == "2.0.2", numpy.__version__
+          assert sklearn.__version__ == "1.6.1", sklearn.__version__
+          print("PHASE2_OOF_STATS_RUNTIME_PASS", numpy.__version__, sklearn.__version__)
+          PY
+
       - name: Request trusted action and read OIDC identities
         shell: bash
         run: |
