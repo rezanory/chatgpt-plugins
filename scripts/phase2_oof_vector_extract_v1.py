@@ -351,6 +351,10 @@ def fetch_account_summary(read_token: str, account_id: str, kernel_ref: str) -> 
         or value.get("schema") != "pneumonia.phase2.oof.vector.account.v1"
         or value.get("status") != "PASS"
         or value.get("account_id") != account_id
+        or value.get("training_performed") is not False
+        or value.get("inference_performed") is not False
+        or value.get("locked_test_used_for_selection") is not False
+        or value.get("external_used_for_selection") is not False
     ):
         return None
     return value
@@ -417,7 +421,7 @@ def reusable_account(
                 timeout=120,
             )
         )
-        if status != "COMPLETE":
+        if status in {"ERROR", "CANCELLED"}:
             continue
         summary = fetch_account_summary(read_token, account_id, ref)
         if summary is None or int(summary.get("target_count") or 0) != len(targets):
@@ -574,6 +578,14 @@ def probe_status(read_token: str, row: dict) -> str:
     return "UNKNOWN"
 
 
+def _retryable_output_propagation(response: dict) -> bool:
+    error = str(response.get("error") or "")
+    return (
+        "requested Kaggle output JSON not found:" in error
+        or "output JSON HTTP 404:" in error
+    )
+
+
 def fetch_vectors(read_token: str, launch: dict) -> list[dict]:
     names = [
         vector_output_name(target["model_id"], target["resolution"])
@@ -595,6 +607,14 @@ def fetch_vectors(read_token: str, launch: dict) -> list[dict]:
             timeout=240,
         )
         if not response.get("ok"):
+            if _retryable_output_propagation(response) and attempt < 30:
+                time.sleep(10)
+                continue
+            if _retryable_output_propagation(response):
+                raise RuntimeError(
+                    f"OOF_VECTOR_OUTPUT_PROPAGATION_TIMEOUT:{launch['account_id']}:"
+                    f"error={response.get('error')}"
+                )
             raise RuntimeError(
                 f"OOF_VECTOR_OUTPUT_FETCH_FAILED:{launch['account_id']}:{response}"
             )
