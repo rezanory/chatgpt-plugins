@@ -146,6 +146,111 @@ def _paired_metric_vector(y, pred, score):
     }
 
 
+def _safe_divide_batch(numerator, denominator):
+    numerator = np.asarray(numerator, dtype=float)
+    denominator = np.asarray(denominator, dtype=float)
+    return np.divide(
+        numerator,
+        denominator,
+        out=np.zeros_like(numerator, dtype=float),
+        where=denominator != 0,
+    )
+
+
+def _patient_confusion_contributions(patient_index, y, pred, n_patients):
+    patient_index = np.asarray(patient_index, dtype=np.intp)
+    y = np.asarray(y, dtype=int)
+    pred = np.asarray(pred, dtype=int)
+    masks = (
+        (y == 0) & (pred == 0),
+        (y == 0) & (pred == 1),
+        (y == 1) & (pred == 0),
+        (y == 1) & (pred == 1),
+    )
+    return np.stack(
+        [
+            np.bincount(
+                patient_index,
+                weights=mask.astype(np.float64),
+                minlength=n_patients,
+            )
+            for mask in masks
+        ],
+        axis=1,
+    )
+
+
+def _auc_batch_plan(patient_index, y, score):
+    patient_index = np.asarray(patient_index, dtype=np.intp)
+    y = np.asarray(y, dtype=int)
+    score = np.asarray(score, dtype=float)
+    order = np.argsort(score, kind="stable")
+    sorted_score = score[order]
+    group_starts = np.concatenate(
+        (
+            np.asarray([0], dtype=np.intp),
+            np.flatnonzero(sorted_score[1:] != sorted_score[:-1]).astype(np.intp)
+            + 1,
+        )
+    )
+    return patient_index[order], y[order], group_starts
+
+
+def _weighted_auc_batch(patient_counts, plan):
+    patient_index_sorted, y_sorted, group_starts = plan
+    row_weights = patient_counts[:, patient_index_sorted].astype(
+        np.float64, copy=False
+    )
+    positive = row_weights * (y_sorted == 1)[None, :]
+    negative = row_weights * (y_sorted == 0)[None, :]
+    positive_by_group = np.add.reduceat(positive, group_starts, axis=1)
+    negative_by_group = np.add.reduceat(negative, group_starts, axis=1)
+    negative_before = np.cumsum(negative_by_group, axis=1) - negative_by_group
+    numerator = np.sum(
+        positive_by_group
+        * (negative_before + 0.5 * negative_by_group),
+        axis=1,
+    )
+    total_positive = np.sum(positive_by_group, axis=1)
+    total_negative = np.sum(negative_by_group, axis=1)
+    denominator = total_positive * total_negative
+    return np.divide(
+        numerator,
+        denominator,
+        out=np.full(len(patient_counts), np.nan, dtype=float),
+        where=denominator > 0,
+    )
+
+
+def _bootstrap_metric_batch(patient_counts, contributions, auc):
+    cm = patient_counts @ contributions
+    tn, fp, fn, tp = (cm[:, index] for index in range(4))
+    recall_normal = _safe_divide_batch(tn, tn + fp)
+    recall_pneumonia = _safe_divide_batch(tp, tp + fn)
+    precision_normal = _safe_divide_batch(tn, tn + fn)
+    precision_pneumonia = _safe_divide_batch(tp, tp + fp)
+    f1_normal = _safe_divide_batch(
+        2.0 * precision_normal * recall_normal,
+        precision_normal + recall_normal,
+    )
+    f1_pneumonia = _safe_divide_batch(
+        2.0 * precision_pneumonia * recall_pneumonia,
+        precision_pneumonia + recall_pneumonia,
+    )
+    mcc_denominator = np.sqrt(
+        (tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)
+    )
+    mcc = _safe_divide_batch(tp * tn - fp * fn, mcc_denominator)
+    return {
+        "balanced_accuracy": (recall_normal + recall_pneumonia) / 2.0,
+        "macro_f1": (f1_normal + f1_pneumonia) / 2.0,
+        "mcc": mcc,
+        "auroc": np.asarray(auc, dtype=float),
+        "recall_normal": recall_normal,
+        "recall_pneumonia": recall_pneumonia,
+    }
+
+
 def paired_patient_bootstrap_metrics(
     patient_ids,
     y,
@@ -181,39 +286,85 @@ def paired_patient_bootstrap_metrics(
 
     point_ref = _paired_metric_vector(y, pred_reference, score_reference)
     point_cand = _paired_metric_vector(y, pred_candidate, score_candidate)
-    delta_store = {metric: [] for metric in metrics}
-    rng = np.random.default_rng(int(seed))
-    unique_patients = np.unique(patient_ids)
-    patient_rows: dict[Any, list[int]] = {}
-    for row_index, patient_id in enumerate(patient_ids):
-        patient_rows.setdefault(patient_id, []).append(row_index)
-    indexed = {
-        pid: np.asarray(rows, dtype=np.intp) for pid, rows in patient_rows.items()
-    }
 
+    unique_patients, patient_index = np.unique(patient_ids, return_inverse=True)
+    n_patients = len(unique_patients)
+    if n_patients < 2:
+        raise PairedOofError("PAIRED_TOO_FEW_PATIENTS")
+
+    ref_contributions = _patient_confusion_contributions(
+        patient_index, y, pred_reference, n_patients
+    )
+    cand_contributions = _patient_confusion_contributions(
+        patient_index, y, pred_candidate, n_patients
+    )
+    class_contributions = np.stack(
+        [
+            np.bincount(
+                patient_index,
+                weights=(y == label).astype(np.float64),
+                minlength=n_patients,
+            )
+            for label in (0, 1)
+        ],
+        axis=1,
+    )
+    ref_auc_plan = _auc_batch_plan(patient_index, y, score_reference)
+    cand_auc_plan = _auc_batch_plan(patient_index, y, score_candidate)
+
+    delta_chunks = {metric: [] for metric in metrics}
+    rng = np.random.default_rng(int(seed))
     valid = 0
-    for _ in range(int(n_boot)):
-        sampled = rng.choice(unique_patients, size=len(unique_patients), replace=True)
-        idx = np.concatenate([indexed[pid] for pid in sampled])
-        yy = y[idx]
-        if len(np.unique(yy)) < 2:
-            continue
-        ref_vec = _paired_metric_vector(
-            yy, pred_reference[idx], score_reference[idx]
+    remaining = int(n_boot)
+    # Keep temporary sampling/row-weight matrices bounded while processing the
+    # exact same patient-cluster bootstrap estimator in vectorized blocks.
+    block_size = max(8, min(128, 2_000_000 // max(1, n_patients)))
+
+    while remaining > 0:
+        batch_size = min(block_size, remaining)
+        sampled = rng.integers(
+            0,
+            n_patients,
+            size=(batch_size, n_patients),
+            dtype=np.intp,
         )
-        cand_vec = _paired_metric_vector(
-            yy, pred_candidate[idx], score_candidate[idx]
+        offsets = (
+            np.arange(batch_size, dtype=np.intp)[:, None] * n_patients
         )
-        for metric in metrics:
-            delta_store[metric].append(cand_vec[metric] - ref_vec[metric])
-        valid += 1
+        patient_counts = np.bincount(
+            (sampled + offsets).reshape(-1),
+            minlength=batch_size * n_patients,
+        ).reshape(batch_size, n_patients)
+
+        class_counts = patient_counts @ class_contributions
+        valid_mask = (class_counts[:, 0] > 0) & (class_counts[:, 1] > 0)
+        if np.any(valid_mask):
+            valid_counts = patient_counts[valid_mask]
+            ref_auc = _weighted_auc_batch(valid_counts, ref_auc_plan)
+            cand_auc = _weighted_auc_batch(valid_counts, cand_auc_plan)
+            if not np.isfinite(ref_auc).all() or not np.isfinite(cand_auc).all():
+                raise PairedOofError("PAIRED_AUROC_NONFINITE")
+            ref_metrics = _bootstrap_metric_batch(
+                valid_counts, ref_contributions, ref_auc
+            )
+            cand_metrics = _bootstrap_metric_batch(
+                valid_counts, cand_contributions, cand_auc
+            )
+            for metric in metrics:
+                delta_chunks[metric].append(
+                    np.asarray(cand_metrics[metric] - ref_metrics[metric])
+                )
+            valid += int(np.sum(valid_mask))
+        remaining -= batch_size
 
     if valid < max(100, int(n_boot) // 2):
         raise PairedOofError("PAIRED_TOO_FEW_VALID_BOOTSTRAPS")
 
     rows = []
     for metric in metrics:
-        deltas = np.asarray(delta_store[metric], dtype=float)
+        if not delta_chunks[metric]:
+            raise PairedOofError("PAIRED_METRIC_BOOTSTRAP_EMPTY:" + metric)
+        deltas = np.concatenate(delta_chunks[metric]).astype(float, copy=False)
         left = (np.sum(deltas <= 0.0) + 1.0) / (len(deltas) + 1.0)
         right = (np.sum(deltas >= 0.0) + 1.0) / (len(deltas) + 1.0)
         rows.append(
@@ -229,11 +380,10 @@ def paired_patient_bootstrap_metrics(
                 "p_raw_two_sided": float(min(1.0, 2.0 * min(left, right))),
                 "bootstrap_unit": "PATIENT_CLUSTER_PAIRED",
                 "n_bootstrap_valid": int(len(deltas)),
-                "n_patients": int(len(unique_patients)),
+                "n_patients": int(n_patients),
             }
         )
     return rows
-
 
 def holm_adjust(values):
     values = np.asarray(values, dtype=float)

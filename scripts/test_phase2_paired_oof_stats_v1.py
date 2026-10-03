@@ -63,6 +63,41 @@ class Tests(unittest.TestCase):
                 self.assertAlmostEqual(row["delta_candidate_minus_reference"],0.0)
                 self.assertEqual(row["bootstrap_unit"],"PATIENT_CLUSTER_PAIRED")
 
+    def test_vectorized_cluster_metrics_match_explicit_expansion(self):
+        patient_ids=np.asarray(["p1","p1","p2","p3","p3","p4"],dtype=object)
+        y=np.asarray([0,1,0,1,0,1],dtype=int)
+        pred=np.asarray([0,1,0,1,1,1],dtype=int)
+        score=np.asarray([0.10,0.70,0.10,0.70,0.40,0.90],dtype=float)
+        _,patient_index=np.unique(patient_ids,return_inverse=True)
+        n_patients=int(patient_index.max())+1
+        counts=np.asarray([[2,0,1,1],[0,2,1,1]],dtype=int)
+        contributions=M._patient_confusion_contributions(
+            patient_index,y,pred,n_patients
+        )
+        auc=M._weighted_auc_batch(
+            counts,M._auc_batch_plan(patient_index,y,score)
+        )
+        fast=M._bootstrap_metric_batch(counts,contributions,auc)
+        for batch_index,count_row in enumerate(counts):
+            expanded=[]
+            for patient_index_value,count in enumerate(count_row):
+                source=np.flatnonzero(patient_index==patient_index_value)
+                for _ in range(int(count)):
+                    expanded.extend(source.tolist())
+            expanded=np.asarray(expanded,dtype=int)
+            slow=M._paired_metric_vector(
+                y[expanded],pred[expanded],score[expanded]
+            )
+            for metric in (
+                M.PAIRED_PRIMARY_METRIC,
+                *M.PAIRED_SECONDARY_METRICS,
+            ):
+                self.assertAlmostEqual(
+                    float(fast[metric][batch_index]),
+                    float(slow[metric]),
+                    places=12,
+                )
+
     def test_full_predeclared_matrix(self):
         vectors={}
         models={m for a,b,_ in M.PREDECLARED_MODEL_COMPARISONS for m in (a,b)}
