@@ -1454,3 +1454,113 @@ jobs:
             evidence/phase2_final_closure_v1/SELECTION_FREEZE.json
           if-no-files-found: error
           retention-days: 90
+  phase2_finalist_rsna_m09_handoff_v1:
+    if: >-
+      ${{ github.event_name == 'issue_comment' &&
+          github.event.issue.number == 126 &&
+          github.event.comment.user.id == 62356000 &&
+          github.event.comment.body == 'PHASE2_FINALIST_RSNA_M09_HANDOFF_V1' }}
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    timeout-minutes: 30
+    steps:
+      - name: Checkout main handoff implementation
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Request trusted read OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']; bearer=os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']
+          sep='&' if '?' in base else '?'
+          url=base+sep+urllib.parse.urlencode({'audience':'cgp-control-plane-v3'})
+          req=urllib.request.Request(url,headers={'Authorization':'Bearer '+bearer})
+          with urllib.request.urlopen(req,timeout=30) as response: token=json.load(response)['value']
+          if len(token)<100: raise SystemExit('OIDC_TOKEN_UNAVAILABLE')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h: print('CGP_READ_OIDC_TOKEN='+token,file=h)
+          PY
+      - name: Validate handoff code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/phase2_finalist_rsna_handoff_v1.py scripts/test_phase2_finalist_rsna_handoff_v1.py
+          python scripts/test_phase2_finalist_rsna_handoff_v1.py -v
+      - name: Recover M09 complete external evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/phase2_finalist_rsna_handoff_v1.py \
+            --token PHASE2_FINALIST_RSNA_M09_R384_V1 \
+            --kernel-ref azadkk/phase2-finalist-rsna-m09-r384-v1-37142719732 \
+            --output-dir "$RUNNER_TEMP/M09_HANDOFF"
+      - name: Publish M09 recovered handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: PHASE2_FINALIST_RSNA_M09_FIX1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/M09_HANDOFF
+            scripts/phase2_finalist_rsna_handoff_v1.py
+            scripts/test_phase2_finalist_rsna_handoff_v1.py
+            evidence/phase2_final_closure_v1/SELECTION_FREEZE.json
+          if-no-files-found: error
+          retention-days: 30
+
+  phase2_finalist_rsna_m10_handoff_v1:
+    if: >-
+      ${{ github.event_name == 'issue_comment' &&
+          github.event.issue.number == 126 &&
+          github.event.comment.user.id == 62356000 &&
+          github.event.comment.body == 'PHASE2_FINALIST_RSNA_M10_HANDOFF_V1' }}
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    timeout-minutes: 30
+    steps:
+      - name: Checkout main handoff implementation
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Request trusted read OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']; bearer=os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']
+          sep='&' if '?' in base else '?'
+          url=base+sep+urllib.parse.urlencode({'audience':'cgp-control-plane-v3'})
+          req=urllib.request.Request(url,headers={'Authorization':'Bearer '+bearer})
+          with urllib.request.urlopen(req,timeout=30) as response: token=json.load(response)['value']
+          if len(token)<100: raise SystemExit('OIDC_TOKEN_UNAVAILABLE')
+          print('::add-mask::'+token)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as h: print('CGP_READ_OIDC_TOKEN='+token,file=h)
+          PY
+      - name: Validate handoff code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/phase2_finalist_rsna_handoff_v1.py scripts/test_phase2_finalist_rsna_handoff_v1.py
+          python scripts/test_phase2_finalist_rsna_handoff_v1.py -v
+      - name: Recover first complete M10 external evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/phase2_finalist_rsna_handoff_v1.py \
+            --token PHASE2_FINALIST_RSNA_M10_R320_V1 \
+            --kernel-ref mylovevpn1/phase2-finalist-rsna-m10-r320-v1-37142214465 \
+            --kernel-ref mylovevpn1/phase2-finalist-rsna-m10-r320-v1-37142611856 \
+            --output-dir "$RUNNER_TEMP/M10_HANDOFF"
+      - name: Publish M10 recovered handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: PHASE2_FINALIST_RSNA_M10_FIX1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/M10_HANDOFF
+            scripts/phase2_finalist_rsna_handoff_v1.py
+            scripts/test_phase2_finalist_rsna_handoff_v1.py
+            evidence/phase2_final_closure_v1/SELECTION_FREEZE.json
+          if-no-files-found: error
+          retention-days: 30
