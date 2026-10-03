@@ -164,6 +164,55 @@ def build_kernel_script(
         patched, old_handles, new_handles, "state_handles"
     )
 
+    patched = _replace_once(
+        patched,
+        "import base64, gc, hashlib, json, math, os, re, shutil, zlib",
+        "import base64, gc, hashlib, json, math, os, re, shutil, zipfile, zlib",
+        "zipfile_import",
+    )
+    patched = _replace_once(
+        patched,
+        "and set(artifacts) == expected_artifacts",
+        "and expected_artifacts.issubset(set(artifacts))",
+        "campaign_artifact_subset",
+    )
+
+    old_state_fold_presence = """            root = marker.parent.resolve()
+            if all(
+                (
+                    root
+                    / f"FOLD_{fold}_RECOVERY"
+                    / "FOLDS"
+                    / f"fold_{fold}"
+                    / "COMPLETED.json"
+                ).is_file()
+                and (
+                    root
+                    / f"FOLD_{fold}_RECOVERY"
+                    / "FOLDS"
+                    / f"fold_{fold}"
+                    / "final_selected.weights.h5"
+                ).is_file()
+                for fold in range(1, 6)
+            ):
+                roots.append(root)
+"""
+    new_state_fold_presence = """            root = marker.parent.resolve()
+            if all(
+                (root / f"FOLD_{fold}_RECOVERY.cgpzip").is_file()
+                and sha256_file(root / f"FOLD_{fold}_RECOVERY.cgpzip")
+                    == artifacts[f"FOLD_{fold}_RECOVERY.cgpzip"]
+                for fold in range(1, 6)
+            ):
+                roots.append(root)
+"""
+    patched = _replace_once(
+        patched,
+        old_state_fold_presence,
+        new_state_fold_presence,
+        "standard_state_archive_presence",
+    )
+
     patched = patched.replace(
         'payload.get("model_id") == "M07"',
         'payload.get("model_id") == MODEL_ID',
@@ -171,6 +220,63 @@ def build_kernel_script(
     patched = patched.replace(
         'receipt.get("model_id") == "M07"',
         'receipt.get("model_id") == MODEL_ID',
+    )
+
+    materializer = r"""
+def materialize_standard_fold(state_root, fold):
+    archive = state_root / f"FOLD_{fold}_RECOVERY.cgpzip"
+    if not archive.is_file():
+        raise RuntimeError(f"FOLD_{fold}_ARCHIVE_MISSING_R{IMAGE_SIZE}")
+    dest = WORK / f"{MODEL_ID}_STATE_R{IMAGE_SIZE}_MATERIALIZED" / f"fold_{fold}"
+    dest.mkdir(parents=True, exist_ok=True)
+    completed_target = dest / "COMPLETED.json"
+    weight_target = dest / "final_selected.weights.h5"
+    with zipfile.ZipFile(archive) as z:
+        names = [name for name in z.namelist() if not name.endswith("/")]
+        fold_token = f"/fold_{fold}/".lower()
+        completed = [
+            name for name in names
+            if Path(name).name == "COMPLETED.json"
+            and fold_token in ("/" + name.replace("\\", "/")).lower()
+        ]
+        weights = [
+            name for name in names
+            if Path(name).name == "final_selected.weights.h5"
+            and fold_token in ("/" + name.replace("\\", "/")).lower()
+        ]
+        if len(completed) != 1 or len(weights) != 1:
+            raise RuntimeError(
+                f"FOLD_{fold}_ARCHIVE_MEMBER_COUNT_INVALID_R{IMAGE_SIZE}:"
+                f"{len(completed)}:{len(weights)}"
+            )
+        cinfo = z.getinfo(completed[0])
+        winfo = z.getinfo(weights[0])
+        if cinfo.file_size < 1 or cinfo.file_size > 2_000_000:
+            raise RuntimeError(f"FOLD_{fold}_COMPLETED_SIZE_INVALID_R{IMAGE_SIZE}")
+        if winfo.file_size < 1 or winfo.file_size > 1_000_000_000:
+            raise RuntimeError(f"FOLD_{fold}_WEIGHT_SIZE_INVALID_R{IMAGE_SIZE}")
+        for member, target in (
+            (completed[0], completed_target),
+            (weights[0], weight_target),
+        ):
+            part = target.with_suffix(target.suffix + ".part")
+            with z.open(member, "r") as src, part.open("wb") as dst:
+                shutil.copyfileobj(src, dst, length=8 * 1024 * 1024)
+            part.replace(target)
+    return dest
+
+"""
+    patched = _replace_once(
+        patched,
+        "def load_folds(state_root):",
+        materializer + "\ndef load_folds(state_root):",
+        "standard_fold_materializer",
+    )
+    patched = _replace_once(
+        patched,
+        '            root = state_root / f"FOLD_{fold}_RECOVERY/FOLDS/fold_{fold}"',
+        "            root = materialize_standard_fold(state_root, fold)",
+        "standard_fold_root",
     )
 
     if patched.count('== MODEL_ID') < 2:
