@@ -980,3 +980,70 @@ jobs:
             ${{ runner.temp }}/PHASE2_OOF_PAIRED_STATS_V1
           if-no-files-found: warn
           retention-days: 30
+
+  phase2_full_results_recovery_v1:
+    if: >-
+      ${{ github.event_name == 'issue_comment' &&
+          github.event.issue.number == 126 &&
+          github.event.comment.user.id == 62356000 &&
+          github.event.comment.body == 'PHASE2_FULL_RESULTS_RECOVERY_V1' }}
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    timeout-minutes: 90
+    steps:
+      - name: Checkout main full-results recovery implementation
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Request trusted action and read OIDC identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          bearer=os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']
+          def issue(audience):
+              sep='&' if '?' in base else '?'
+              url=base+sep+urllib.parse.urlencode({'audience':audience})
+              req=urllib.request.Request(url,headers={'Authorization':'Bearer '+bearer})
+              with urllib.request.urlopen(req,timeout=30) as response:
+                  token=json.load(response)['value']
+              if len(token)<100:
+                  raise SystemExit('OIDC_TOKEN_UNAVAILABLE:'+audience)
+              print('::add-mask::'+token)
+              return token
+          action=issue('cgp-control-plane-v3-action')
+          read=issue('cgp-control-plane-v3')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as handle:
+              print('CGP_ACTION_OIDC_TOKEN='+action,file=handle)
+              print('CGP_READ_OIDC_TOKEN='+read,file=handle)
+          PY
+
+      - name: Validate fail-closed recovery code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/phase2_full_results_recovery_v1.py scripts/test_phase2_full_results_recovery_v1.py
+          python scripts/test_phase2_full_results_recovery_v1.py -v
+
+      - name: Recover sealed training validation and locked-test evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/phase2_full_results_recovery_v1.py \
+            --run-id "$GITHUB_RUN_ID" \
+            --output "$RUNNER_TEMP/PHASE2_FULL_RESULTS_MATRIX_V1.json"
+
+      - name: Publish full-results recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PHASE2_FULL_RESULTS_V1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/PHASE2_FULL_RESULTS_MATRIX_V1.json
+            evidence/phase2_final_closure_v1/SELECTION_FREEZE.json
+            scripts/phase2_full_results_recovery_v1.py
+          if-no-files-found: warn
+          retention-days: 30
