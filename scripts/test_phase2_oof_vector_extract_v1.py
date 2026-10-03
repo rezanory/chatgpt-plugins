@@ -145,6 +145,56 @@ class Phase2OofVectorExtractV1Tests(unittest.TestCase):
             MODULE.post_json=original_post
             MODULE.fetch_account_summary=original_summary
 
+    def test_candidate_prefixes_accept_provider_normalized_ref(self):
+        prefixes=MODULE._candidate_prefixes("kg-09")
+        self.assertIn("phase2-oof-vectors-v1-kg-09-",prefixes)
+        self.assertIn("phase2-oof-vectors-kg-09-",prefixes)
+
+    def test_fetch_vectors_retries_output_propagation(self):
+        launch={
+            "account_id":"kg-09",
+            "kernel_ref":"mylovevpn1/phase2-oof-vectors-kg-09-123",
+            "targets":[{"model_id":"M10","resolution":224}],
+        }
+        vector={
+            "schema":"pneumonia.phase2.oof.vector.v1",
+            "status":"PASS",
+            "model_id":"M10",
+            "resolution":224,
+        }
+        original_post=MODULE.post_json
+        original_sleep=MODULE.time.sleep
+        calls=[]
+        try:
+            def fake_post(endpoint,token,payload,timeout=180):
+                calls.append(payload)
+                if len(calls)==1:
+                    return {"ok":True,"result":{"files":[]}}
+                return {
+                    "ok":True,
+                    "provider":"kaggle",
+                    "read_only":True,
+                    "result":{
+                        "ok":True,
+                        "provider":"kaggle",
+                        "read_only":True,
+                        "result":{
+                            "files":[{
+                                "file_name":"PHASE2_OOF_VECTOR_M10_R224.json",
+                                "json":vector,
+                            }]
+                        },
+                    },
+                }
+            MODULE.post_json=fake_post
+            MODULE.time.sleep=lambda _: None
+            result=MODULE.fetch_vectors("token",launch)
+            self.assertEqual(len(calls),2)
+            self.assertEqual(result,[vector])
+        finally:
+            MODULE.post_json=original_post
+            MODULE.time.sleep=original_sleep
+
     def test_validate_vectors_requires_exact_36_and_one_identity(self):
         vectors = []
         for i in range(1, 13):

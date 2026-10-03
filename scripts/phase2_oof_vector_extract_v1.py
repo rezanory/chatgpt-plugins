@@ -321,7 +321,10 @@ def _vector_slug(account_id: str, run_id: str) -> str:
 
 def _candidate_prefixes(account_id: str) -> tuple[str, ...]:
     token = "master" if account_id == "master" else account_id
-    return (f"phase2-oof-vectors-{EXTRACTOR_GENERATION}-{token}-",)
+    return (
+        f"phase2-oof-vectors-{EXTRACTOR_GENERATION}-{token}-",
+        f"phase2-oof-vectors-{token}-",
+    )
 
 
 def fetch_account_summary(read_token: str, account_id: str, kernel_ref: str) -> dict | None:
@@ -370,7 +373,7 @@ def reusable_account(
             "body": {
                 "group": "PROFILE",
                 "user": owner,
-                "search": f"phase2-oof-vectors-{EXTRACTOR_GENERATION}",
+                "search": "phase2-oof-vectors",
                 "sortBy": "DATE_RUN",
                 "page": 1,
                 "pageSize": 100,
@@ -576,36 +579,68 @@ def fetch_vectors(read_token: str, launch: dict) -> list[dict]:
         vector_output_name(target["model_id"], target["resolution"])
         for target in launch["targets"]
     ]
-    response = post_json(
-        READ_ENDPOINT,
-        read_token,
-        {
-            "action": "output_json_files",
-            "account_id": launch["account_id"],
-            "kernel_ref": launch["kernel_ref"],
-            "file_names": names,
-            "max_bytes_per_file": MAX_JSON_BYTES,
-        },
-        timeout=240,
-    )
-    if not response.get("ok"):
-        raise RuntimeError(f"OOF_VECTOR_OUTPUT_FETCH_FAILED:{launch['account_id']}:{response}")
-    files = _read_payload(response).get("files") or []
-    if len(files) != len(names):
-        raise RuntimeError(
-            f"OOF_VECTOR_OUTPUT_COUNT_INVALID:{launch['account_id']}:{len(files)}:{len(names)}"
+    expected_names = set(names)
+    last_files = []
+    for attempt in range(31):
+        response = post_json(
+            READ_ENDPOINT,
+            read_token,
+            {
+                "action": "output_json_files",
+                "account_id": launch["account_id"],
+                "kernel_ref": launch["kernel_ref"],
+                "file_names": names,
+                "max_bytes_per_file": MAX_JSON_BYTES,
+            },
+            timeout=240,
         )
-    vectors = []
+        if not response.get("ok"):
+            raise RuntimeError(
+                f"OOF_VECTOR_OUTPUT_FETCH_FAILED:{launch['account_id']}:{response}"
+            )
+        files = _read_payload(response).get("files") or []
+        last_files = files
+        observed_names = {
+            str(item.get("file_name") or item.get("source_file_name") or "")
+            for item in files
+            if isinstance(item, dict)
+        }
+        if len(files) == len(names) and observed_names == expected_names:
+            break
+        if attempt < 30:
+            time.sleep(10)
+    else:
+        observed_names = sorted(
+            str(item.get("file_name") or item.get("source_file_name") or "")
+            for item in last_files
+            if isinstance(item, dict)
+        )
+        raise RuntimeError(
+            f"OOF_VECTOR_OUTPUT_PROPAGATION_TIMEOUT:{launch['account_id']}:"
+            f"{len(last_files)}:{len(names)}:{observed_names}"
+        )
+
+    by_name = {}
     for item in files:
-        value = item.get("json") if isinstance(item, dict) else None
+        if not isinstance(item, dict):
+            raise RuntimeError(f"OOF_VECTOR_OUTPUT_INVALID:{launch['account_id']}")
+        name = str(item.get("file_name") or item.get("source_file_name") or "")
+        value = item.get("json")
         if (
-            not isinstance(value, dict)
+            name not in expected_names
+            or name in by_name
+            or not isinstance(value, dict)
             or value.get("schema") != "pneumonia.phase2.oof.vector.v1"
             or value.get("status") != "PASS"
         ):
-            raise RuntimeError(f"OOF_VECTOR_OUTPUT_INVALID:{launch['account_id']}")
-        vectors.append(value)
-    return vectors
+            raise RuntimeError(f"OOF_VECTOR_OUTPUT_INVALID:{launch['account_id']}:{name}")
+        by_name[name] = value
+    if set(by_name) != expected_names:
+        raise RuntimeError(
+            f"OOF_VECTOR_OUTPUT_NAME_MISMATCH:{launch['account_id']}:"
+            f"{sorted(by_name)}:{sorted(expected_names)}"
+        )
+    return [by_name[name] for name in names]
 
 
 def validate_vectors(vectors: list[dict]) -> None:
