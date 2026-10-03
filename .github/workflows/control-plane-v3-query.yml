@@ -1625,6 +1625,7 @@ jobs:
           assert rec["final_closure_sha256"]=="83481411e937ba1da52c5e95841e68da22f1522ef70b622d624d6a14d65f87f5"
           assert rec["critical_fix_audit"] and all(rec["critical_fix_audit"].values())
           assert len(nb["cells"]) >= 19
+          assert int(rec["bytes"]) < 2000000, rec["bytes"]
           print("MASTER_NOTEBOOK_STATIC_ACCEPTANCE_PASS", rec["output_sha256"], rec["bytes"], len(nb["cells"]))
           PY
 
@@ -1651,7 +1652,7 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import json, os, pathlib, time, urllib.request
+          import json, os, pathlib, time, urllib.error, urllib.request
           action="https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/action/kaggle"
           read="https://chatgpt-kaggle-gateway.rezanory-chatgpt-plugins.workers.dev/control-plane/v3/read/kaggle"
           root=pathlib.Path(os.environ["RUNNER_TEMP"])/"MASTER_OUTPUT"
@@ -1659,7 +1660,12 @@ jobs:
           kernel_ref="azadka/pneumonia-phase2-master-integrated-v1"
           def post(url, token, payload, timeout=240):
               req=urllib.request.Request(url,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
-              with urllib.request.urlopen(req,timeout=timeout) as r: return json.load(r)
+              try:
+                  with urllib.request.urlopen(req,timeout=timeout) as r:
+                      return json.load(r)
+              except urllib.error.HTTPError as exc:
+                  body=exc.read().decode("utf-8","replace")
+                  raise RuntimeError(f"CGP_HTTP_{exc.code}:{body[:4000]}") from exc
           payload={
             "request_id":"phase2-master-integrated-v1-"+os.environ["GITHUB_RUN_ID"],
             "provider":"kaggle","operation_class":"compute","account_id":"master",
@@ -1706,6 +1712,7 @@ jobs:
           PY
 
       - name: Publish downloadable integrated master package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: PNEUMONIA_PHASE2_MASTER_INTEGRATED_V1-${{ github.run_id }}
