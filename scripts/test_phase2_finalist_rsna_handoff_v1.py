@@ -40,6 +40,13 @@ class FinalistHandoffTests(unittest.TestCase):
                 "azadkk/phase2-finalist-rsna-m10-r384-v1-37142719732",
             )
 
+    def test_main_uses_supported_raw_status_read(self):
+        import inspect
+        source = inspect.getsource(target.main)
+        self.assertIn('"action": "raw_read"', source)
+        self.assertIn('"method": "GetKernelSessionStatus"', source)
+        self.assertNotIn('"action": "resolved_kernel_status"', source)
+
     def test_choose_complete_kernel_selects_highest_complete_run(self):
         ref, run_id = target.choose_complete_kernel(
             [
