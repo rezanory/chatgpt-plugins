@@ -213,9 +213,14 @@ def main() -> None:
             legacy.READ_ENDPOINT,
             read_token,
             {
-                "action": "resolved_kernel_status",
+                "action": "raw_read",
                 "account_id": str(contract["account_id"]),
-                "kernel_ref": kernel_ref,
+                "service": "kernels.KernelsApiService",
+                "method": "GetKernelSessionStatus",
+                "body": {
+                    "userName": kernel_ref.split("/", 1)[0],
+                    "kernelSlug": kernel_ref.split("/", 1)[1],
+                },
             },
             timeout=120,
         )
