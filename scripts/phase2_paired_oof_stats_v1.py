@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import pathlib
+import re
 import zlib
 from typing import Any
 
@@ -403,7 +404,14 @@ def holm_adjust(values):
 
 
 def load_vectors(vector_dir: pathlib.Path) -> dict[tuple[str, int], dict[str, Any]]:
-    files = sorted(vector_dir.glob("PHASE2_OOF_VECTOR_*.json"))
+    filename_pattern = re.compile(
+        r"^PHASE2_OOF_VECTOR_M(?:0[1-9]|1[0-2])_R(?:224|320|384)\.json$"
+    )
+    files = sorted(
+        path
+        for path in vector_dir.glob("PHASE2_OOF_VECTOR_*.json")
+        if filename_pattern.fullmatch(path.name)
+    )
     vectors = {}
     for path in files:
         vector = decode_vector(path)

@@ -284,7 +284,15 @@ for target in TARGETS:
     if len(encoded)>250000:
         raise RuntimeError("OOF_VECTOR_JSON_TOO_LARGE:"+name+":"+str(len(encoded)))
     Path("/kaggle/working",name).write_bytes(encoded)
-    receipts.append({"model_id":model_id,"resolution":resolution,"file_name":name,"bytes":len(encoded)})
+    receipts.append({
+        "model_id":model_id,
+        "resolution":resolution,
+        "dataset_ref":dataset_ref,
+        "dataset_version_number":int(target["version"]),
+        "campaign_marker_sha256":str(target["campaign_marker_sha256"]),
+        "file_name":name,
+        "bytes":len(encoded),
+    })
 
 summary={
     "schema":"pneumonia.phase2.oof.vector.account.v1",
@@ -345,7 +353,12 @@ def fetch_account_summary(read_token: str, account_id: str, kernel_ref: str) -> 
     return value
 
 
-def reusable_account(read_token: str, account_id: str, owner: str, target_count: int) -> dict | None:
+def reusable_account(
+    read_token: str,
+    account_id: str,
+    owner: str,
+    targets: list[dict],
+) -> dict | None:
     listing = post_json(
         READ_ENDPOINT,
         read_token,
@@ -404,7 +417,37 @@ def reusable_account(read_token: str, account_id: str, owner: str, target_count:
         if status != "COMPLETE":
             continue
         summary = fetch_account_summary(read_token, account_id, ref)
-        if summary is None or int(summary.get("target_count") or 0) != int(target_count):
+        if summary is None or int(summary.get("target_count") or 0) != len(targets):
+            continue
+        expected_targets = sorted(
+            (
+                str(target["model_id"]),
+                int(target["resolution"]),
+                str(target["dataset_ref"]),
+                int(target["version"]),
+                str(target["campaign_marker_sha256"]),
+            )
+            for target in targets
+        )
+        observed_targets = []
+        for target in summary.get("targets") or []:
+            if not isinstance(target, dict):
+                observed_targets = []
+                break
+            try:
+                observed_targets.append(
+                    (
+                        str(target["model_id"]),
+                        int(target["resolution"]),
+                        str(target["dataset_ref"]),
+                        int(target["dataset_version_number"]),
+                        str(target["campaign_marker_sha256"]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                observed_targets = []
+                break
+        if sorted(observed_targets) != expected_targets:
             continue
         return {
             "account_id": account_id,
@@ -426,14 +469,6 @@ def launch_account(
     plan: dict,
 ) -> dict:
     owner = str(plan["owner"])
-    reused = reusable_account(read_token, account_id, owner, len(plan["targets"]))
-    if reused is not None:
-        reused["targets"] = [
-            {"model_id": model_id, "resolution": int(resolution), "dataset_ref": dataset_ref}
-            for model_id, resolution, dataset_ref in plan["targets"]
-        ]
-        return reused
-
     targets = []
     for model_id, resolution, dataset_ref in plan["targets"]:
         resolved = resolve_version(read_token, account_id, dataset_ref)
@@ -445,6 +480,11 @@ def launch_account(
                 **resolved,
             }
         )
+
+    reused = reusable_account(read_token, account_id, owner, targets)
+    if reused is not None:
+        reused["targets"] = targets
+        return reused
     slug = _vector_slug(account_id, run_id)
     kernel_ref = f"{owner}/{slug}"
     payload = {

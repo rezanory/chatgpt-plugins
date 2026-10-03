@@ -73,6 +73,77 @@ class Phase2OofVectorExtractV1Tests(unittest.TestCase):
         self.assertIn('"enableInternet": False', source)
         self.assertIn("no training, inference, HPO, threshold tuning, Locked-Test", source)
         self.assertIn("reusable_account", source)
+        self.assertIn("dataset_version_number", MODULE.vector_kernel_script("kg-05", [{
+            "model_id":"M07",
+            "resolution":320,
+            "dataset_ref":"trickermark/m07-gate-r320-state-v1-7",
+            "version":2,
+            "campaign_marker_name":"CAMPAIGN_STATE.json",
+            "campaign_marker_sha256":"a"*64,
+            "campaign_receipt_sha256":"b"*64,
+            "campaign_status":"COMPLETE",
+            "campaign_split_fingerprint":"c"*64,
+            "campaign_completed_folds":None,
+        }]))
+
+    def test_reuse_requires_exact_resolved_evidence_identity(self):
+        targets=[{
+            "model_id":"M01",
+            "resolution":224,
+            "dataset_ref":"azadka/pneumonia-m01-r224-state-v1-7",
+            "version":7,
+            "campaign_marker_sha256":"a"*64,
+        }]
+        original_post=MODULE.post_json
+        original_summary=MODULE.fetch_account_summary
+        try:
+            def fake_post(endpoint,token,payload,timeout=180):
+                if payload.get("method")=="ListKernels":
+                    return {"ok":True,"result":{"kernels":[{
+                        "ref":"azadka/phase2-oof-vectors-v1-master-123",
+                        "status":"COMPLETE",
+                    }]}}
+                if payload.get("method")=="GetKernelSessionStatus":
+                    return {"ok":True,"result":{"status":"COMPLETE"}}
+                raise AssertionError(payload)
+
+            MODULE.post_json=fake_post
+            MODULE.fetch_account_summary=lambda *args: {
+                "schema":"pneumonia.phase2.oof.vector.account.v1",
+                "status":"PASS",
+                "account_id":"master",
+                "target_count":1,
+                "targets":[{
+                    "model_id":"M01",
+                    "resolution":224,
+                    "dataset_ref":"azadka/pneumonia-m01-r224-state-v1-7",
+                    "dataset_version_number":6,
+                    "campaign_marker_sha256":"a"*64,
+                }],
+            }
+            self.assertIsNone(
+                MODULE.reusable_account("token","master","azadka",targets)
+            )
+
+            MODULE.fetch_account_summary=lambda *args: {
+                "schema":"pneumonia.phase2.oof.vector.account.v1",
+                "status":"PASS",
+                "account_id":"master",
+                "target_count":1,
+                "targets":[{
+                    "model_id":"M01",
+                    "resolution":224,
+                    "dataset_ref":"azadka/pneumonia-m01-r224-state-v1-7",
+                    "dataset_version_number":7,
+                    "campaign_marker_sha256":"a"*64,
+                }],
+            }
+            reused=MODULE.reusable_account("token","master","azadka",targets)
+            self.assertIsNotNone(reused)
+            self.assertEqual(reused["source_run_id"],"123")
+        finally:
+            MODULE.post_json=original_post
+            MODULE.fetch_account_summary=original_summary
 
     def test_validate_vectors_requires_exact_36_and_one_identity(self):
         vectors = []

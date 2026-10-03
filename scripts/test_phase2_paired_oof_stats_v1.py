@@ -98,6 +98,23 @@ class Tests(unittest.TestCase):
                     places=12,
                 )
 
+    def test_collection_manifest_is_not_decoded_as_vector(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=pathlib.Path(td)
+            (root/"PHASE2_OOF_VECTOR_COLLECTION_V1.json").write_text(
+                json.dumps({
+                    "schema":"pneumonia.phase2.oof.vector.collection.v1",
+                    "status":"PASS",
+                }),
+                encoding="utf-8",
+            )
+            (root/"PHASE2_OOF_VECTOR_M01_R224.json").write_text(
+                json.dumps(vector("M01",224)),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(M.PairedOofError,"VECTOR_COVERAGE_MISSING"):
+                M.load_vectors(root)
+
     def test_full_predeclared_matrix(self):
         vectors={}
         models={m for a,b,_ in M.PREDECLARED_MODEL_COMPARISONS for m in (a,b)}
