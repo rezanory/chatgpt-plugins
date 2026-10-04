@@ -28,17 +28,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-      - name: Verify preinstalled Node runtime
+      - name: Verify bundled Node runtime
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          $nodeVersion=& node --version
-          if($LASTEXITCODE -ne 0 -or -not $nodeVersion){throw 'preinstalled Node unavailable'}
+          $nodeDir='C:\radlina-remote-mcp\.runtime\node-v24.20.0-win-x64'
+          $nodeExe=Join-Path $nodeDir 'node.exe'
+          $npmCmd=Join-Path $nodeDir 'npm.cmd'
+          if(-not (Test-Path $nodeExe)){throw "bundled Node unavailable: $nodeExe"}
+          if(-not (Test-Path $npmCmd)){throw "bundled npm unavailable: $npmCmd"}
+          $env:PATH="$nodeDir;$env:PATH"
+          $nodeVersion=& $nodeExe --version
+          if($LASTEXITCODE -ne 0 -or -not $nodeVersion){throw 'bundled Node execution failed'}
           $major=[int](($nodeVersion.TrimStart('v') -split '\.')[0])
           if($major -lt 22){throw "Node 22+ required; found $nodeVersion"}
-          $npmVersion=& npm --version
-          if($LASTEXITCODE -ne 0 -or -not $npmVersion){throw 'preinstalled npm unavailable'}
-          Write-Host "NODE_RUNTIME_READY node=$nodeVersion npm=$npmVersion"
+          $npmVersion=& $npmCmd --version
+          if($LASTEXITCODE -ne 0 -or -not $npmVersion){throw 'bundled npm execution failed'}
+          $nodeDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "NODE_RUNTIME_READY node=$nodeVersion npm=$npmVersion path=$nodeDir"
       - name: Validate exact control-plane bundle
         shell: powershell
         run: |
