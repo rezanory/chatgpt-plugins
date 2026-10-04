@@ -283,7 +283,6 @@ def main() -> None:
             source,
         )
         wait_complete(read_token, ref)
-        wait_output_file(read_token, ref, f"phase2_master_part_{index:02d}.bin")
         part_meta.append(
             {
                 "index": index,
@@ -295,6 +294,8 @@ def main() -> None:
             }
         )
 
+    print("MASTER_PARTS_ALL_COMPLETE", json.dumps(PART_REFS), flush=True)
+    time.sleep(20)
     final_source = assembler_source(PART_REFS, compressed_sha, len(compressed))
     if len(final_source.encode("utf-8")) >= 900_000:
         raise RuntimeError("ASSEMBLER_SOURCE_TOO_LARGE")
