@@ -238,7 +238,7 @@ export async function kaggleReadCall(
 }
 
 
-function sha256Hex(bytes: Uint8Array): Promise<string> {
+function kernelSourceSha256Hex(bytes: Uint8Array): Promise<string> {
   return crypto.subtle.digest("SHA-256", bytes).then((digest) =>
     Array.from(new Uint8Array(digest))
       .map((value) => value.toString(16).padStart(2, "0"))
@@ -295,7 +295,7 @@ export async function kaggleKernelSourceChunk(
   const start = chunkIndex * maxChars;
   const end = Math.min(source.length, start + maxChars);
   const sourceBytes = new TextEncoder().encode(source);
-  const digest = await sha256Hex(sourceBytes);
+  const digest = await kernelSourceSha256Hex(sourceBytes);
 
   return {
     kernel_ref: actualRef || kernelRef,
