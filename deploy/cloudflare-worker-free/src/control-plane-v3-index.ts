@@ -2,6 +2,7 @@ import canonicalWorker from "./index";
 import { executeKaggleOidcAction, kaggleActionAccountIds } from "./control-plane-v3-action";
 import {
   kaggleDatasetJsonFiles,
+  kaggleKernelSourceChunk,
   kaggleLiveLog,
   kaggleOutputJsonFiles,
   kagglePhaseProbe,
@@ -116,6 +117,14 @@ async function handleKaggleRead(request: Request, env: ControlPlaneV3Env): Promi
       Number(body.dataset_version_number ?? 0),
       names,
       Number(body.max_bytes_per_file ?? 65_536),
+    );
+  } else if (action === "kernel_source_chunk") {
+    result = await kaggleKernelSourceChunk(
+      env,
+      account,
+      String(body.kernel_ref ?? ""),
+      Number(body.chunk_index ?? 0),
+      Number(body.max_chars ?? 80_000),
     );
   } else if (action === "phase_probe") {
     result = await kagglePhaseProbe(env, account, String(body.kernel_ref ?? ""));
