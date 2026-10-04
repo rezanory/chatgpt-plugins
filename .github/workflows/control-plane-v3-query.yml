@@ -1818,7 +1818,7 @@ jobs:
           )
           assert receipt['status']=='PASS'
           assert receipt['real_kernel_count']==36
-          assert receipt['original_cell_occurrences']==36
+          assert receipt['original_cell_occurrences']>=100
           assert receipt['cells']>=100
           print('ACTUAL_MASTER_ACCEPTANCE_PASS', json.dumps({
               'kernels':receipt['real_kernel_count'],

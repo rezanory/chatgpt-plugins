@@ -69,19 +69,75 @@ def status(token,account,ref):
     if "COMPLETE" not in vals: raise RuntimeError("NOT_COMPLETE:"+ref+":"+repr(vals))
 
 def get(token,account,ref):
-    owner,slug=ref.split("/",1)
-    r=broker.post_json(broker.READ_ENDPOINT,token,{"action":"raw_read","account_id":account,"service":"kernels.KernelsApiService","method":"GetKernel","body":{"userName":owner,"kernelSlug":slug}},timeout=180)
-    if not r.get("ok"): raise RuntimeError("GET:"+ref)
-    x=broker._read_payload(r); m=x.get("metadata") or {}; b=x.get("blob") or {}
-    if m.get("ref")!=ref: raise RuntimeError("REF:"+ref+":"+str(m.get("ref")))
-    s=b.get("source")
-    if not isinstance(s,str) or not s.strip(): raise RuntimeError("SOURCE:"+ref)
-    return m,s
+    chunks=[]
+    expected_count=None
+    expected_sha=None
+    metadata={}
+    index=0
+    while True:
+        r=broker.post_json(
+            broker.READ_ENDPOINT,
+            token,
+            {
+                "action":"kernel_source_chunk",
+                "account_id":account,
+                "kernel_ref":ref,
+                "chunk_index":index,
+                "max_chars":80000,
+            },
+            timeout=180,
+        )
+        if not r.get("ok"):
+            raise RuntimeError("GET_CHUNK:"+ref+":"+str(index)+":"+str(r))
+        x=broker._read_payload(r)
+        if x.get("kernel_ref")!=ref:
+            raise RuntimeError("REF:"+ref+":"+str(x.get("kernel_ref")))
+        count=int(x.get("chunk_count") or 0)
+        if count < 1:
+            raise RuntimeError("CHUNK_COUNT:"+ref)
+        if expected_count is None:
+            expected_count=count
+            expected_sha=str(x.get("source_sha256") or "")
+            metadata={
+                "ref":x.get("kernel_ref"),
+                "id":x.get("kernel_id"),
+                "title":x.get("title"),
+                "currentVersionNumber":x.get("current_version_number"),
+                "language":x.get("language"),
+                "kernelType":x.get("kernel_type"),
+            }
+        elif count!=expected_count or str(x.get("source_sha256") or "")!=expected_sha:
+            raise RuntimeError("CHUNK_SOURCE_DRIFT:"+ref)
+        if int(x.get("chunk_index") or -1)!=index:
+            raise RuntimeError("CHUNK_INDEX:"+ref+":"+str(index))
+        part=x.get("chunk")
+        if not isinstance(part,str):
+            raise RuntimeError("CHUNK_MISSING:"+ref+":"+str(index))
+        chunks.append(part)
+        index += 1
+        if index>=count:
+            break
+    s="".join(chunks)
+    actual=hashlib.sha256(s.encode("utf-8")).hexdigest()
+    if actual!=expected_sha:
+        raise RuntimeError("SOURCE_SHA:"+ref+":"+actual+":"+str(expected_sha))
+    return metadata,s
 
 def parse(s,ref):
-    try: x=json.loads(s)
-    except json.JSONDecodeError: return [code(s,{"phase2_original_ref":ref})]
-    if not isinstance(x,dict) or not isinstance(x.get("cells"),list): return [code(s,{"phase2_original_ref":ref})]
+    try:
+        x=json.loads(s)
+        for _ in range(3):
+            if isinstance(x,str):
+                candidate=x.lstrip()
+                if not candidate.startswith(("{","[")):
+                    break
+                x=json.loads(x)
+            else:
+                break
+    except json.JSONDecodeError:
+        return [code(s,{"phase2_original_ref":ref})]
+    if not isinstance(x,dict) or not isinstance(x.get("cells"),list):
+        return [code(s,{"phase2_original_ref":ref})]
     out=[]
     for i,c in enumerate(x["cells"]):
         if not isinstance(c,dict) or c.get("cell_type") not in ("code","markdown","raw"): continue
