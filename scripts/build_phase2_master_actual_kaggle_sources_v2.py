@@ -108,8 +108,9 @@ def get(token,account,ref):
             }
         elif count!=expected_count or str(x.get("source_sha256") or "")!=expected_sha:
             raise RuntimeError("CHUNK_SOURCE_DRIFT:"+ref)
-        if int(x.get("chunk_index") or -1)!=index:
-            raise RuntimeError("CHUNK_INDEX:"+ref+":"+str(index))
+        raw_chunk_index=x.get("chunk_index")
+        if raw_chunk_index is None or int(raw_chunk_index)!=index:
+            raise RuntimeError("CHUNK_INDEX:"+ref+":"+str(index)+":"+str(raw_chunk_index))
         part=x.get("chunk")
         if not isinstance(part,str):
             raise RuntimeError("CHUNK_MISSING:"+ref+":"+str(index))
