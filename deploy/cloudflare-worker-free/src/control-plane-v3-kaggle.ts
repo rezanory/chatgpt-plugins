@@ -237,6 +237,83 @@ export async function kaggleReadCall(
   return execute(env, { ...spec, operationClass: "read" });
 }
 
+
+function sha256Hex(bytes: Uint8Array): Promise<string> {
+  return crypto.subtle.digest("SHA-256", bytes).then((digest) =>
+    Array.from(new Uint8Array(digest))
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
+export async function kaggleKernelSourceChunk(
+  env: ControlPlaneV3Env,
+  accountId: AccountId,
+  kernelRef: string,
+  chunkIndex: number,
+  maxChars = 80_000,
+): Promise<Record<string, unknown>> {
+  const slug = kernelSlug(accountId, kernelRef);
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex > 10_000) {
+    throw new Error("chunk_index must be a non-negative integer");
+  }
+  if (!Number.isInteger(maxChars) || maxChars < 1_000 || maxChars > 80_000) {
+    throw new Error("max_chars must be between 1000 and 80000");
+  }
+
+  const owner = ACCOUNTS[accountId].owner;
+  const response = await execute(env, {
+    accountId,
+    service: "kernels.KernelsApiService",
+    method: "GetKernel",
+    body: { userName: owner, kernelSlug: slug },
+    operationClass: "read",
+  });
+
+  const metadata = (
+    response.metadata &&
+    typeof response.metadata === "object" &&
+    !Array.isArray(response.metadata)
+  ) ? response.metadata as Record<string, unknown> : {};
+  const blob = (
+    response.blob &&
+    typeof response.blob === "object" &&
+    !Array.isArray(response.blob)
+  ) ? response.blob as Record<string, unknown> : {};
+  const source = typeof blob.source === "string" ? blob.source : "";
+  if (!source) throw new Error("GetKernel blob.source missing");
+
+  const actualRef = typeof metadata.ref === "string" ? metadata.ref : "";
+  if (actualRef && actualRef.toLowerCase() !== kernelRef.toLowerCase()) {
+    throw new Error("GetKernel ref mismatch");
+  }
+
+  const chunkCount = Math.max(1, Math.ceil(source.length / maxChars));
+  if (chunkIndex >= chunkCount) {
+    throw new Error("chunk_index exceeds source chunk count");
+  }
+  const start = chunkIndex * maxChars;
+  const end = Math.min(source.length, start + maxChars);
+  const sourceBytes = new TextEncoder().encode(source);
+  const digest = await sha256Hex(sourceBytes);
+
+  return {
+    kernel_ref: actualRef || kernelRef,
+    kernel_id: metadata.id ?? null,
+    title: metadata.title ?? null,
+    current_version_number: metadata.currentVersionNumber ?? null,
+    language: blob.language ?? metadata.language ?? null,
+    kernel_type: blob.kernelType ?? metadata.kernelType ?? null,
+    source_chars: source.length,
+    source_bytes: sourceBytes.byteLength,
+    source_sha256: digest,
+    chunk_index: chunkIndex,
+    chunk_count: chunkCount,
+    max_chars: maxChars,
+    chunk: source.slice(start, end),
+  };
+}
+
 async function kaggleDatasetDownloadRedirect(
   env: ControlPlaneV3Env,
   accountId: AccountId,
