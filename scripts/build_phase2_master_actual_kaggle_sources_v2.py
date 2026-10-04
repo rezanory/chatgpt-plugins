@@ -118,11 +118,11 @@ def main():
     ub={(u["model_id"],int(u["resolution"])):u for u in full["units"]}
     store={}; occ=defaultdict(list); seq={}; kernels=[]
     for i,(m,r,acct,ref) in enumerate(KERNELS,1):
-        status(token,acct,ref); meta,src=get(token,acct,ref); cells=parse(src,ref); q=[]
+        meta,src=get(token,acct,ref); cells=parse(src,ref); q=[]
         for j,c in enumerate(cells):
             d=chash(c); q.append(d); store.setdefault(d,c); occ[d].append({"ref":ref,"model":m,"resolution":r,"index":j})
         seq[ref]=q
-        kernels.append({"model":m,"resolution":r,"account_id":acct,"ref":ref,"title":meta.get("title"),"kernel_id":meta.get("id"),"version":meta.get("currentVersionNumber"),"source_sha256":h(src.encode()),"cell_count":len(cells),"status":"COMPLETE"})
+        kernels.append({"model":m,"resolution":r,"account_id":acct,"ref":ref,"title":meta.get("title"),"kernel_id":meta.get("id"),"version":meta.get("currentVersionNumber"),"source_sha256":h(src.encode()),"cell_count":len(cells),"status":"FINAL_EVIDENCE_BOUND_SOURCE_FETCHED"})
         print("HARVEST",i,m,r,ref,len(cells),flush=True)
     cnt=Counter({k:len(v) for k,v in occ.items()}); shared={k for k,v in cnt.items() if v>=2}
     manifest={"schema":"pneumonia.phase2.actual-kaggle-source-manifest.v2","kernels":kernels,"sequences":seq,"unique_cells":len(store),"shared_unique_cells":len(shared),"original_cell_occurrences":sum(map(len,seq.values()))}
