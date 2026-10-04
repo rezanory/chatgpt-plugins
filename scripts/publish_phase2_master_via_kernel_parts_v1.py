@@ -87,11 +87,18 @@ def action_save(token: str, request_id: str, ref: str, title: str, source: str, 
 
 
 def read_status(token: str, ref: str) -> dict:
+    owner, slug = ref.split("/", 1)
     return broker.post_json(
         broker.READ_ENDPOINT,
         token,
-        {"action": "resolved_kernel_status", "account_id": "master", "kernel_ref": ref},
-        timeout=180,
+        {
+            "action": "raw_read",
+            "account_id": "master",
+            "service": "kernels.KernelsApiService",
+            "method": "GetKernelSessionStatus",
+            "body": {"userName": owner, "kernelSlug": slug},
+        },
+        timeout=120,
     )
 
 
