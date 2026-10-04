@@ -1852,3 +1852,86 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
+  phase2_master_actual_dataset_v1:
+    if: >-
+      ${{ github.event_name == 'issue_comment' &&
+          github.event.issue.number == 126 &&
+          github.event.comment.user.id == 62356000 &&
+          github.event.comment.body == 'PHASE2_MASTER_ACTUAL_DATASET_V1' }}
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    timeout-minutes: 30
+    steps:
+      - name: Checkout dataset publisher
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download exact lossless master artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/MASTER_DATASET/input" "$RUNNER_TEMP/MASTER_DATASET/out"
+          gh run download 37202315638 --repo rezanory/chatgpt-plugins \
+            --name PNEUMONIA_PHASE2_MASTER_ACTUAL_KAGGLE_SOURCES_V2-37202315638 \
+            --dir "$RUNNER_TEMP/MASTER_DATASET/input"
+          mapfile -t matches < <(
+            find "$RUNNER_TEMP/MASTER_DATASET/input" -type f \
+              -name PNEUMONIA_PHASE2_MASTER_ACTUAL_KAGGLE_SOURCES_V2.ipynb -print
+          )
+          if [[ "${#matches[@]}" -ne 1 ]]; then
+            echo "MASTER_NOTEBOOK_FILE_COUNT_INVALID=${#matches[@]}" >&2
+            exit 1
+          fi
+          echo "MASTER_NOTEBOOK=${matches[0]}" >> "$GITHUB_ENV"
+          sha256sum "${matches[0]}"
+
+      - name: Request trusted Kaggle identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          bearer=os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']
+          def issue(audience):
+              sep='&' if '?' in base else '?'
+              req=urllib.request.Request(
+                  base+sep+urllib.parse.urlencode({'audience':audience}),
+                  headers={'Authorization':'Bearer '+bearer},
+              )
+              with urllib.request.urlopen(req,timeout=30) as response:
+                  token=json.load(response)['value']
+              if len(token)<100:
+                  raise SystemExit('OIDC_TOKEN_INVALID:'+audience)
+              print('::add-mask::'+token)
+              return token
+          read=issue('cgp-control-plane-v3')
+          action=issue('cgp-control-plane-v3-action')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as handle:
+              print('CGP_READ_OIDC_TOKEN='+read,file=handle)
+              print('CGP_ACTION_OIDC_TOKEN='+action,file=handle)
+          PY
+
+      - name: Publish exact notebook as private master dataset and verify SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/publish_phase2_master_actual_dataset_v1.py
+          python scripts/publish_phase2_master_actual_dataset_v1.py \
+            --notebook "$MASTER_NOTEBOOK" \
+            --output-dir "$RUNNER_TEMP/MASTER_DATASET/out"
+
+      - name: Upload master dataset publication evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PHASE2_MASTER_ACTUAL_DATASET_V1-${{ github.run_id }}
+          path: |
+            ${{ env.MASTER_NOTEBOOK }}
+            ${{ runner.temp }}/MASTER_DATASET/out
+          if-no-files-found: warn
+          retention-days: 90
+
