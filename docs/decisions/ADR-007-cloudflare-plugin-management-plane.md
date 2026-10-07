@@ -40,8 +40,30 @@ ChatGPT
 
 Use the Cloudflare plugin first for Cloudflare-native inspection and
 administration. Use the GitHub connector for repository/evidence operations.
-Use Radlina Remote MCP / local Wrangler only when local execution or a fallback
-is specifically required.
+Use Radlina Remote MCP / local Wrangler when local execution or a fallback
+is required. Remote Desktop Commander is the final host-level fallback.
+
+### Tool failover policy
+
+Do not stop at the first unavailable tool when another approved path can provide
+the same safe operation or evidence. Try the next path when failure is caused by
+authentication, outage, transport failure, missing tool coverage, or a connector
+limitation.
+
+Preferred fallback order by scope:
+
+| Scope | Primary | Secondary | Tertiary |
+| --- | --- | --- | --- |
+| Cloudflare management/read | Cloudflare Plugin | Radlina Remote MCP + Wrangler/API | Remote Desktop Commander |
+| GitHub source/evidence | GitHub Connector | Radlina Remote MCP + local git/gh | Remote Desktop Commander |
+| Windows/runner operations | Radlina Remote Full MCP | Remote Desktop Commander | GitHub remote evidence/actions where applicable |
+| Kaggle execution/status | Existing GitHub/Runner/Control-Plane path | Alternate approved runner/account path | Direct operator recovery only when explicitly authorized |
+
+Failover must preserve the same security boundary and source of truth. A failed
+management connector does not justify bypassing OIDC, secret handling, write
+gates, or repository-controlled deployment. Read-only diagnostic fallbacks may
+be used automatically; state-changing fallbacks must remain auditable and must
+not create configuration drift.
 
 ## Safety and drift rules
 
